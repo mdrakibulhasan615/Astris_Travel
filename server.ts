@@ -1,4 +1,5 @@
-import dotenv from 'dotenv';
+// MUST stay the first import: loads .env.local / .env before any service reads process.env
+import { logEnvStatus } from './server/env.ts';
 import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -36,10 +37,6 @@ import type {
   Voucher,
   VoucherValidationResult,
 } from './shared/types.ts';
-
-// Load local environment secrets
-dotenv.config({ path: '.env.local' });
-dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -121,6 +118,7 @@ function summarizeLegs(legs: TripLeg[]) {
 }
 
 async function startServer() {
+  logEnvStatus();
   const app = express();
   app.use(express.json());
 

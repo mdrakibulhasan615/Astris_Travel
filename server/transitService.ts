@@ -1,5 +1,6 @@
+// MUST stay the first import so env is loaded before the Redis/SerpApi clients are configured
+import { getEnv, warnMissingKey } from './env.ts';
 import { Redis } from '@upstash/redis';
-import dotenv from 'dotenv';
 import {
   CURATED_CORRIDOR_OPTIONS,
   DESTINATION_HUBS,
@@ -36,24 +37,23 @@ registerAirportResolver((code) => {
     : null;
 });
 
-// Load environment variables (.env.local first, then .env)
-dotenv.config({ path: '.env.local' });
-dotenv.config();
-
 // Travelpayouts affiliate attribution (see shared/affiliate.ts). Without a marker, links are
 // still valid but un-attributed.
 configureAffiliate({
-  marker: process.env.TRAVELPAYOUTS_MARKER,
-  trs: process.env.TRAVELPAYOUTS_TRS,
-  campaignId: process.env.TRAVELPAYOUTS_CAMPAIGN_ID,
-  programId: process.env.TRAVELPAYOUTS_PROGRAM_ID,
+  marker: getEnv('TRAVELPAYOUTS_MARKER'),
+  trs: getEnv('TRAVELPAYOUTS_TRS'),
+  campaignId: getEnv('TRAVELPAYOUTS_CAMPAIGN_ID'),
+  programId: getEnv('TRAVELPAYOUTS_PROGRAM_ID'),
+  linkMode: getEnv('TRAVELPAYOUTS_LINK_MODE') === 'redirect' ? 'redirect' : 'direct',
+  debug: process.env.NODE_ENV !== 'production',
 });
 
 export const REDIS_CACHE_TTL_SECONDS = 43200; // 12 hours (EX: 43200)
 
-const UPSTASH_REDIS_REST_URL = process.env.UPSTASH_REDIS_REST_URL?.trim();
-const UPSTASH_REDIS_REST_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN?.trim();
-const SERPAPI_KEY = process.env.SERPAPI_KEY?.trim();
+// Read lazily (not captured at import time); placeholder values count as missing
+const upstashUrl = () => getEnv('UPSTASH_REDIS_REST_URL');
+const upstashToken = () => getEnv('UPSTASH_REDIS_REST_TOKEN');
+const serpApiKey = () => getEnv('SERPAPI_KEY');
 
 let redisClient: Redis | null = null;
 let redisInitialized = false;
@@ -64,19 +64,19 @@ export function getRedisClient(): Redis | null {
   }
   redisInitialized = true;
 
-  if (UPSTASH_REDIS_REST_URL && UPSTASH_REDIS_REST_TOKEN) {
+  const url = upstashUrl();
+  const token = upstashToken();
+  if (url && token) {
     try {
-      redisClient = new Redis({
-        url: UPSTASH_REDIS_REST_URL,
-        token: UPSTASH_REDIS_REST_TOKEN,
-      });
-      console.log('[Upstash Redis] Client initialized with endpoint:', UPSTASH_REDIS_REST_URL);
+      redisClient = new Redis({ url, token });
+      console.log('[Upstash Redis] Client initialized with endpoint:', url);
     } catch (err) {
       console.warn('[Upstash Redis] Initialization failed, will use fallback:', err);
       redisClient = null;
     }
   } else {
-    console.log('[Upstash Redis] Credentials not found in .env.local; active fallback mode.');
+    if (!url) warnMissingKey('UPSTASH_REDIS_REST_URL', 'Redis cache');
+    if (!token) warnMissingKey('UPSTASH_REDIS_REST_TOKEN', 'Redis cache');
     redisClient = null;
   }
 
@@ -84,7 +84,7 @@ export function getRedisClient(): Redis | null {
 }
 
 export function isRedisConfigured(): boolean {
-  return Boolean(UPSTASH_REDIS_REST_URL && UPSTASH_REDIS_REST_TOKEN);
+  return Boolean(upstashUrl() && upstashToken());
 }
 
 export async function checkRedisConnection(): Promise<boolean> {
@@ -216,7 +216,11 @@ async function fetchSerpApiFlights(
   fromStop?: TripStop,
   toStop?: TripStop
 ): Promise<TransitOption[] | null> {
-  if (!SERPAPI_KEY) return null;
+  const apiKey = serpApiKey();
+  if (!apiKey) {
+    warnMissingKey('SERPAPI_KEY', 'live flight search');
+    return null;
+  }
 
   try {
     const url = new URL('https://serpapi.com/search.json');
@@ -226,7 +230,7 @@ async function fetchSerpApiFlights(
     url.searchParams.set('outbound_date', date);
     url.searchParams.set('currency', 'USD');
     url.searchParams.set('hl', 'en');
-    url.searchParams.set('api_key', SERPAPI_KEY);
+    url.searchParams.set('api_key', apiKey);
 
     console.log(`[Transit API] Querying SerpAPI Google Flights: ${origin} -> ${destination} on ${date}...`);
     const res = await fetch(url.toString(), {
@@ -235,6 +239,9 @@ async function fetchSerpApiFlights(
 
     if (!res.ok) {
       console.warn(`[Transit API] SerpAPI returned status ${res.status}: ${res.statusText}`);
+      if (res.status === 401 || res.status === 403) {
+        console.warn('[env] SERPAPI_KEY was rejected by SerpApi (401/403). Check the key in .env.local.');
+      }
       return null;
     }
 
