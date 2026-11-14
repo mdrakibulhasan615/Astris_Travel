@@ -1,0 +1,6 @@
+{
+  "summary":  "Revised implementation plan for Astris Travel incorporating the 3-tier Value of Travel Time Savings (VTTS) preset toggle ($5/$15/$35 per hr) with optional advanced fine-tuning slider and the weighted Smart Score formula with overnight sleeper (0.4x) and layover pain multipliers (1.5x normal, 2.5x long).",
+  "updatedAt":  "2026-11-13T15:19:41.855840146Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}

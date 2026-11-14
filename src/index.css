@@ -1,0 +1,63 @@
+@import "tailwindcss";
+@import "maplibre-gl/dist/maplibre-gl.css";
+
+@layer base {
+  :root {
+    --font-display: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-body: "DM Sans", -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+    --astris-accent: #FF812E;
+    --astris-accent-hover: #E56B1A;
+    --astris-tint: #FFF4ED;
+    --astris-tint-border: #FFD6BA;
+  }
+
+  body {
+    font-family: var(--font-body);
+    background-color: #FAFAFA;
+    color: #111827;
+  }
+
+  h1, h2, h3, h4, .font-display {
+    font-family: var(--font-display);
+    text-wrap: balance;
+  }
+
+  .font-mono, .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Custom MapLibre marker & popup reset */
+.maplibregl-popup-content {
+  border-radius: 14px;
+  padding: 10px 14px;
+  box-shadow: 0 10px 25px -5px rgba(17, 24, 39, 0.14);
+  border: 1px solid rgba(229, 231, 235, 0.9);
+  font-family: var(--font-body);
+}
+
+.maplibregl-ctrl-group {
+  border-radius: 12px !important;
+  border: 1px solid rgba(229, 231, 235, 0.9) !important;
+  box-shadow: 0 4px 14px rgba(17, 24, 39, 0.08) !important;
+  overflow: hidden;
+}
+
+/* Custom sleek scrollbar for left itinerary pane */
+.astris-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.astris-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.astris-scroll::-webkit-scrollbar-thumb {
+  background-color: rgba(156, 163, 175, 0.35);
+  border-radius: 9999px;
+}
+
+.astris-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(107, 114, 128, 0.55);
+}

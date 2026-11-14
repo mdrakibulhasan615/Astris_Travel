@@ -1,0 +1,779 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import greatCircle from '@turf/great-circle';
+import { point } from '@turf/helpers';
+import { Bus, LocateFixed, Plane, Ship, Sparkles, TrainFront } from 'lucide-react';
+import { setWorkerUrl } from 'maplibre-gl';
+import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
+import Map, {
+  Layer,
+  Marker,
+  NavigationControl,
+  Popup,
+  Source,
+  type MapRef,
+} from 'react-map-gl/maplibre';
+import { formatDuration } from '../../shared/smartScore.ts';
+import type {
+  ModeFilter,
+  TransitMode,
+  TransitSegment,
+  TripLeg,
+  TripStop,
+} from '../../shared/types.ts';
+
+setWorkerUrl(maplibreWorkerUrl);
+
+interface WorldMapCanvasProps {
+  stops: TripStop[];
+  legs: TripLeg[];
+  modeFilter: ModeFilter;
+  hoveredStopId: string | null;
+  hoveredLegId: string | null;
+  activeLegId: string | null;
+  focusTarget: { lat: number; lng: number; zoom?: number; ts: number } | null;
+  onChangeModeFilter: (mode: ModeFilter) => void;
+  onHoverStop: (stopId: string | null) => void;
+  onSelectLeg: (legId: string) => void;
+}
+
+const OPENFREEMAP_POSITRON_STYLE = 'https://tiles.openfreemap.org/styles/positron';
+
+const FALLBACK_OSM_RASTER_STYLE = {
+  version: 8 as const,
+  sources: {
+    osm: {
+      type: 'raster' as const,
+      tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+      tileSize: 256,
+      attribution: '© OpenStreetMap contributors',
+    },
+  },
+  layers: [
+    {
+      id: 'osm-tiles',
+      type: 'raster' as const,
+      source: 'osm',
+      minzoom: 0,
+      maxzoom: 19,
+    },
+  ],
+};
+
+function getModeColor(mode: TransitMode): string {
+  if (mode === 'flight') return '#FF812E';
+  if (mode === 'train') return '#0D9488';
+  if (mode === 'bus') return '#7C3AED';
+  return '#0284C7';
+}
+
+function ModePillIcon({ mode }: { mode: TransitMode }) {
+  const color = getModeColor(mode);
+  if (mode === 'flight') return <Plane className="w-3.5 h-3.5 shrink-0" style={{ color }} />;
+  if (mode === 'train') return <TrainFront className="w-3.5 h-3.5 shrink-0" style={{ color }} />;
+  if (mode === 'bus') return <Bus className="w-3.5 h-3.5 shrink-0" style={{ color }} />;
+  return <Ship className="w-3.5 h-3.5 shrink-0" style={{ color }} />;
+}
+
+function formatMinutesCompact(mins: number): string {
+  if (mins < 60) return `${mins}m`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m === 0 ? `${h}h` : `${h}h ${m}m`;
+}
+
+function computeBearingDeg(lng1: number, lat1: number, lng2: number, lat2: number): number {
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const toDeg = (r: number) => (r * 180) / Math.PI;
+  const dLng = toRad(lng2 - lng1);
+  const y = Math.sin(dLng) * Math.cos(toRad(lat2));
+  const x =
+    Math.cos(toRad(lat1)) * Math.sin(toRad(lat2)) -
+    Math.sin(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.cos(dLng);
+  return (toDeg(Math.atan2(y, x)) + 360) % 360;
+}
+
+interface PlaneBadge {
+  id: string;
+  lng: number;
+  lat: number;
+  bearingDeg: number;
+  isHighlighted: boolean;
+}
+
+interface JunctionNode {
+  id: string;
+  lng: number;
+  lat: number;
+  name: string;
+  mode: TransitMode;
+}
+
+interface MapCalloutItem {
+  id: string;
+  legId: string;
+  stepNumber: number;
+  mode: TransitMode;
+  label: string;
+  durationText: string;
+  lng: number;
+  lat: number;
+  isHighlighted: boolean;
+}
+
+export function WorldMapCanvas({
+  stops,
+  legs,
+  modeFilter,
+  hoveredStopId,
+  hoveredLegId,
+  activeLegId,
+  focusTarget,
+  onChangeModeFilter,
+  onHoverStop,
+  onSelectLeg,
+}: WorldMapCanvasProps) {
+  const mapRef = useRef<MapRef | null>(null);
+  const [selectedPopupStop, setSelectedPopupStop] = useState<TripStop | null>(null);
+  const [useFallbackStyle, setUseFallbackStyle] = useState(false);
+
+  const highlightedLegId = hoveredLegId ?? activeLegId;
+
+  // Build mode-specific GeoJSON layers, plane markers, station dots, junction nodes, and floating callouts
+  const mapLayersData = useMemo(() => {
+    const stopById: Record<string, TripStop> = {};
+    for (const stop of stops) {
+      stopById[stop.id] = stop;
+    }
+
+    const flightFeatures: GeoJSON.Feature[] = [];
+    const trainFeatures: GeoJSON.Feature[] = [];
+    const busFeatures: GeoJSON.Feature[] = [];
+    const stationDotFeatures: GeoJSON.Feature[] = [];
+    const planeBadges: PlaneBadge[] = [];
+    const junctionNodes: JunctionNode[] = [];
+    const callouts: MapCalloutItem[] = [];
+
+    const stopIdsSet = new Set(stops.map((s) => `${s.lat.toFixed(3)},${s.lng.toFixed(3)}`));
+
+    legs.forEach((leg, legIndex) => {
+      const fromStop = stopById[leg.fromStopId];
+      const toStop = stopById[leg.toStopId];
+      if (!fromStop || !toStop) return;
+
+      const isHighlighted =
+        leg.id === highlightedLegId ||
+        (hoveredStopId !== null &&
+          (leg.fromStopId === hoveredStopId || leg.toStopId === hoveredStopId));
+
+      // Respect floating mode filter on map: pick selected option if it matches, else best matching mode option
+      const selectedOption =
+        leg.transitOptions.find((o) => o.id === leg.selectedOptionId) ??
+        leg.transitOptions[0];
+      const displayOption =
+        modeFilter === 'all' || selectedOption?.mode === modeFilter
+          ? selectedOption
+          : leg.transitOptions.find((o) => o.mode === modeFilter) ?? selectedOption;
+
+      if (!displayOption) return;
+
+      const segments: TransitSegment[] =
+        displayOption.segments && displayOption.segments.length > 0
+          ? displayOption.segments
+          : [
+              {
+                id: `${leg.id}-fallback`,
+                mode: displayOption.mode,
+                label: displayOption.routeCode,
+                fromName: leg.fromCity,
+                fromCode: leg.fromCode,
+                fromLat: fromStop.lat,
+                fromLng: fromStop.lng,
+                toName: leg.toCity,
+                toCode: leg.toCode,
+                toLat: toStop.lat,
+                toLng: toStop.lng,
+                durationMinutes: Math.round(displayOption.inVehicleHours * 60),
+              },
+            ];
+
+      // Primary segment for leg callout placement
+      let primarySegment = segments[0];
+      for (const seg of segments) {
+        if (seg.durationMinutes > primarySegment.durationMinutes) {
+          primarySegment = seg;
+        }
+      }
+
+      segments.forEach((seg, segIdx) => {
+        // Junction node at intermediate transfer points (not matching main numbered stop pins)
+        if (segIdx > 0) {
+          const key = `${seg.fromLat.toFixed(3)},${seg.fromLng.toFixed(3)}`;
+          if (!stopIdsSet.has(key)) {
+            junctionNodes.push({
+              id: `${seg.id}-junc`,
+              lng: seg.fromLng,
+              lat: seg.fromLat,
+              name: seg.fromName,
+              mode: seg.mode,
+            });
+          }
+        }
+
+        if (seg.mode === 'flight') {
+          try {
+            const arc = greatCircle(
+              point([seg.fromLng, seg.fromLat]),
+              point([seg.toLng, seg.toLat]),
+              { npoints: 72 }
+            );
+            flightFeatures.push({
+              ...arc,
+              properties: {
+                legId: leg.id,
+                segId: seg.id,
+                isHighlighted,
+              },
+            });
+
+            // Compute midpoint + bearing for directional plane icon and callout placement
+            const geom = arc.geometry;
+            const coords =
+              geom.type === 'LineString' ? geom.coordinates : geom.coordinates[0] ?? [];
+            if (coords.length >= 3) {
+              const midIdx = Math.floor(coords.length / 2);
+              const prevPt = coords[Math.max(0, midIdx - 1)];
+              const midPt = coords[midIdx];
+              const nextPt = coords[Math.min(coords.length - 1, midIdx + 1)];
+              const bearingDeg = computeBearingDeg(prevPt[0], prevPt[1], nextPt[0], nextPt[1]);
+
+              planeBadges.push({
+                id: `${seg.id}-plane`,
+                lng: midPt[0],
+                lat: midPt[1],
+                bearingDeg,
+                isHighlighted,
+              });
+
+              if (seg.id === primarySegment.id) {
+                callouts.push({
+                  id: `${leg.id}-callout`,
+                  legId: leg.id,
+                  stepNumber: legIndex + 1,
+                  mode: seg.mode,
+                  label: `${seg.fromCode} → ${seg.toCode}`,
+                  durationText: formatMinutesCompact(seg.durationMinutes),
+                  lng: midPt[0],
+                  lat: midPt[1],
+                  isHighlighted,
+                });
+              }
+            }
+          } catch {
+            // Skip malformed segment
+          }
+        } else {
+          const lineCoords: [number, number][] =
+            seg.waypoints && seg.waypoints.length >= 2
+              ? seg.waypoints
+              : [
+                  [seg.fromLng, seg.fromLat],
+                  [
+                    (seg.fromLng + seg.toLng) / 2 + 0.08,
+                    (seg.fromLat + seg.toLat) / 2 - 0.05,
+                  ],
+                  [seg.toLng, seg.toLat],
+                ];
+
+          const lineFeature: GeoJSON.Feature = {
+            type: 'Feature',
+            geometry: {
+              type: 'LineString',
+              coordinates: lineCoords,
+            },
+            properties: {
+              legId: leg.id,
+              segId: seg.id,
+              isHighlighted,
+            },
+          };
+
+          if (seg.mode === 'train') {
+            trainFeatures.push(lineFeature);
+          } else {
+            busFeatures.push(lineFeature);
+          }
+
+          // Intermediate station / stop dots along ground polylines
+          if (lineCoords.length > 2) {
+            for (let w = 1; w < lineCoords.length - 1; w++) {
+              stationDotFeatures.push({
+                type: 'Feature',
+                geometry: {
+                  type: 'Point',
+                  coordinates: lineCoords[w],
+                },
+                properties: {
+                  mode: seg.mode,
+                  color: getModeColor(seg.mode),
+                },
+              });
+            }
+          }
+
+          if (seg.id === primarySegment.id) {
+            const midCoord = lineCoords[Math.floor(lineCoords.length / 2)];
+            callouts.push({
+              id: `${leg.id}-callout`,
+              legId: leg.id,
+              stepNumber: legIndex + 1,
+              mode: seg.mode,
+              label: seg.label,
+              durationText: formatMinutesCompact(seg.durationMinutes),
+              lng: midCoord[0],
+              lat: midCoord[1],
+              isHighlighted,
+            });
+          }
+        }
+      });
+
+      // If leg is highlighted and starts with a local transfer rail/bus segment, show its callout too
+      if (isHighlighted && segments.length > 1 && segments[0].id !== primarySegment.id) {
+        const first = segments[0];
+        callouts.push({
+          id: `${leg.id}-transfer-callout`,
+          legId: leg.id,
+          stepNumber: legIndex + 1,
+          mode: first.mode,
+          label: first.label,
+          durationText: formatMinutesCompact(first.durationMinutes),
+          lng: (first.fromLng + first.toLng) / 2,
+          lat: (first.fromLat + first.toLat) / 2,
+          isHighlighted: true,
+        });
+      }
+    });
+
+    return {
+      flightGeoJson: { type: 'FeatureCollection' as const, features: flightFeatures },
+      trainGeoJson: { type: 'FeatureCollection' as const, features: trainFeatures },
+      busGeoJson: { type: 'FeatureCollection' as const, features: busFeatures },
+      stationDotsGeoJson: { type: 'FeatureCollection' as const, features: stationDotFeatures },
+      planeBadges,
+      junctionNodes,
+      callouts,
+    };
+  }, [stops, legs, modeFilter, highlightedLegId, hoveredStopId]);
+
+  const fitAllStops = useCallback(() => {
+    const map = mapRef.current;
+    if (!map || stops.length === 0) return;
+
+    if (stops.length === 1) {
+      map.flyTo({
+        center: [stops[0].lng, stops[0].lat],
+        zoom: 5,
+        duration: 650,
+      });
+      return;
+    }
+
+    let minLng = Infinity;
+    let maxLng = -Infinity;
+    let minLat = Infinity;
+    let maxLat = -Infinity;
+
+    for (const s of stops) {
+      if (s.lng < minLng) minLng = s.lng;
+      if (s.lng > maxLng) maxLng = s.lng;
+      if (s.lat < minLat) minLat = s.lat;
+      if (s.lat > maxLat) maxLat = s.lat;
+    }
+
+    map.fitBounds(
+      [
+        [minLng, minLat],
+        [maxLng, maxLat],
+      ],
+      {
+        padding: { top: 96, bottom: 110, left: 75, right: 75 },
+        duration: 750,
+        maxZoom: 6.2,
+      }
+    );
+  }, [stops]);
+
+  const stopKey = stops.map((s) => s.id).join('>');
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      fitAllStops();
+    }, 120);
+    return () => clearTimeout(timer);
+  }, [stopKey, fitAllStops]);
+
+  useEffect(() => {
+    if (!focusTarget || !mapRef.current) return;
+    mapRef.current.flyTo({
+      center: [focusTarget.lng, focusTarget.lat],
+      zoom: focusTarget.zoom ?? 4.8,
+      duration: 650,
+    });
+  }, [focusTarget]);
+
+  const modeCounts = useMemo(() => {
+    const counts = { all: 0, flight: 0, train: 0, bus: 0, ferry: 0 };
+    for (const leg of legs) {
+      for (const opt of leg.transitOptions) {
+        counts.all += 1;
+        counts[opt.mode] += 1;
+      }
+    }
+    return counts;
+  }, [legs]);
+
+  const activeLeg = legs.find((l) => l.id === highlightedLegId) ?? legs[0] ?? null;
+  const activeLegSelectedOption = activeLeg
+    ? activeLeg.transitOptions.find((o) => o.id === activeLeg.selectedOptionId) ??
+      activeLeg.transitOptions[0]
+    : null;
+
+  return (
+    <div className="relative w-full h-full min-h-[420px] bg-[#EBF1F5]">
+      <Map
+        ref={mapRef}
+        workerUrl={maplibreWorkerUrl}
+        initialViewState={{
+          longitude: 42,
+          latitude: 34,
+          zoom: 2.3,
+        }}
+        mapStyle={useFallbackStyle ? FALLBACK_OSM_RASTER_STYLE : OPENFREEMAP_POSITRON_STYLE}
+        onError={() => {
+          if (!useFallbackStyle) setUseFallbackStyle(true);
+        }}
+        attributionControl={false}
+        style={{ width: '100%', height: '100%' }}
+      >
+        <NavigationControl position="bottom-right" showCompass={false} />
+
+        {/* 1. Trains: Emerald/Teal (#0D9488) multi-point rail polylines */}
+        <Source id="astris-train-lines" type="geojson" data={mapLayersData.trainGeoJson}>
+          <Layer
+            id="astris-train-casing"
+            type="line"
+            paint={{
+              'line-color': '#FFFFFF',
+              'line-width': ['case', ['boolean', ['get', 'isHighlighted'], false], 6.5, 5],
+              'line-opacity': 0.9,
+            }}
+            layout={{ 'line-cap': 'round', 'line-join': 'round' }}
+          />
+          <Layer
+            id="astris-train-stroke"
+            type="line"
+            paint={{
+              'line-color': '#0D9488',
+              'line-width': ['case', ['boolean', ['get', 'isHighlighted'], false], 4, 3],
+              'line-opacity': 0.95,
+            }}
+            layout={{ 'line-cap': 'round', 'line-join': 'round' }}
+          />
+        </Source>
+
+        {/* 2. Buses & Local Ground Transfers: Royal Purple (#7C3AED) polylines */}
+        <Source id="astris-bus-lines" type="geojson" data={mapLayersData.busGeoJson}>
+          <Layer
+            id="astris-bus-casing"
+            type="line"
+            paint={{
+              'line-color': '#FFFFFF',
+              'line-width': ['case', ['boolean', ['get', 'isHighlighted'], false], 6.5, 5],
+              'line-opacity': 0.9,
+            }}
+            layout={{ 'line-cap': 'round', 'line-join': 'round' }}
+          />
+          <Layer
+            id="astris-bus-stroke"
+            type="line"
+            paint={{
+              'line-color': '#7C3AED',
+              'line-width': ['case', ['boolean', ['get', 'isHighlighted'], false], 4, 3],
+              'line-opacity': 0.95,
+            }}
+            layout={{ 'line-cap': 'round', 'line-join': 'round' }}
+          />
+        </Source>
+
+        {/* 3. Intermediate Station / Stop Dots along Train & Bus Polylines */}
+        <Source id="astris-station-dots" type="geojson" data={mapLayersData.stationDotsGeoJson}>
+          <Layer
+            id="astris-station-dots-layer"
+            type="circle"
+            paint={{
+              'circle-radius': 4,
+              'circle-color': ['get', 'color'],
+              'circle-stroke-color': '#FFFFFF',
+              'circle-stroke-width': 1.5,
+            }}
+          />
+        </Source>
+
+        {/* 4. Flights: Sweeping Sunset Orange (#FF812E) great-circle arcs (3px base) */}
+        <Source id="astris-flight-arcs" type="geojson" data={mapLayersData.flightGeoJson}>
+          <Layer
+            id="astris-flight-casing"
+            type="line"
+            paint={{
+              'line-color': '#FFFFFF',
+              'line-width': ['case', ['boolean', ['get', 'isHighlighted'], false], 6.5, 5],
+              'line-opacity': 0.85,
+            }}
+            layout={{ 'line-cap': 'round', 'line-join': 'round' }}
+          />
+          <Layer
+            id="astris-flight-stroke"
+            type="line"
+            paint={{
+              'line-color': '#FF812E',
+              'line-width': ['case', ['boolean', ['get', 'isHighlighted'], false], 4.2, 3],
+              'line-opacity': ['case', ['boolean', ['get', 'isHighlighted'], false], 1, 0.88],
+            }}
+            layout={{ 'line-cap': 'round', 'line-join': 'round' }}
+          />
+        </Source>
+
+        {/* Directional Airplane Icons along Flight Arcs */}
+        {mapLayersData.planeBadges.map((plane) => (
+          <Marker
+            key={plane.id}
+            longitude={plane.lng}
+            latitude={plane.lat}
+            anchor="center"
+          >
+            <div
+              className={`w-6 h-6 rounded-full bg-white border border-[#FFD6BA] shadow-sm flex items-center justify-center pointer-events-none transition-transform ${
+                plane.isHighlighted ? 'scale-115' : 'scale-100'
+              }`}
+              style={{
+                transform: `rotate(${plane.bearingDeg - 45}deg)`,
+              }}
+            >
+              <Plane className="w-3.5 h-3.5 text-[#FF812E] fill-[#FF812E]" />
+            </div>
+          </Marker>
+        ))}
+
+        {/* 8px White-Bordered Junction Nodes at Airport / Transfer Points */}
+        {mapLayersData.junctionNodes.map((node) => (
+          <Marker
+            key={node.id}
+            longitude={node.lng}
+            latitude={node.lat}
+            anchor="center"
+          >
+            <div
+              title={node.name}
+              className="w-2.5 h-2.5 rounded-full border-2 border-white shadow-sm"
+              style={{ backgroundColor: getModeColor(node.mode) }}
+            />
+          </Marker>
+        ))}
+
+        {/* Floating White Callout Cards near Key Hubs / Legs */}
+        {mapLayersData.callouts.map((callout) => (
+          <Marker
+            key={callout.id}
+            longitude={callout.lng}
+            latitude={callout.lat}
+            anchor="bottom"
+            offset={[0, -10]}
+          >
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onSelectLeg(callout.legId);
+              }}
+              className={`inline-flex items-center gap-1.5 bg-white/95 backdrop-blur-sm shadow-md rounded-xl px-2.5 py-1 border text-[11px] font-medium whitespace-nowrap transition-transform cursor-pointer ${
+                callout.isHighlighted
+                  ? 'border-[#FFD6BA] ring-2 ring-[#FF812E]/20 scale-105 text-[#111827]'
+                  : 'border-slate-200/80 text-[#111827] hover:scale-105'
+              }`}
+            >
+              <span className="font-mono font-semibold text-[#4B5563]">
+                {callout.stepNumber}
+              </span>
+              <ModePillIcon mode={callout.mode} />
+              <span className="font-semibold">{callout.label}</span>
+              <span className="text-neutral-300" aria-hidden="true">
+                ·
+              </span>
+              <span className="font-mono text-[#4B5563] tabular-nums">
+                {callout.durationText}
+              </span>
+            </button>
+          </Marker>
+        ))}
+
+        {/* Numbered Destination Pins (1, 2, 3, 4...) in #FF812E with white halo */}
+        {stops.map((stop, idx) => {
+          const isHovered = hoveredStopId === stop.id;
+          return (
+            <Marker
+              key={stop.id}
+              longitude={stop.lng}
+              latitude={stop.lat}
+              anchor="center"
+            >
+              <button
+                type="button"
+                aria-label={`Stop ${idx + 1}: ${stop.city}`}
+                onMouseEnter={() => onHoverStop(stop.id)}
+                onMouseLeave={() => onHoverStop(null)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSelectedPopupStop(stop);
+                  const relatedLeg = legs.find(
+                    (l) => l.fromStopId === stop.id || l.toStopId === stop.id
+                  );
+                  if (relatedLeg) onSelectLeg(relatedLeg.id);
+                }}
+                className={`group relative flex items-center justify-center rounded-full font-display font-bold text-white transition-transform duration-150 cursor-pointer ring-4 ring-white shadow-lg focus-visible:outline-none ${
+                  isHovered
+                    ? 'w-9 h-9 bg-[#E56B1A] scale-115 text-sm z-30'
+                    : 'w-8 h-8 bg-[#FF812E] hover:bg-[#E56B1A] hover:scale-110 text-xs z-20'
+                }`}
+              >
+                {idx + 1}
+                <span className="pointer-events-none absolute -bottom-7 left-1/2 -translate-x-1/2 whitespace-nowrap px-2 py-0.5 rounded-md bg-white/95 text-[#111827] text-[11px] font-semibold shadow-sm border border-neutral-200/80 opacity-0 group-hover:opacity-100 transition-opacity">
+                  {stop.city}
+                </span>
+              </button>
+            </Marker>
+          );
+        })}
+
+        {selectedPopupStop && (
+          <Popup
+            longitude={selectedPopupStop.lng}
+            latitude={selectedPopupStop.lat}
+            anchor="top"
+            offset={16}
+            onClose={() => setSelectedPopupStop(null)}
+          >
+            <div className="space-y-1 min-w-[150px]">
+              <div className="font-display font-bold text-sm text-[#111827]">
+                {selectedPopupStop.order}. {selectedPopupStop.city}
+              </div>
+              <div className="text-xs text-[#4B5563]">
+                {selectedPopupStop.country} ·{' '}
+                <span className="font-mono">{selectedPopupStop.iataCode}</span>
+              </div>
+              <div className="text-xs font-mono text-[#E56B1A] tabular-nums">
+                {selectedPopupStop.stayNights}n · {selectedPopupStop.arrivalDate}
+              </div>
+            </div>
+          </Popup>
+        )}
+      </Map>
+
+      {/* Glassmorphism Floating Transport Filter Bar */}
+      <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 max-w-[94%] overflow-x-auto">
+        <div
+          role="group"
+          aria-label="Filter map and timeline by transport mode"
+          className="inline-flex items-center gap-1 p-1.5 bg-white/85 backdrop-blur-md border border-white/40 shadow-lg rounded-full"
+        >
+          {(
+            [
+              { id: 'all', label: 'All', icon: Sparkles, count: modeCounts.all, dot: '#111827' },
+              { id: 'flight', label: 'Flights', icon: Plane, count: modeCounts.flight, dot: '#FF812E' },
+              { id: 'train', label: 'Trains', icon: TrainFront, count: modeCounts.train, dot: '#0D9488' },
+              { id: 'bus', label: 'Buses', icon: Bus, count: modeCounts.bus, dot: '#7C3AED' },
+            ] as const
+          ).map((item) => {
+            const Icon = item.icon;
+            const active = modeFilter === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => onChangeModeFilter(item.id)}
+                className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap shrink-0 transition-all cursor-pointer ${
+                  active
+                    ? 'bg-[#FF812E] text-white shadow-sm'
+                    : 'text-[#4B5563] hover:text-[#111827] hover:bg-white/70'
+                }`}
+              >
+                <Icon
+                  className="w-3.5 h-3.5"
+                  style={{ color: active ? '#FFFFFF' : item.dot }}
+                />
+                <span>{item.label}</span>
+                <span
+                  className={`font-mono text-[11px] tabular-nums ${
+                    active ? 'text-white/90' : 'text-neutral-400'
+                  }`}
+                >
+                  {item.count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Bottom Floating Mode Legend + Active Corridor Telemetry + Fit Route */}
+      <div className="absolute bottom-4 left-4 right-14 z-20 flex flex-wrap items-end justify-between gap-3 pointer-events-none">
+        {activeLeg && activeLegSelectedOption && (
+          <div className="pointer-events-auto bg-white/95 backdrop-blur-md border border-slate-200/80 shadow-md rounded-2xl px-3.5 py-2.5 max-w-md space-y-1">
+            <div className="flex items-center gap-2 text-xs font-semibold text-[#111827]">
+              <span>
+                {activeLeg.fromCode} → {activeLeg.toCode}
+              </span>
+              <span className="font-mono text-[#4B5563] font-normal tabular-nums">
+                {activeLeg.distanceKm.toLocaleString()} km
+              </span>
+              <span className="text-neutral-300" aria-hidden="true">
+                ·
+              </span>
+              <span className="font-mono text-[#E56B1A] tabular-nums">
+                Score: {activeLegSelectedOption.smartScore.toFixed(0)}
+              </span>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[#4B5563] tabular-nums">
+              <span className="font-medium text-[#111827]">
+                {activeLegSelectedOption.carrier} ·{' '}
+                {formatDuration(
+                  activeLegSelectedOption.inVehicleHours + activeLegSelectedOption.layoverHours
+                )}
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <span className="w-2.5 h-0.5 bg-[#FF812E] rounded-full" />
+                Flight
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <span className="w-2.5 h-0.5 bg-[#0D9488] rounded-full" />
+                Rail
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <span className="w-2.5 h-0.5 bg-[#7C3AED] rounded-full" />
+                Bus
+              </span>
+            </div>
+          </div>
+        )}
+
+        <button
+          type="button"
+          onClick={fitAllStops}
+          className="pointer-events-auto inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-white/95 backdrop-blur-md border border-slate-200/80 shadow-md text-xs font-semibold text-[#111827] hover:bg-white transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+        >
+          <LocateFixed className="w-3.5 h-3.5 text-[#FF812E]" />
+          <span>Fit Route</span>
+        </button>
+      </div>
+    </div>
+  );
+}
