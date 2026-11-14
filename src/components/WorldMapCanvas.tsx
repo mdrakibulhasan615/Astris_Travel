@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import greatCircle from '@turf/great-circle';
 import { point } from '@turf/helpers';
-import { Bus, LocateFixed, Plane, Ship, Sparkles, TrainFront } from 'lucide-react';
+import { BedDouble, Bus, LocateFixed, Plane, Ship, Sparkles, TrainFront } from 'lucide-react';
 import { setWorkerUrl } from 'maplibre-gl';
 import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import Map, {
@@ -17,7 +17,9 @@ import {
   ensureAirportConnectors,
   resolveAirport,
 } from '../../shared/airports.ts';
+import { groundGeometry } from '../../shared/groundRouting.ts';
 import { formatDuration } from '../../shared/smartScore.ts';
+import { SmartScoreBadge } from './SmartScoreBadge.tsx';
 import type {
   ModeFilter,
   TransitMode,
@@ -39,6 +41,8 @@ interface WorldMapCanvasProps {
   onChangeModeFilter: (mode: ModeFilter) => void;
   onHoverStop: (stopId: string | null) => void;
   onSelectLeg: (legId: string) => void;
+  /** Open the "Staying in [City]?" card for a stop. */
+  onOpenStays: (stopId: string) => void;
 }
 
 const OPENFREEMAP_POSITRON_STYLE = 'https://tiles.openfreemap.org/styles/positron';
@@ -146,6 +150,7 @@ export function WorldMapCanvas({
   onChangeModeFilter,
   onHoverStop,
   onSelectLeg,
+  onOpenStays,
 }: WorldMapCanvasProps) {
   const mapRef = useRef<MapRef | null>(null);
   const [selectedPopupStop, setSelectedPopupStop] = useState<TripStop | null>(null);
@@ -329,22 +334,9 @@ export function WorldMapCanvas({
             (nextSeg?.mode === 'flight' && nextSeg.fromCode === seg.toCode) ||
             (prevSeg?.mode === 'flight' && prevSeg.toCode === seg.fromCode);
 
-          const lineCoords: [number, number][] =
-            seg.waypoints && seg.waypoints.length >= 2
-              ? seg.waypoints
-              : isConnector
-                ? [
-                    [seg.fromLng, seg.fromLat],
-                    [seg.toLng, seg.toLat],
-                  ]
-                : [
-                  [seg.fromLng, seg.fromLat],
-                  [
-                    (seg.fromLng + seg.toLng) / 2 + 0.08,
-                    (seg.fromLat + seg.toLat) / 2 - 0.05,
-                  ],
-                  [seg.toLng, seg.toLat],
-                ];
+          // Ground legs follow the land network and are smoothed through their stations
+          // (shared/groundRouting.ts) rather than drawn as a chord across sea or mountains.
+          const { coordinates: lineCoords, stations } = groundGeometry(seg, { isConnector });
 
           const lineFeature: GeoJSON.Feature = {
             type: 'Feature',
@@ -371,20 +363,12 @@ export function WorldMapCanvas({
           }
 
           // Intermediate station / stop dots along ground polylines
-          if (lineCoords.length > 2) {
-            for (let w = 1; w < lineCoords.length - 1; w++) {
-              stationDotFeatures.push({
-                type: 'Feature',
-                geometry: {
-                  type: 'Point',
-                  coordinates: lineCoords[w],
-                },
-                properties: {
-                  mode: seg.mode,
-                  color: getModeColor(seg.mode),
-                },
-              });
-            }
+          for (const station of stations) {
+            stationDotFeatures.push({
+              type: 'Feature',
+              geometry: { type: 'Point', coordinates: station },
+              properties: { mode: seg.mode, color: getModeColor(seg.mode) },
+            });
           }
 
           if (seg.id === primarySegment.id) {
@@ -499,6 +483,19 @@ export function WorldMapCanvas({
     }
     return counts;
   }, [legs]);
+
+  // A place can be in the trip more than once (A → B → A). Its visits share one pin that lists
+  // every stop number, instead of stacking pins that hide each other.
+  const stopPins = useMemo(() => {
+    const pins: { key: string; lat: number; lng: number; visits: { stop: TripStop; index: number }[] }[] = [];
+    stops.forEach((stop, index) => {
+      const key = `${stop.lat.toFixed(3)},${stop.lng.toFixed(3)}`;
+      const pin = pins.find((p) => p.key === key);
+      if (pin) pin.visits.push({ stop, index });
+      else pins.push({ key, lat: stop.lat, lng: stop.lng, visits: [{ stop, index }] });
+    });
+    return pins;
+  }, [stops]);
 
   const activeLeg = legs.find((l) => l.id === highlightedLegId) ?? legs[0] ?? null;
   const activeLegSelectedOption = activeLeg
@@ -728,18 +725,21 @@ export function WorldMapCanvas({
         ))}
 
         {/* Numbered Destination Pins (1, 2, 3, 4...) in #FF812E with white halo */}
-        {stops.map((stop, idx) => {
-          const isHovered = hoveredStopId === stop.id;
+        {stopPins.map((pin) => {
+          const stop = pin.visits[0].stop;
+          const isHovered = pin.visits.some((v) => v.stop.id === hoveredStopId);
+          const label = pin.visits.map((v) => v.index + 1).join('·');
+          const isShared = pin.visits.length > 1;
           return (
             <Marker
-              key={stop.id}
-              longitude={stop.lng}
-              latitude={stop.lat}
+              key={pin.key}
+              longitude={pin.lng}
+              latitude={pin.lat}
               anchor="center"
             >
               <button
                 type="button"
-                aria-label={`Stop ${idx + 1}: ${stop.city}`}
+                aria-label={`Stop ${pin.visits.map((v) => v.index + 1).join(' and ')}: ${stop.city}`}
                 onMouseEnter={() => onHoverStop(stop.id)}
                 onMouseLeave={() => onHoverStop(null)}
                 onClick={(e) => {
@@ -751,12 +751,14 @@ export function WorldMapCanvas({
                   if (relatedLeg) onSelectLeg(relatedLeg.id);
                 }}
                 className={`group relative flex items-center justify-center rounded-full font-display font-bold text-white transition-transform duration-150 cursor-pointer ring-4 ring-white shadow-lg focus-visible:outline-none ${
+                  isShared ? 'px-2.5 min-w-8' : isHovered ? 'w-9' : 'w-8'
+                } ${
                   isHovered
-                    ? 'w-9 h-9 bg-[#E56B1A] scale-115 text-sm z-30'
-                    : 'w-8 h-8 bg-[#FF812E] hover:bg-[#E56B1A] hover:scale-110 text-xs z-20'
+                    ? 'h-9 bg-[#E56B1A] scale-115 text-sm z-30'
+                    : 'h-8 bg-[#FF812E] hover:bg-[#E56B1A] hover:scale-110 text-xs z-20'
                 }`}
               >
-                {idx + 1}
+                {label}
                 <span className="pointer-events-none absolute -bottom-7 left-1/2 -translate-x-1/2 whitespace-nowrap px-2 py-0.5 rounded-md bg-white/95 text-[#111827] text-[11px] font-semibold shadow-sm border border-neutral-200/80 opacity-0 group-hover:opacity-100 transition-opacity">
                   {stop.city}
                 </span>
@@ -781,9 +783,28 @@ export function WorldMapCanvas({
                 {selectedPopupStop.country} ·{' '}
                 <span className="font-mono">{selectedPopupStop.iataCode}</span>
               </div>
-              <div className="text-xs font-mono text-[#E56B1A] tabular-nums">
-                {selectedPopupStop.stayNights}n · {selectedPopupStop.arrivalDate}
-              </div>
+              {stops[0]?.id === selectedPopupStop.id ? (
+                <div className="text-xs font-mono text-[#E56B1A] tabular-nums">
+                  Trip start · departs {selectedPopupStop.departureDate}
+                </div>
+              ) : (
+                <>
+                  <div className="text-xs font-mono text-[#E56B1A] tabular-nums">
+                    {selectedPopupStop.stayNights}n · {selectedPopupStop.arrivalDate}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onOpenStays(selectedPopupStop.id);
+                      setSelectedPopupStop(null);
+                    }}
+                    className="mt-1 inline-flex items-center gap-1 rounded-lg bg-[#FF812E] px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-[#E56B1A] cursor-pointer"
+                  >
+                    <BedDouble className="h-3 w-3" aria-hidden="true" />
+                    Find stays in {selectedPopupStop.city}
+                  </button>
+                </>
+              )}
             </div>
           </Popup>
         )}
@@ -846,12 +867,7 @@ export function WorldMapCanvas({
               <span className="font-mono text-[#4B5563] font-normal tabular-nums">
                 {activeLeg.distanceKm.toLocaleString()} km
               </span>
-              <span className="text-neutral-300" aria-hidden="true">
-                ·
-              </span>
-              <span className="font-mono text-[#E56B1A] tabular-nums">
-                Score: {activeLegSelectedOption.smartScore.toFixed(0)}
-              </span>
+              <SmartScoreBadge score={activeLegSelectedOption.smartScore} size="sm" />
             </div>
 
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[#4B5563] tabular-nums">

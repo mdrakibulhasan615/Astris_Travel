@@ -66,15 +66,51 @@ const CITY_PRIMARY_AIRPORT: Record<string, string> = {
   OSA: 'KIX',
 };
 
+/**
+ * Airports that share a metropolitan IATA code. Merchants search by city (`LON`) and narrow to an
+ * airport (`STN`), so a ticket out of Stansted needs both. Single-airport cities use one code for
+ * both and are not listed.
+ */
+const AIRPORT_METRO: Record<string, string> = {
+  LHR: 'LON', LGW: 'LON', STN: 'LON', LTN: 'LON', LCY: 'LON', SEN: 'LON',
+  CDG: 'PAR', ORY: 'PAR', BVA: 'PAR',
+  FCO: 'ROM', CIA: 'ROM',
+  MXP: 'MIL', LIN: 'MIL', BGY: 'MIL',
+  JFK: 'NYC', LGA: 'NYC', EWR: 'NYC',
+  IAD: 'WAS', DCA: 'WAS', ORD: 'CHI', MDW: 'CHI',
+  YYZ: 'YTO', YTZ: 'YTO', YUL: 'YMQ',
+  HND: 'TYO', NRT: 'TYO', KIX: 'OSA', ITM: 'OSA',
+  ICN: 'SEL', GMP: 'SEL', PEK: 'BJS', PKX: 'BJS', PVG: 'SHA',
+  DMK: 'BKK', CGK: 'JKT', HLP: 'JKT', SZB: 'KUL', DWC: 'DXB', SAW: 'IST',
+  ARN: 'STO', BMA: 'STO', SVO: 'MOW', DME: 'MOW', VKO: 'MOW', OTP: 'BUH',
+  EZE: 'BUE', AEP: 'BUE', GIG: 'RIO', SDU: 'RIO', GRU: 'SAO', CGH: 'SAO',
+};
+
 type AirportResolver = (code: string) => AirportPoint | null;
 let externalResolver: AirportResolver | null = null;
+/** Airports learned at runtime (search results, API responses); see `registerAirports`. */
+const runtimeAirports: Record<string, AirportPoint> = {};
 
-/** Server registers the full `airports` dataset; the browser relies on the built-in table. */
+/** Server registers the full `airports` dataset; the browser relies on the tables in this file. */
 export function registerAirportResolver(resolver: AirportResolver | null): void {
   externalResolver = resolver;
 }
 
 const IATA_RE = /^[A-Za-z]{3}$/;
+
+/**
+ * Adds exact airport coordinates to the lookup. The browser has no airport dataset of its own, so
+ * it learns airports as it sees them (a stop picked from airport search, a flight segment in an
+ * API response). After that, optimistic client-side rebuilds anchor flights exactly too.
+ */
+export function registerAirports(points: AirportPoint[]): void {
+  for (const p of points) {
+    const code = (p.code || '').trim().toUpperCase();
+    if (!IATA_RE.test(code) || !Number.isFinite(p.lat) || !Number.isFinite(p.lng)) continue;
+    if (CORE_AIRPORTS[code] || CITY_PRIMARY_AIRPORT[code]) continue;
+    runtimeAirports[code] = { code, name: p.name || `${code} Airport`, lat: p.lat, lng: p.lng };
+  }
+}
 
 /** Maps a city code (LON) to its primary airport code (LHR); airport codes pass through. */
 export function toAirportCode(code: string): string {
@@ -82,12 +118,18 @@ export function toAirportCode(code: string): string {
   return CITY_PRIMARY_AIRPORT[upper] ?? upper;
 }
 
+/** Maps an airport code (STN) to its metropolitan code (LON); other codes pass through. */
+export function toMetroCode(code: string): string {
+  const upper = (code || '').trim().toUpperCase();
+  return AIRPORT_METRO[upper] ?? upper;
+}
+
 /** Exact airport coordinates for an airport *or* city code, or null when unknown. */
 export function resolveAirport(code: string): AirportPoint | null {
   if (!code || !IATA_RE.test(code.trim())) return null;
   const airportCode = toAirportCode(code);
-  const core = CORE_AIRPORTS[airportCode];
-  if (core) return core;
+  const known = CORE_AIRPORTS[airportCode] ?? runtimeAirports[airportCode];
+  if (known) return known;
   try {
     return externalResolver?.(airportCode) ?? null;
   } catch {

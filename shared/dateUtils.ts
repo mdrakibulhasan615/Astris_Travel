@@ -43,6 +43,20 @@ export function formatShortDate(isoDate: string): string {
   });
 }
 
+/**
+ * The first stop is where the trip starts: a departure point, not a stay. It has a single date
+ * (`arrivalDate === departureDate`) and contributes no nights. Its `stayNights` is left untouched
+ * and simply ignored, so dragging the stop to another position gives it its nights back.
+ */
+export function stopNights(stop: Pick<TripStop, 'stayNights'>, index: number): number {
+  return index === 0 ? 0 : Math.max(1, stop.stayNights);
+}
+
+/** Nights actually spent across the trip (the origin contributes none). */
+export function totalTripNights(stops: TripStop[]): number {
+  return stops.reduce((sum, stop, index) => sum + stopNights(stop, index), 0);
+}
+
 export function formatTripDateSpan(stops: TripStop[]): string {
   if (stops.length === 0) return 'Select dates';
   const first = stops[0].arrivalDate;
@@ -74,8 +88,12 @@ export function updateStopDatesAndCascade(
       ? prevStop.departureDate
       : newArrivalDate;
 
-  const stayNights = Math.max(1, diffDaysIso(clampedArrival, newDepartureDate));
-  const resolvedDeparture = addDaysIso(clampedArrival, stayNights);
+  // The origin only has a departure date; picking one must not invent a stay there
+  const isOrigin = targetIdx === 0;
+  const stayNights = isOrigin
+    ? stops[targetIdx].stayNights
+    : Math.max(1, diffDaysIso(clampedArrival, newDepartureDate));
+  const resolvedDeparture = isOrigin ? clampedArrival : addDaysIso(clampedArrival, stayNights);
 
   const result = stops.map((s) => ({ ...s }));
   result[targetIdx] = {
@@ -113,8 +131,10 @@ export function updateStopNightsAndCascade(
   targetStopId: string,
   deltaNights: number
 ): TripStop[] {
-  const target = stops.find((s) => s.id === targetStopId);
-  if (!target) return stops;
+  const targetIdx = stops.findIndex((s) => s.id === targetStopId);
+  // The origin has no nights to change
+  if (targetIdx <= 0) return stops;
+  const target = stops[targetIdx];
   const nextNights = Math.max(1, target.stayNights + deltaNights);
   const nextDeparture = addDaysIso(target.arrivalDate, nextNights);
   return updateStopDatesAndCascade(stops, targetStopId, target.arrivalDate, nextDeparture);
@@ -123,6 +143,7 @@ export function updateStopNightsAndCascade(
 /**
  * Recalculates sequential arrival/departure dates across all stops after drag-and-drop
  * reordering, anchoring on the earliest trip start date and preserving each stop's stayNights.
+ * Whichever stop ends up first becomes the origin and collapses to a single departure date.
  */
 export function recalculateDatesAfterReorder(
   reorderedStops: TripStop[],
@@ -149,7 +170,7 @@ export function recalculateDatesAfterReorder(
       }
     }
 
-    const nights = Math.max(1, stop.stayNights);
+    const nights = stopNights(stop, idx);
     const arrivalDate = cursorDate;
     const departureDate = addDaysIso(arrivalDate, nights);
     cursorDate = departureDate;

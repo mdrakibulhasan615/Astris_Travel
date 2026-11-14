@@ -61,12 +61,18 @@ export interface EnvKeySpec {
   fallback: string;
 }
 
-/** Keys the server actually reads. (DUFFEL_ACCESS_TOKEN / GEMINI_API_KEY are not used yet.) */
+/**
+ * Keys reported at startup. (DUFFEL_ACCESS_TOKEN / GEMINI_API_KEY are not used yet. The optional
+ * `*_TRACKING_TEMPLATE` keys and TWELVEGO_AFFILIATE_ID are read too but not reported as missing.)
+ */
 export const ENV_KEYS: EnvKeySpec[] = [
   { name: 'SERPAPI_KEY', purpose: 'live Google Flights search (SerpApi)', fallback: 'curated/synthesized corridors' },
   { name: 'UPSTASH_REDIS_REST_URL', purpose: '12-hour transit cache (Upstash Redis)', fallback: 'uncached queries' },
   { name: 'UPSTASH_REDIS_REST_TOKEN', purpose: '12-hour transit cache (Upstash Redis)', fallback: 'uncached queries' },
-  { name: 'TRAVELPAYOUTS_MARKER', purpose: 'affiliate attribution on booking links', fallback: 'un-attributed booking links (no commission)' },
+  { name: 'TRIPCOM_ALLIANCE_ID', purpose: 'Trip.com attribution on flight links', fallback: 'un-attributed Trip.com links (no commission)' },
+  { name: 'TRIPCOM_SID', purpose: 'Trip.com attribution on flight links', fallback: 'un-attributed Trip.com links (no commission)' },
+  { name: 'BOOKING_AID', purpose: 'Booking.com attribution on stay links', fallback: 'un-attributed Booking.com links (no commission)' },
+  { name: 'AGODA_CID', purpose: 'Agoda attribution on stay links', fallback: 'un-attributed Agoda links (no commission)' },
 ];
 
 const warned = new Set<string>();

@@ -1,15 +1,16 @@
 # Astris Travel — System & Architecture Reference
 
 > Source of truth for system design, the Smart Score (VTTS) engine, and the affiliate booking flow.
-> Last synced with the codebase: 2026-11-14. If you change a path, env var, endpoint, or scoring
+> Last synced with the codebase: 2026-11-14 (direct merchant links, ground corridors, stays). If you change a path, env var, endpoint, or scoring
 > constant, update this file in the same commit.
 
 ## 1. Project Overview & Core Philosophy
 **Astris Travel** is a multi-destination travel planning and booking app. Instead of dumping raw
-listings, it ranks multi-modal routes (flight / train / bus / ferry) with a **Smart Score** built on
-**VTTS (Value of Travel Time Savings)** tuned to the traveler's pacing and preferences, applies promo
-vouchers before ranking, and maps airport-to-airport paths. Outbound booking links are affiliate
-deep links.
+listings, it ranks multi-modal routes (flight / train / bus / ferry) **and places to stay** with a
+**Smart Score** built on **VTTS (Value of Travel Time Savings)** tuned to the traveler's pacing and
+preferences, applies promo vouchers before ranking, and maps airport-to-airport flights and
+land-following ground corridors. Outbound links go straight to the merchant (Trip.com, FlixBus, 12Go,
+Booking.com, Agoda) with the selected option's parameters filled in.
 
 ---
 
@@ -49,10 +50,12 @@ unprefixed keys (including `GEMINI_API_KEY`) are deliberately never exposed to t
 | `PORT` | no (3000) | `server.ts` | HTTP port |
 | `SERPAPI_KEY` | no | `server/transitService.ts` | Live Google Flights search (`engine=google_flights`). Absent → curated/synthesized corridors |
 | `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` | no | `server/transitService.ts` | 12-hour transit cache |
-| `TRAVELPAYOUTS_MARKER` | no | `shared/affiliate.ts` (configured in `transitService.ts`) | Partner marker, injected as `?marker=`. Absent → booking links work but are **not attributed** |
-| `TRAVELPAYOUTS_TRS` | no | same | Optional sub-id: sent as `marker.subid` (direct mode) or `trs` (redirect mode) |
-| `TRAVELPAYOUTS_LINK_MODE` | no (`direct`) | same | `direct` = `aviasales.com/search/...?marker=`; `redirect` = `tp.media/r?...&u=` |
-| `TRAVELPAYOUTS_CAMPAIGN_ID`, `TRAVELPAYOUTS_PROGRAM_ID` | no | same | Redirect mode only. Aviasales campaign (default `100`) / program (default `4114`) — verify in your Travelpayouts dashboard |
+| `TRIPCOM_ALLIANCE_ID`, `TRIPCOM_SID` | no | `shared/affiliate.ts` (configured in `transitService.ts`) | Trip.com partner pair, sent as `Allianceid` + `SID` on flight links. Both are needed. Absent → links work but are **not attributed** |
+| `BOOKING_AID` | no | same | Booking.com affiliate id, sent as `aid` on stay links |
+| `AGODA_CID` | no | same | Agoda partner id, sent as `cid` on stay links |
+| `TWELVEGO_AFFILIATE_ID` | no | same | 12Go partner id, sent as `z` on train / ferry / coach links |
+| `TRIPCOM_TRACKING_TEMPLATE`, `FLIXBUS_…`, `TWELVEGO_…`, `BOOKING_…`, `AGODA_…` | no | same | For programs run through a network (FlixBus on Awin, anything on Travelpayouts/CJ): an https URL containing `{url}`, which is replaced with the encoded deep link |
+| `FLIXBUS_CITY_LOOKUP` | no (on) | `server/flixbusService.ts` | `off` disables the FlixBus city-id lookup; FlixBus coaches then link to 12Go |
 | `DUFFEL_ACCESS_TOKEN` | **Phase 2 — not read by any code yet** | — | Reserved for native Duffel offers/orders |
 | `GEMINI_API_KEY`, `APP_URL` | no | — | AI Studio scaffolding; **not read by any code today** |
 
@@ -66,7 +69,10 @@ unprefixed keys (including `GEMINI_API_KEY`) are deliberately never exposed to t
 | **Fallback corridors** | `CURATED_CORRIDOR_OPTIONS` + `synthesizeCorridorOptions` | Hand-authored options for the default trip's corridors; every other pair is synthesized (flight / 1-stop / rail / coach) from great-circle distance. |
 | **Global Airport Data** | **`airports`** (npm) | `server/airportService.ts`: autocomplete (`searchAirports`) and IATA → exact tarmac lat/lng (`getAirportByIata`). Registered into `shared/airports.ts` at startup and used for every flight segment (§7). |
 | **Vouchers** | `VOUCHERS_CATALOG` (`shared/mockDataset.ts`) + `calculateVoucherDiscount` / `isVoucherCurrentlyValid` (`shared/smartScore.ts`) | Percentage or fixed discounts, `maxDiscountUsd` cap, `minSpendUsd`, mode and carrier restrictions, `validFrom`/`expiresAt`/`isActive`. Validated by `POST /api/vouchers/validate`. There is **no `voucherService.ts`**. |
-| **Affiliate Monetization** | **Travelpayouts** (Aviasales) | `shared/affiliate.ts` — see §6. |
+| **Affiliate Monetization** | **Trip.com, FlixBus, 12Go, Booking.com, Agoda** (direct) | `shared/affiliate.ts` — see §6. The former Travelpayouts/Aviasales and Rome2Rio links are gone; `TRAVELPAYOUTS_*` variables are no longer read. |
+| **FlixBus city ids** | flixbus.com public city autocomplete | `server/flixbusService.ts`: city name + coordinates → FlixBus UUID, cached 24 h. Undocumented endpoint: every failure means "no FlixBus link". |
+| **Ground corridors** | built-in network (no API) | `shared/groundRouting.ts` — see §7. |
+| **Stays** | built-in estimates (no inventory API) | `shared/stays.ts` — see §10. |
 | **Ticket Fulfillment** | **Duffel API** *(Phase 2, not implemented)* | Planned: offer requests, single-offer pricing, ancillaries, order creation. `@duffel/api` is not yet a dependency. |
 
 ---
@@ -77,28 +83,33 @@ unprefixed keys (including `GEMINI_API_KEY`) are deliberately never exposed to t
 ├── server/
 │   ├── env.ts                   # dotenv bootstrap (.env.local → .env), getEnv(), missing-key warnings — import FIRST
 │   ├── transitService.ts        # SerpApi integration, Redis cache wrapper, coordinate resolution, fallback corridors
-│   └── airportService.ts        # `airports` dataset search + IATA lookup
+│   ├── airportService.ts        # `airports` dataset search + IATA lookup
+│   └── flixbusService.ts        # FlixBus city-id lookup (cached) for FlixBus deep links
 ├── shared/                      # Imported by server AND client
 │   ├── smartScore.ts            # VTTS / Smart Score engine, vouchers math, corridor synthesis, leg building
-│   ├── affiliate.ts             # Travelpayouts / Aviasales deep-link builder
-│   ├── airports.ts              # Airport anchoring: exact airport coords, city→airport codes, ground connectors
+│   ├── affiliate.ts             # Direct merchant deep links: Trip.com, FlixBus, 12Go, Booking.com, Agoda
+│   ├── airports.ts              # Airport anchoring: exact airport coords, city↔airport codes, ground connectors
+│   ├── groundRouting.ts         # Land network + Dijkstra + Catmull-Rom smoothing for ground polylines
+│   ├── stays.ts                 # Stay categories per stop, stay Smart Score, partner links
 │   ├── types.ts                 # TransitOption, SmartScoreBreakdown, TravelerProfile, Trip, ...
 │   ├── mockDataset.ts           # Default trip, destination hubs, vouchers, curated corridors
-│   └── dateUtils.ts             # Stop date recalculation after reorder
+│   └── dateUtils.ts             # Stop date recalculation after reorder; origin = departure date only
 ├── src/
 │   ├── main.tsx                 # React root wrapped in <ErrorBoundary>
 │   ├── App.tsx                  # State owner: trip, optimistic recompute, API calls, layout
 │   └── components/
 │       ├── ErrorBoundary.tsx          # Render-error containment (app-level + map-level)
 │       ├── TopBar.tsx
-│       ├── SortableStopCard.tsx       # Draggable stop in the timeline
-│       ├── LegTransitPanel.tsx        # Ranked options per leg: score, flag chips, Book button
+│       ├── SortableStopCard.tsx       # Draggable stop in the timeline (no night counter on the origin)
+│       ├── LegTransitPanel.tsx        # Ranked options per leg: score, flag chips, merchant button
+│       ├── StayPanel.tsx              # "Staying in [City]?" card: ranked stay categories + Booking.com / Agoda
+│       ├── SmartScoreBadge.tsx        # The Smart Score pill used on every transport and stay card
 │       ├── VttsControlPanel.tsx       # Pacing slider / preset tiers
 │       ├── VoucherDrawer.tsx          # Promo entry + savings preview
 │       ├── AddStopModal.tsx           # Airport autocomplete (`/api/airports/search`)
 │       ├── MultiDestDatePickerModal.tsx
 │       ├── RouteOptimizerModal.tsx    # Two-stage optimizer results
-│       └── WorldMapCanvas.tsx         # MapLibre map: airport-to-airport flight arcs, dashed airport connectors, airport nodes
+│       └── WorldMapCanvas.tsx         # MapLibre map: airport-to-airport flight arcs, dashed airport connectors, land-following ground lines
 └── backend/                     # FastAPI + PostgreSQL schema prototype (no scoring; see §2)
     ├── main.py  models.py  geo.py  database.py  SCHEMA.sql  data/mock_trip.json
 ```
@@ -111,6 +122,7 @@ Imports use explicit `.ts`/`.tsx` extensions (`allowImportingTsExtensions`).
 | `GET /api/trips/default` | Default trip; legs go through the same live pipeline as `/api/legs/recompute` (9 s budget, then labelled sample data) |
 | `GET /api/destinations`, `GET /api/airports/search?q=&limit=` | Airport hubs / autocomplete |
 | `GET /api/vouchers`, `POST /api/vouchers/validate` | Catalog; validate a code against current legs |
+| `GET /api/affiliate/config` | Validated partner ids for the browser's link builders (public by nature: every link carries them) |
 | `GET\|POST /api/transit/query` | Single-corridor query through the Redis wrapper (`X-Cache-*` headers) |
 | `GET /api/transit/cache/status` | Redis health |
 | `POST /api/legs/recompute` | Re-query every leg after stop/VTTS/voucher change (concurrent, with per-leg fallback) |
@@ -151,30 +163,53 @@ reintroduce scoring in `backend/`; mirror the output types only (`SmartScoreBrea
 
 ---
 
-## 6. Affiliate Booking Flow — `shared/affiliate.ts`
+## 6. Direct Merchant Links — `shared/affiliate.ts`
 
-1. Every code path that produces options attaches `bookingUrl` via `attachBookingUrls`:
-   `buildLegsFromStops` (default trip, optimizer, client optimistic updates) and
-   `queryTransitWithCache` (cache hit, live SerpApi, fallback). Links are rebuilt on each response,
-   so a changed marker, date, or route always wins over stale cached values.
-2. **Flights** → Aviasales search deep link `https://www.aviasales.com/search/{ORIGIN}{DDMM}{DEST}[{DDMM}]{adults}`
-   — e.g. `KUL2111IST1` (21 Nov, 1 adult) or `KUL2111IST25111` (return 25 Nov). DDMM is strictly
-   zero-padded day + month from the stop's departure date (`2026-03-05` → `0503`); impossible dates
-   (Feb 31) and return-before-departure are rejected. Adults come from `travelers` (clamped 1–9).
-   With `TRAVELPAYOUTS_MARKER` set the link gets `?marker=<marker>[.<subid>]`; in `redirect` mode it is
-   wrapped as `https://tp.media/r?marker=…&p=…&campaign_id=…[&trs=…]&u=<encoded search url>`.
-   Markers/sub-ids/campaign ids are format-validated at startup; invalid values are dropped with a warning.
-3. **Invalid route/date** (non-IATA code, malformed date) → Google Flights search URL, never an empty link.
-4. **Train / bus / ferry** → Rome2Rio route page (no affiliate program wired yet; un-attributed).
-5. The server configures credentials at startup (`configureAffiliate`). The browser has none, so
-   optimistic client-side options carry plain links until the server response replaces them
-   (typically within one round trip).
-6. UI: `LegTransitPanel` shows a **Book** button per option (and for the selected option when the
-   leg is collapsed), `target="_blank"`, `rel="sponsored noopener noreferrer"`.
-7. In development the server logs each distinct generated URL (`[Affiliate] flight KUL→IST …`) and the
-   browser logs the URL on click, so the exact link can be inspected before it opens.
-8. SerpApi's `booking_token` is not used: resolving it costs an extra paid request per option, so
-   attribution goes through Aviasales instead.
+Every outbound link lands on the site that sells the ticket or room, with the search already filled
+in from the card that was clicked. No metasearch page sits in between. The URL formats below were
+checked against the live sites (2026-11).
+
+| Option | Merchant | URL |
+| :--- | :--- | :--- |
+| Flight | **Trip.com** | `trip.com/flights/showfarefirst?dcity=ist&acity=lon&dairport=saw&aairport=stn&ddate=2026-11-26&triptype=ow&class=y&quantity=2&airline=PC` |
+| FlixBus coach | **FlixBus** | `shop.flixbus.com/search?departureCity={uuid}&arrivalCity={uuid}&rideDate=30.11.2026&adult=2` |
+| Train, ferry, other coaches | **12Go** | `12go.asia/en/travel/london/paris?date=2026-11-30&people=2` |
+| Stay | **Booking.com** | `booking.com/searchresults.html?ss=Paris, France&checkin=…&checkout=…&group_adults=2&no_rooms=1&nflt=class=4;ht_id=204` |
+| Stay | **Agoda** | `agoda.com/search?city=15470&checkIn=…&checkOut=…&los=4&rooms=1&adults=2` |
+
+**Exact ticket matching** (`buildTripcomFlightUrl`):
+- **Airports** come from the option's own first and last flight segments, not the stop: a London stop
+  is `LON`, but a Pegasus fare leaves Sabiha Gökçen for Stansted, so the link says
+  `dcity=ist&dairport=saw … acity=lon&aairport=stn` (`toMetroCode` maps airport → city code).
+- **Date** is the provider's `departureAt` when present, otherwise the leg's departure date. Impossible
+  dates (Feb 31) are rejected.
+- **Passengers** come from `trip.travelers` (1–9; the stepper in the trip header).
+- **Airline** (`airline=PC`) is passed only when one real carrier operates the whole ticket. Estimated
+  options use made-up services and interline tickets have no single airline; filtering either would
+  land on an empty page, so those links carry route, date and passengers only.
+- An unusable route or date links to the merchant's own search page, never an empty URL.
+
+**Ground:** a coach branded FlixBus gets a FlixBus link when the server resolved both city ids
+(`server/flixbusService.ts`); everything else on the ground goes to 12Go by city slug.
+
+**Stays:** `buildBookingStayUrl` passes city, check-in/out, adults, rooms and the card's property filter
+(`class=N` stars, `ht_id` 204 hotel / 203 hostel / 201 apartment). Agoda's search accepts only numeric
+city ids, so `AGODA_CITY_IDS` (read from Agoda's own city pages) decides whether an Agoda button is
+shown at all; an unknown city gets Booking.com only rather than an approximate Agoda page.
+
+**Attribution:** the merchant's own parameter is appended to the same URL (`Allianceid`+`SID`, `aid`,
+`cid`, `z`). Programs that run through a network use a per-merchant tracking template whose `{url}` is
+replaced by the encoded deep link. The server validates ids at startup (`configureAffiliate`) and the
+browser fetches the same ids from `/api/affiliate/config`, so client-built links (stays, optimistic
+transport links) are attributed too. FlixBus ids exist only server-side: an optimistic coach link is a
+12Go link until the server response replaces it.
+
+**Where links are attached:** `attachBookingUrls` in `buildLegsFromStops` (default trip, optimizer,
+optimistic updates) and `queryTransitWithCache` (cache hit, live, fallback); it sets `bookingUrl` and
+`bookingProvider` and always overwrites stale values. `LegTransitPanel` labels the button with the
+merchant (`Book on Trip.com · $218` for live fares, `Find on 12Go` for sample/estimated options),
+`target="_blank"`, `rel="sponsored noopener noreferrer"`. In development the server logs each distinct
+URL and the browser logs the URL on click.
 
 ---
 
@@ -195,15 +230,35 @@ ground travel to/from the airport is a *separate* connecting segment.
   hit, live SerpApi, fallback). SerpApi hops are resolved from each hop's own `departure_airport.id` /
   `arrival_airport.id`, so SAW vs IST is preserved. Synthesized 1-stop flights connect through a real
   hub airport (`pickConnectionHub`), not a computed midpoint.
-- Client fallback: the browser only has the built-in table, so a synthesized flight to an airport outside
-  it uses a nearby offset until the server recompute (which has the full dataset) replaces it.
+- Client: the browser has the built-in table plus every airport it has seen (`registerAirports`: flight
+  segments in API responses, stops picked from airport search). An airport in neither can only belong to
+  a stop picked from airport search, whose coordinates are the airport's own, so the stop is the
+  fallback. There are no invented offsets, and a live fare with an airport no dataset knows is dropped.
 
 ### Map rendering (`WorldMapCanvas.tsx`)
 - Flight segments → great-circle arcs between airport nodes only (orange, solid) with labelled IATA
   **airport nodes** at each endpoint.
-- Ground segments that lead to/from a flight's airport are **connectors**: straight, dashed, in their own
-  GeoJSON source/layer, so they never merge into the flight line. Other ground legs (intercity rail/bus)
-  keep their solid polylines and station dots.
+- Ground segments that lead to/from a flight's airport are **connectors**: dashed, in their own GeoJSON
+  source/layer, so they never merge into the flight line. Curated connectors follow their real alignment
+  (`CONNECTOR_TRACKS` in `mockDataset.ts`); unknown ones are a shallow arc.
+- Other ground legs (intercity rail/bus) are solid lines drawn by `groundGeometry`
+  (`shared/groundRouting.ts`): the segment's `waypoints` (stations) are smoothed with a centripetal
+  Catmull-Rom curve, and a segment without waypoints is routed over the land network first. Station dots
+  mark the stations, not polyline vertices.
+- A place visited more than once shares one pin listing every stop number (`1·5`).
+
+### Ground corridors (`shared/groundRouting.ts`)
+A hand-built graph of ~300 rail/road junction cities and the fixed links between landmasses (Channel
+Tunnel, Øresund, Great Belt, Bosphorus, Seikan, King Fahd Causeway). `planGroundCorridor(from, to)`
+snaps both ends to the network (≤220 km), runs Dijkstra and returns:
+- `routed`: the junctions in order and the routed distance. `synthesizeCorridorOptions` stores them as
+  the segment's `waypoints` and uses the routed distance for duration, price and CO₂.
+- `none`: both ends are on the network but not connected by land (Singapore → Jakarta, Dublin → London),
+  or the land route is several times the direct distance (Helsinki → Tallinn). No train or coach is
+  synthesized.
+- `unknown`: an end is outside the network. The straight-line estimate is kept and the map draws a
+  neutral arc.
+It is not a routing engine: lines follow corridors between junction cities, not individual tracks.
 - The map re-applies anchoring/connectors defensively before drawing, and a flight with no segment data
   falls back to the leg's airports rather than city centres.
 
@@ -236,3 +291,29 @@ ground travel to/from the airport is a *separate* connecting segment.
 - Client: optimistic update first, server reconcile second; stale `recompute` responses are discarded
   via a monotonic request id. `<ErrorBoundary>` wraps the app and, separately, the map.
 - Leg ids are unique per itinerary (`buildLegIds` suffixes repeated corridors `-2`, `-3`).
+
+## 10. Itinerary Rules & Stays
+
+- **Stops may repeat.** Nothing checks uniqueness: a city can be added any number of times (the add-stop
+  modal shows `In trip ×N` and still adds). Stop ids are unique per visit. Two consecutive visits to the
+  same place (`isSamePlace`) produce a leg with no options, rendered as "no transport needed", and never
+  query the flight API.
+- **The origin is a departure point.** Stop 0 has one date (`arrivalDate === departureDate`), no night
+  counter, and contributes no nights (`stopNights`, `totalTripNights` in `dateUtils.ts`). Its `stayNights`
+  is kept but ignored, so a stop dragged out of first place gets its nights back.
+- **Stays** (`shared/stays.ts`, `StayPanel.tsx`): every stop after the origin gets a "Staying in [City]?
+  Find and compare places to stay" card under it in the timeline, and the **Stays** tab lists them all.
+  There is no hotel inventory API, so a card ranks six *categories* (hostel … 5★) with an estimated
+  nightly price from a city cost index, labelled **Estimate**; no property names or quoted rates are
+  invented. Each category links to Booking.com / Agoda with matching city, dates, guests, rooms and filter.
+- **Stay Smart Score** (`computeStaySmartScore`, lower is better, same weights and hourly rate *r* as §5):
+
+  ```text
+  score = priceWeight × (nightly × nights)
+        + timeWeight  × ( commute + comfort )
+  commute = nights × 4 trips × minutesToCentre/60 × r × adults
+  comfort = nights × 10 h × comfortMultiplier × r × adults
+  ```
+  `comfortMultiplier` (dorm 0.7 … 5★ 0) is the stay-side counterpart of the sleeper's 0.4× in-vehicle
+  multiplier. A low *r* ranks hostels first; raising the pacing slider moves the ranking up-market.
+  Hostel prices are per bed (× adults); other categories per room (`ceil(adults / 2)` rooms).
