@@ -18,17 +18,22 @@ import {
   createDefaultTrip,
 } from './shared/mockDataset.ts';
 import {
+  buildLegIds,
   buildLegsFromStops,
   calculateVoucherDiscount,
   haversineDistanceKm,
+  isVoucherCurrentlyValid,
   round2,
+  sanitizeHourlyRate,
 } from './shared/smartScore.ts';
 import type {
   OptimizationCandidate,
   RouteOptimizationResult,
   TransitMode,
+  TravelerProfile,
   TripLeg,
   TripStop,
+  Voucher,
   VoucherValidationResult,
 } from './shared/types.ts';
 
@@ -40,6 +45,28 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const PORT = Number(process.env.PORT || 3000);
+
+/** Accepts only known profile keys with sane types; everything else is dropped. */
+function sanitizeProfile(raw: unknown): Partial<TravelerProfile> | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const r = raw as Record<string, unknown>;
+  const out: Partial<TravelerProfile> = {};
+  if (r.priceWeight !== undefined && Number.isFinite(Number(r.priceWeight))) out.priceWeight = Number(r.priceWeight);
+  if (r.timeWeight !== undefined && Number.isFinite(Number(r.timeWeight))) out.timeWeight = Number(r.timeWeight);
+  if (r.allowRedEyes !== undefined) out.allowRedEyes = r.allowRedEyes === true || r.allowRedEyes === 'true';
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/** Case-insensitive code match against the catalog, excluding expired / inactive vouchers. */
+function resolveActiveVouchers(codes: unknown): Voucher[] {
+  if (!Array.isArray(codes)) return [];
+  const wanted = new Set(
+    codes.filter((c): c is string => typeof c === 'string').map((c) => c.trim().toUpperCase())
+  );
+  return VOUCHERS_CATALOG.filter(
+    (v) => wanted.has(v.code.toUpperCase()) && isVoucherCurrentlyValid(v)
+  );
+}
 
 function getPermutations<T>(items: T[]): T[][] {
   if (items.length <= 1) return [items];
@@ -139,12 +166,12 @@ async function startServer() {
       const destination = String(req.query.destination || '').trim();
       const date = String(req.query.date || '').trim() || '2026-11-21';
       const mode = (String(req.query.mode || 'all').trim().toLowerCase()) as 'all' | TransitMode;
-      const hourlyRate = Number(req.query.hourlyRate || 15);
+      const hourlyRate = sanitizeHourlyRate(req.query.hourlyRate ?? 15);
       const voucherCodesParam = String(req.query.voucherCodes || '').trim();
       const appliedCodes = voucherCodesParam
         ? voucherCodesParam.split(',').map((c) => c.trim()).filter(Boolean)
         : [];
-      const activeVouchers = VOUCHERS_CATALOG.filter((v) => appliedCodes.includes(v.code));
+      const activeVouchers = resolveActiveVouchers(appliedCodes);
 
       if (!origin || !destination) {
         return res.status(400).json({
@@ -159,6 +186,12 @@ async function startServer() {
         mode,
         hourlyRateUsd: hourlyRate,
         activeVouchers,
+        travelerProfile: sanitizeProfile({
+          priceWeight: req.query.priceWeight,
+          timeWeight: req.query.timeWeight,
+          allowRedEyes: req.query.allowRedEyes,
+        }),
+        passengers: Number(req.query.passengers) || 1,
       });
 
       res.setHeader('X-Cache-Key', result.cacheKey);
@@ -181,6 +214,8 @@ async function startServer() {
         mode = 'all',
         hourlyRate = 15,
         appliedVoucherCodes = [],
+        travelerProfile,
+        passengers = 1,
       } = req.body as {
         origin: string;
         destination: string;
@@ -188,6 +223,8 @@ async function startServer() {
         mode?: 'all' | TransitMode;
         hourlyRate?: number;
         appliedVoucherCodes?: string[];
+        travelerProfile?: Partial<TravelerProfile>;
+        passengers?: number;
       };
 
       if (!origin || !destination) {
@@ -196,15 +233,21 @@ async function startServer() {
         });
       }
 
-      const activeVouchers = VOUCHERS_CATALOG.filter((v) => appliedVoucherCodes.includes(v.code));
+      if (typeof origin !== 'string' || typeof destination !== 'string') {
+        return res.status(400).json({ error: '"origin" and "destination" must be strings.' });
+      }
+
+      const activeVouchers = resolveActiveVouchers(appliedVoucherCodes);
 
       const result = await queryTransitWithCache({
         origin,
         destination,
         date,
         mode,
-        hourlyRateUsd: hourlyRate,
+        hourlyRateUsd: sanitizeHourlyRate(hourlyRate),
         activeVouchers,
+        travelerProfile: sanitizeProfile(travelerProfile),
+        passengers: Number(passengers) || 1,
       });
 
       res.setHeader('X-Cache-Key', result.cacheKey);
@@ -220,29 +263,39 @@ async function startServer() {
 
   // Recompute legs when stops change, VTTS changes, or vouchers toggle (with Redis caching wrapper)
   app.post('/api/legs/recompute', async (req, res) => {
+   try {
     const {
       stops = [],
       hourlyTimeValue = 15,
       appliedVoucherCodes = [],
       previousSelectedMap = {},
+      travelerProfile: rawProfile,
+      travelers = 1,
     } = req.body as {
       stops: TripStop[];
       hourlyTimeValue: number;
+      travelerProfile?: Partial<TravelerProfile>;
+      travelers?: number;
       appliedVoucherCodes: string[];
       previousSelectedMap?: Record<string, string>;
     };
 
+    if (!Array.isArray(stops)) {
+      return res.status(400).json({ error: '"stops" must be an array of TripStop objects.' });
+    }
+    const rate = sanitizeHourlyRate(hourlyTimeValue);
     const normalizedStops = stops.map((s, idx) => ({ ...s, order: idx + 1 }));
-    const activeVouchers = VOUCHERS_CATALOG.filter((v) =>
-      appliedVoucherCodes.includes(v.code)
-    );
+    const activeVouchers = resolveActiveVouchers(appliedVoucherCodes);
+    const legIds = buildLegIds(normalizedStops);
+    const profile = sanitizeProfile(rawProfile);
+    const passengers = Number(travelers) || 1;
 
     // Query each corridor transit options concurrently via Upstash Redis caching wrapper
-    const legPromises = [];
+    const legPromises: Promise<TripLeg | undefined>[] = [];
     for (let i = 0; i < normalizedStops.length - 1; i++) {
       const fromStop = normalizedStops[i];
       const toStop = normalizedStops[i + 1];
-      const legId = `leg-${fromStop.iataCode.toLowerCase()}-${toStop.iataCode.toLowerCase()}`;
+      const legId = legIds[i];
       const distanceKm = haversineDistanceKm(fromStop.lat, fromStop.lng, toStop.lat, toStop.lng);
 
       legPromises.push(
@@ -251,12 +304,14 @@ async function startServer() {
           destination: toStop.iataCode,
           date: fromStop.departureDate,
           mode: 'all',
-          hourlyRateUsd: hourlyTimeValue,
+          hourlyRateUsd: rate,
           activeVouchers,
+          travelerProfile: profile,
+          passengers,
           fromStop,
           toStop,
         }).then((result) => {
-          const rankedOptions = result.options;
+          const rankedOptions = result.options.map((o) => ({ ...o, legId }));
           const prevSelected = previousSelectedMap?.[legId];
           const validPrev = rankedOptions.some((o) => o.id === prevSelected);
 
@@ -276,63 +331,89 @@ async function startServer() {
         }).catch((err) => {
           console.warn(`[Transit Cache] Failed leg query for ${fromStop.iataCode}->${toStop.iataCode}, using synchronous fallback:`, err);
           // Graceful fallback to synchronous builder if query fails
-          const fallbackLegs = buildLegsFromStops(
+          const fallback = buildLegsFromStops(
             [fromStop, toStop],
             CURATED_CORRIDOR_OPTIONS,
             VOUCHERS_CATALOG,
-            hourlyTimeValue,
+            rate,
             activeVouchers,
-            previousSelectedMap
-          );
-          return fallbackLegs[0];
+            undefined,
+            { profile, passengers }
+          )[0];
+          if (!fallback) return undefined;
+          // A 2-stop rebuild always yields the base id; restore this leg's (possibly suffixed) id
+          const prevSelected = previousSelectedMap?.[legId];
+          const leg: TripLeg = {
+            ...fallback,
+            id: legId,
+            selectedOptionId: fallback.transitOptions.some((o) => o.id === prevSelected)
+              ? prevSelected!
+              : fallback.selectedOptionId,
+          };
+          return leg;
         })
       );
     }
 
     const legs = await Promise.all(legPromises);
     res.json({ stops: normalizedStops, legs: legs.filter(Boolean) });
+   } catch (err: any) {
+    // Express 4 does not catch rejected async handlers; without this the request hangs forever
+    console.error('[Legs Recompute API] Error:', err);
+    res.status(500).json({ error: 'Failed to recompute legs', details: err?.message });
+   }
   });
 
   // Two-Stage Global Route Optimizer
   app.post('/api/optimize-route', (req, res) => {
     const {
       stops = [],
-      hourlyTimeValue = 15,
+      hourlyTimeValue: rawHourlyTimeValue = 15,
       appliedVoucherCodes = [],
       lockOrigin = true,
+      travelerProfile: rawProfile,
+      travelers = 1,
     } = req.body as {
       stops: TripStop[];
       hourlyTimeValue: number;
+      travelerProfile?: Partial<TravelerProfile>;
+      travelers?: number;
       appliedVoucherCodes: string[];
       lockOrigin?: boolean;
     };
 
-    if (stops.length < 2) {
+    if (!Array.isArray(stops) || stops.length < 2) {
       return res.status(400).json({ error: 'At least 2 stops are required to optimize.' });
     }
 
-    const activeVouchers = VOUCHERS_CATALOG.filter((v) =>
-      appliedVoucherCodes.includes(v.code)
-    );
+    const hourlyTimeValue = sanitizeHourlyRate(rawHourlyTimeValue);
+    const activeVouchers = resolveActiveVouchers(appliedVoucherCodes);
+    const scoring = { profile: sanitizeProfile(rawProfile), passengers: Number(travelers) || 1 };
 
     const originalLegs = buildLegsFromStops(
       stops,
       CURATED_CORRIDOR_OPTIONS,
       VOUCHERS_CATALOG,
       hourlyTimeValue,
-      activeVouchers
+      activeVouchers,
+      undefined,
+      scoring
     );
     const originalSummary = summarizeLegs(originalLegs);
 
     // Stage 1: Evaluate all geographical permutations (capped safely at <= 7 permutable stops)
     const origin = lockOrigin ? stops[0] : null;
     const pool = lockOrigin ? stops.slice(1) : stops;
+    // Only the first 6 permutable stops are reordered (6! = 720 candidates). Stops beyond the cap
+    // are kept in their original order after the permuted block; previously they were silently
+    // dropped from optimizedStops, deleting destinations from the trip on "Apply".
     const cappedPool = pool.slice(0, 6);
+    const fixedTail = pool.slice(6);
     const perms = getPermutations(cappedPool);
 
     const stage1Ranked = perms
       .map((perm) => {
-        const candidateStops = (origin ? [origin, ...perm] : perm).map((s, idx) => ({
+        const candidateStops = [...(origin ? [origin] : []), ...perm, ...fixedTail].map((s, idx) => ({
           ...s,
           order: idx + 1,
         }));
@@ -355,7 +436,9 @@ async function startServer() {
         CURATED_CORRIDOR_OPTIONS,
         VOUCHERS_CATALOG,
         hourlyTimeValue,
-        activeVouchers
+        activeVouchers,
+        undefined,
+        scoring
       );
       const stats = summarizeLegs(legs);
       return {
@@ -416,7 +499,7 @@ async function startServer() {
       legs: TripLeg[];
     };
 
-    const normalizedCode = code.trim().toUpperCase();
+    const normalizedCode = typeof code === 'string' ? code.trim().toUpperCase() : '';
     const voucher = VOUCHERS_CATALOG.find(
       (v) => v.code.toUpperCase() === normalizedCode
     );
@@ -431,10 +514,21 @@ async function startServer() {
       return res.json(invalid);
     }
 
+    if (!isVoucherCurrentlyValid(voucher)) {
+      const expired: VoucherValidationResult = {
+        valid: false,
+        reason: `Code "${voucher.code}" is not currently active (valid until ${voucher.expiresAt}).`,
+        eligibleLegIds: [],
+        estimatedSavingsUsd: 0,
+      };
+      return res.json(expired);
+    }
+
     const eligibleLegIds: string[] = [];
     let estimatedSavingsUsd = 0;
 
-    for (const leg of legs) {
+    for (const leg of Array.isArray(legs) ? legs : []) {
+      if (!Array.isArray(leg?.transitOptions)) continue;
       const bestOnLeg = leg.transitOptions.reduce((maxSav, opt) => {
         const sav = calculateVoucherDiscount(opt, voucher);
         return sav > maxSav ? sav : maxSav;
@@ -480,4 +574,7 @@ async function startServer() {
   });
 }
 
-startServer();
+startServer().catch((err) => {
+  console.error('[Astris] Server failed to start:', err);
+  process.exit(1);
+});

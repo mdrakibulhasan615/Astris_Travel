@@ -67,7 +67,7 @@ CREATE TABLE transit_options (
     duration_minutes INT NOT NULL,
     layover_minutes INT DEFAULT 0,
     stops_count INT DEFAULT 0,
-    smart_score DECIMAL(10, 2) NOT NULL, -- Lower is better: price + (hours * time_value)
+    smart_score DECIMAL(10, 2) NOT NULL, -- Lower is better; computed by shared/smartScore.ts (canonical VTTS engine)
     
     -- Booking & Cache TTL
     booking_url TEXT NOT NULL,

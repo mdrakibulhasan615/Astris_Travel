@@ -53,6 +53,7 @@ import { TopBar } from './components/TopBar.tsx';
 import { VoucherDrawer } from './components/VoucherDrawer.tsx';
 import { VttsControlPanel } from './components/VttsControlPanel.tsx';
 import { WorldMapCanvas } from './components/WorldMapCanvas.tsx';
+import { ErrorBoundary } from './components/ErrorBoundary.tsx';
 
 export default function App() {
   const [trip, setTrip] = useState<Trip>(() => createDefaultTrip());
@@ -83,6 +84,8 @@ export default function App() {
   const [isOptimizing, setIsOptimizing] = useState(false);
   const [optimizerResult, setOptimizerResult] = useState<RouteOptimizationResult | null>(null);
 
+  // Monotonic id for /api/legs/recompute so a slow, older response can't overwrite a newer reorder
+  const recomputeRequestIdRef = useRef(0);
   const smartScoreSectionRef = useRef<HTMLDivElement | null>(null);
   const timelineSectionRef = useRef<HTMLDivElement | null>(null);
 
@@ -149,7 +152,8 @@ export default function App() {
         vouchers,
         nextHourlyRate,
         activeVouchers,
-        previousSelectedMap
+        previousSelectedMap,
+        { profile: trip.travelerProfile, passengers: trip.travelers }
       );
 
       setTrip((prev) => ({
@@ -162,6 +166,7 @@ export default function App() {
         appliedVoucherCodes: nextVoucherCodes,
       }));
 
+      const requestId = ++recomputeRequestIdRef.current;
       try {
         const res = await fetch('/api/legs/recompute', {
           method: 'POST',
@@ -171,10 +176,13 @@ export default function App() {
             hourlyTimeValue: nextHourlyRate,
             appliedVoucherCodes: nextVoucherCodes,
             previousSelectedMap,
+            travelerProfile: trip.travelerProfile,
+            travelers: trip.travelers,
           }),
         });
         if (res.ok) {
           const data: { stops: TripStop[]; legs: TripLeg[] } = await res.json();
+          if (requestId !== recomputeRequestIdRef.current) return; // superseded by a newer edit
           setTrip((prev) => ({
             ...prev,
             startDate: data.stops[0]?.arrivalDate ?? prev.startDate,
@@ -187,7 +195,7 @@ export default function App() {
         // Optimistic state already applied
       }
     },
-    [trip.hourlyTimeValue, trip.appliedVoucherCodes, trip.legs, vouchers]
+    [trip.hourlyTimeValue, trip.appliedVoucherCodes, trip.legs, trip.travelerProfile, trip.travelers, vouchers]
   );
 
   // Instant client-side Smart Score recalculation for VTTS preset / slider changes
@@ -201,7 +209,8 @@ export default function App() {
           const ranked = recalculateOptionsWithVttsAndVouchers(
             leg.transitOptions,
             hourlyRateUsd,
-            activeVouchers
+            activeVouchers,
+            prev.travelerProfile
           );
           const keepSelected = ranked.some((o) => o.id === leg.selectedOptionId);
           return {
@@ -234,7 +243,8 @@ export default function App() {
           const ranked = recalculateOptionsWithVttsAndVouchers(
             leg.transitOptions,
             prev.hourlyTimeValue,
-            activeVouchers
+            activeVouchers,
+            prev.travelerProfile
           );
           return {
             ...leg,
@@ -254,12 +264,23 @@ export default function App() {
 
   const handleValidateVoucherCode = useCallback(
     async (code: string): Promise<VoucherValidationResult> => {
-      const res = await fetch('/api/vouchers/validate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code, legs: trip.legs }),
-      });
-      return res.json();
+      try {
+        const res = await fetch('/api/vouchers/validate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code, legs: trip.legs }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return (await res.json()) as VoucherValidationResult;
+      } catch {
+        // Previously a network/5xx error rejected unhandled and the drawer showed nothing
+        return {
+          valid: false,
+          reason: 'Could not reach the voucher service. Check your connection and try again.',
+          eligibleLegIds: [],
+          estimatedSavingsUsd: 0,
+        };
+      }
     },
     [trip.legs]
   );
@@ -283,7 +304,9 @@ export default function App() {
       CURATED_CORRIDOR_OPTIONS,
       vouchers,
       trip.hourlyTimeValue,
-      activeVouchers
+      activeVouchers,
+      undefined,
+      { profile: trip.travelerProfile, passengers: trip.travelers }
     );
     const datedStops = recalculateDatesAfterReorder(reordered, prelimLegs);
     recomputeStopsAndLegs(datedStops);
@@ -325,7 +348,9 @@ export default function App() {
       CURATED_CORRIDOR_OPTIONS,
       vouchers,
       trip.hourlyTimeValue,
-      activeVouchers
+      activeVouchers,
+      undefined,
+      { profile: trip.travelerProfile, passengers: trip.travelers }
     );
     const datedStops = recalculateDatesAfterReorder(remaining, prelimLegs);
     recomputeStopsAndLegs(datedStops);
@@ -381,6 +406,7 @@ export default function App() {
   const handleOptimizeRoute = async () => {
     setIsOptimizerOpen(true);
     setIsOptimizing(true);
+    setOptimizerResult(null); // don't show a stale result for a different stop order
     try {
       const res = await fetch('/api/optimize-route', {
         method: 'POST',
@@ -389,6 +415,8 @@ export default function App() {
           stops: trip.stops,
           hourlyTimeValue: trip.hourlyTimeValue,
           appliedVoucherCodes: trip.appliedVoucherCodes,
+          travelerProfile: trip.travelerProfile,
+          travelers: trip.travelers,
           lockOrigin: true,
         }),
       });
@@ -396,6 +424,8 @@ export default function App() {
         const data: RouteOptimizationResult = await res.json();
         setOptimizerResult(data);
       }
+    } catch (err) {
+      console.error('[Route Optimizer] Request failed:', err);
     } finally {
       setIsOptimizing(false);
     }
@@ -689,20 +719,29 @@ export default function App() {
             mobileView === 'split-right' ? 'block h-[75vh]' : 'hidden lg:block lg:h-full'
           } relative border-l border-neutral-200/80`}
         >
-          <WorldMapCanvas
-            stops={trip.stops}
-            legs={trip.legs}
-            modeFilter={modeFilter}
-            hoveredStopId={hoveredStopId}
-            hoveredLegId={hoveredLegId}
-            activeLegId={activeLegId}
-            focusTarget={focusTarget}
-            onChangeModeFilter={setModeFilter}
-            onHoverStop={setHoveredStopId}
-            onSelectLeg={(legId) => {
-              setActiveLegId(legId);
-            }}
-          />
+          <ErrorBoundary
+            label="map"
+            fallback={
+              <div className="flex h-full items-center justify-center bg-neutral-50 p-6 text-center text-sm text-neutral-500">
+                The map couldn't be displayed (WebGL may be unavailable). Your itinerary still works.
+              </div>
+            }
+          >
+            <WorldMapCanvas
+              stops={trip.stops}
+              legs={trip.legs}
+              modeFilter={modeFilter}
+              hoveredStopId={hoveredStopId}
+              hoveredLegId={hoveredLegId}
+              activeLegId={activeLegId}
+              focusTarget={focusTarget}
+              onChangeModeFilter={setModeFilter}
+              onHoverStop={setHoveredStopId}
+              onSelectLeg={(legId) => {
+                setActiveLegId(legId);
+              }}
+            />
+          </ErrorBoundary>
         </div>
       </main>
 

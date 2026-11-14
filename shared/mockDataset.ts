@@ -1,4 +1,4 @@
-import { buildLegsFromStops } from './smartScore.ts';
+import { buildLegsFromStops, computeSmartScore } from './smartScore.ts';
 import type { DestinationHub, TransitOption, Trip, TripStop, Voucher } from './types.ts';
 
 export const VOUCHERS_CATALOG: Voucher[] = [
@@ -203,23 +203,13 @@ function makeBaseOption(
     'discountedPriceUsd' | 'smartScore' | 'smartScoreBreakdown' | 'appliedVoucherId'
   >
 ): TransitOption {
+  // Seed with the real engine (neutral $15/hr, no voucher); callers re-rank on every request.
+  const breakdown = computeSmartScore(partial, 15, null);
   return {
     ...partial,
-    discountedPriceUsd: partial.basePriceUsd,
-    smartScore: partial.basePriceUsd,
-    smartScoreBreakdown: {
-      basePriceUsd: partial.basePriceUsd,
-      discountAppliedUsd: 0,
-      discountedPriceUsd: partial.basePriceUsd,
-      hourlyRateUsd: 15,
-      inVehicleHours: partial.inVehicleHours,
-      modeMultiplier: partial.isOvernightSleeper ? 0.4 : 1.0,
-      inVehiclePenaltyUsd: 0,
-      layoverHours: partial.layoverHours,
-      layoverMultiplier: 0,
-      layoverPenaltyUsd: 0,
-      totalSmartScore: partial.basePriceUsd,
-    },
+    discountedPriceUsd: breakdown.discountedPriceUsd,
+    smartScore: breakdown.totalSmartScore,
+    smartScoreBreakdown: breakdown,
     appliedVoucherId: null,
   };
 }

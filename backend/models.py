@@ -18,7 +18,31 @@ class UserProfile(BaseModel):
     created_at: Optional[datetime] = None
 
 
+ScoreFlag = Literal[
+    "red-eye",
+    "early-departure",
+    "late-arrival",
+    "long-layover",
+    "overnight-layover",
+    "multi-stop",
+    "airport-change",
+]
+
+
+class TravelerProfile(BaseModel):
+    """Mirror of `TravelerProfile` in shared/types.ts."""
+
+    price_weight: float = Field(default=1.5, ge=0.1, le=5)
+    time_weight: float = Field(default=1.0, ge=0.1, le=5)
+    allow_red_eyes: bool = False
+
+
 class SmartScoreBreakdown(BaseModel):
+    """Mirror of `SmartScoreBreakdown` in shared/types.ts.
+
+    Produced exclusively by shared/smartScore.ts (canonical); never recomputed in Python.
+    """
+
     base_price_usd: float = Field(..., ge=0)
     discount_applied_usd: float = Field(0.0, ge=0)
     discounted_price_usd: float = Field(..., ge=0)
@@ -29,6 +53,13 @@ class SmartScoreBreakdown(BaseModel):
     layover_hours: float = Field(0.0, ge=0)
     layover_multiplier: float = Field(0.0, ge=0)
     layover_penalty_usd: float = Field(..., ge=0)
+    time_of_day_multiplier: float = Field(1.0, ge=0)
+    time_of_day_penalty_usd: float = Field(0.0, ge=0)
+    transfer_penalty_usd: float = Field(0.0, ge=0)
+    airport_change_penalty_usd: float = Field(0.0, ge=0)
+    price_weight: float = Field(1.5, ge=0)
+    time_weight: float = Field(1.0, ge=0)
+    flags: List[ScoreFlag] = Field(default_factory=list)
     total_smart_score: float = Field(..., ge=0)
 
 
@@ -134,6 +165,7 @@ class Trip(BaseModel):
     is_route_optimized: bool = False
     vtts_tier: VttsTier = "explorer"
     hourly_time_value: float = Field(15.0, ge=0, le=200)
+    traveler_profile: Optional[TravelerProfile] = None
     stops: List[TripStop]
     legs: List[TripLeg]
     applied_voucher_codes: List[str] = Field(default_factory=list)
@@ -142,5 +174,6 @@ class Trip(BaseModel):
 class OptimizeRouteRequest(BaseModel):
     stops: List[TripStop]
     hourly_time_value: float = Field(15.0, ge=0, le=200)
+    traveler_profile: Optional[TravelerProfile] = None
     applied_voucher_codes: List[str] = Field(default_factory=list)
     lock_origin: bool = True
