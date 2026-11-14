@@ -1,0 +1,114 @@
+{
+  "trip": {
+    "id": "trip-eurasia-2026",
+    "title": "Eurasia Autumn Grand Tour",
+    "travelers": 1,
+    "currency": "USD",
+    "vtts_tier": "explorer",
+    "hourly_time_value": 15.0,
+    "applied_voucher_codes": ["ASTRIS15", "RAIL20"],
+    "stops": [
+      {
+        "id": "stop-kul",
+        "order": 1,
+        "city": "Kuala Lumpur",
+        "country": "Malaysia",
+        "iata_code": "KUL",
+        "lat": 3.139,
+        "lng": 101.6869,
+        "stay_nights": 3,
+        "arrival_date": "2026-11-18",
+        "departure_date": "2026-11-21",
+        "notes": "Depart KL Sentral via KLIA Ekspres (28m to terminal)"
+      },
+      {
+        "id": "stop-ist",
+        "order": 2,
+        "city": "Istanbul",
+        "country": "Turkey",
+        "iata_code": "IST",
+        "lat": 41.0082,
+        "lng": 28.9784,
+        "stay_nights": 4,
+        "arrival_date": "2026-11-22",
+        "departure_date": "2026-11-26",
+        "notes": "Sultanahmet & Karakoy stay; M11 Metro to IST Airport"
+      },
+      {
+        "id": "stop-lon",
+        "order": 3,
+        "city": "London",
+        "country": "United Kingdom",
+        "iata_code": "LON",
+        "lat": 51.5072,
+        "lng": -0.1276,
+        "stay_nights": 4,
+        "arrival_date": "2026-11-26",
+        "departure_date": "2026-11-30",
+        "notes": "Arrive Heathrow / depart St Pancras Intl for Eurostar"
+      },
+      {
+        "id": "stop-par",
+        "order": 4,
+        "city": "Paris",
+        "country": "France",
+        "iata_code": "PAR",
+        "lat": 48.8566,
+        "lng": 2.3522,
+        "stay_nights": 4,
+        "arrival_date": "2026-11-30",
+        "departure_date": "2026-12-04",
+        "notes": "Final destination — Le Marais & Gare du Nord arrival"
+      }
+    ],
+    "legs": []
+  },
+  "vouchers": [
+    {
+      "id": "v-astris15",
+      "code": "ASTRIS15",
+      "title": "15% Off Long-Haul & Regional Flights",
+      "discount_type": "percentage",
+      "discount_value": 15,
+      "max_discount_usd": 65,
+      "min_spend_usd": 120,
+      "applicable_modes": ["flight"],
+      "expires_at": "2026-12-31",
+      "description": "Save 15% (up to $65) on qualifying flight bookings over $120."
+    },
+    {
+      "id": "v-railpass20",
+      "code": "RAIL20",
+      "title": "$20 Off High-Speed & Sleeper Rail",
+      "discount_type": "fixed",
+      "discount_value": 20,
+      "min_spend_usd": 70,
+      "applicable_modes": ["train"],
+      "expires_at": "2026-12-31",
+      "description": "Instant $20 credit on Eurostar, TGV, or overnight Nightjet rail legs."
+    },
+    {
+      "id": "v-coach10",
+      "code": "COACH10",
+      "title": "$10 Off Intercity Express Coaches",
+      "discount_type": "fixed",
+      "discount_value": 10,
+      "min_spend_usd": 30,
+      "applicable_modes": ["bus"],
+      "expires_at": "2026-12-31",
+      "description": "Flat $10 off European and cross-border coach bookings over $30."
+    },
+    {
+      "id": "v-tkvip40",
+      "code": "ISTHUB40",
+      "title": "$40 Off Turkish Airlines Corridors",
+      "discount_type": "fixed",
+      "discount_value": 40,
+      "min_spend_usd": 200,
+      "applicable_modes": ["flight"],
+      "applicable_carriers": ["TK"],
+      "expires_at": "2026-12-31",
+      "description": "Exclusive $40 partner rebate on Turkish Airlines (TK) routes over $200."
+    }
+  ]
+}
