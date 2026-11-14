@@ -52,7 +52,7 @@ deep links.
 | :--- | :--- | :--- |
 | **Live Flight Discovery** | **SerpApi** (`engine=google_flights`) | `fetchSerpApiFlights` in `server/transitService.ts`. Parses `best_flights`/`other_flights` into `TransitOption`s (price, segments, layovers, emissions). 8s timeout; any failure falls back silently. |
 | **Fallback corridors** | `CURATED_CORRIDOR_OPTIONS` + `synthesizeCorridorOptions` | Hand-authored options for the default trip's corridors; every other pair is synthesized (flight / 1-stop / rail / coach) from great-circle distance. |
-| **Global Airport Data** | **`airports`** (npm) | `server/airportService.ts`: autocomplete (`searchAirports`) and IATA → exact lat/lng (`getAirportByIata`). Also the coordinate source for live-flight segments. |
+| **Global Airport Data** | **`airports`** (npm) | `server/airportService.ts`: autocomplete (`searchAirports`) and IATA → exact tarmac lat/lng (`getAirportByIata`). Registered into `shared/airports.ts` at startup and used for every flight segment (§7). |
 | **Vouchers** | `VOUCHERS_CATALOG` (`shared/mockDataset.ts`) + `calculateVoucherDiscount` / `isVoucherCurrentlyValid` (`shared/smartScore.ts`) | Percentage or fixed discounts, `maxDiscountUsd` cap, `minSpendUsd`, mode and carrier restrictions, `validFrom`/`expiresAt`/`isActive`. Validated by `POST /api/vouchers/validate`. There is **no `voucherService.ts`**. |
 | **Affiliate Monetization** | **Travelpayouts** (Aviasales) | `shared/affiliate.ts` — see §6. |
 | **Ticket Fulfillment** | **Duffel API** *(Phase 2, not implemented)* | Planned: offer requests, single-offer pricing, ancillaries, order creation. `@duffel/api` is not yet a dependency. |
@@ -68,6 +68,7 @@ deep links.
 ├── shared/                      # Imported by server AND client
 │   ├── smartScore.ts            # VTTS / Smart Score engine, vouchers math, corridor synthesis, leg building
 │   ├── affiliate.ts             # Travelpayouts / Aviasales deep-link builder
+│   ├── airports.ts              # Airport anchoring: exact airport coords, city→airport codes, ground connectors
 │   ├── types.ts                 # TransitOption, SmartScoreBreakdown, TravelerProfile, Trip, ...
 │   ├── mockDataset.ts           # Default trip, destination hubs, vouchers, curated corridors
 │   └── dateUtils.ts             # Stop date recalculation after reorder
@@ -84,7 +85,7 @@ deep links.
 │       ├── AddStopModal.tsx           # Airport autocomplete (`/api/airports/search`)
 │       ├── MultiDestDatePickerModal.tsx
 │       ├── RouteOptimizerModal.tsx    # Two-stage optimizer results
-│       └── WorldMapCanvas.tsx         # MapLibre map: flight arcs, ground polylines, callouts
+│       └── WorldMapCanvas.tsx         # MapLibre map: airport-to-airport flight arcs, dashed airport connectors, airport nodes
 └── backend/                     # FastAPI + PostgreSQL schema prototype (no scoring; see §2)
     ├── main.py  models.py  geo.py  database.py  SCHEMA.sql  data/mock_trip.json
 ```
@@ -158,7 +159,36 @@ reintroduce scoring in `backend/`; mirror the output types only (`SmartScoreBrea
 
 ---
 
-## 7. Reliability Conventions
+## 7. Airport Anchoring & Multi-Modal Separation — `shared/airports.ts`
+
+Invariant: **a flight segment starts and ends on the exact coordinates of an airport**, and any
+ground travel to/from the airport is a *separate* connecting segment.
+- `resolveAirport(code)` returns tarmac coordinates for an airport code or a metro/city code
+  (`LON`→`LHR`, `PAR`→`CDG`, `ROM`→`FCO`, …). Built-in table for the airports the app ships with; the
+  server registers the full `airports` dataset via `registerAirportResolver`. City-centre hub
+  coordinates (`DESTINATION_HUBS`) are never used for flights.
+- `anchorFlightSegments` snaps every flight segment's endpoints and codes to its airports.
+  `ensureAirportConnectors` adds an "airport transfer" ground segment (city → airport, airport → city)
+  when the first/last segment is a flight whose airport is >3 km from the stop. Existing connectors
+  (Havabus, Stansted Express, KLIA Ekspres, metro…) are preserved. `normalizeOptionGeometry` does both
+  and is idempotent.
+- Applied in `buildLegsFromStops` (curated + synthesized options) and `queryTransitWithCache` (cache
+  hit, live SerpApi, fallback). SerpApi hops are resolved from each hop's own `departure_airport.id` /
+  `arrival_airport.id`, so SAW vs IST is preserved. Synthesized 1-stop flights connect through a real
+  hub airport (`pickConnectionHub`), not a computed midpoint.
+- Client fallback: the browser only has the built-in table, so a synthesized flight to an airport outside
+  it uses a nearby offset until the server recompute (which has the full dataset) replaces it.
+
+### Map rendering (`WorldMapCanvas.tsx`)
+- Flight segments → great-circle arcs between airport nodes only (orange, solid) with labelled IATA
+  **airport nodes** at each endpoint.
+- Ground segments that lead to/from a flight's airport are **connectors**: straight, dashed, in their own
+  GeoJSON source/layer, so they never merge into the flight line. Other ground legs (intercity rail/bus)
+  keep their solid polylines and station dots.
+- The map re-applies anchoring/connectors defensively before drawing, and a flight with no segment data
+  falls back to the leg's airports rather than city centres.
+
+## 8. Reliability Conventions
 - Async Express handlers wrap their bodies in `try/catch` (Express 4 does not catch rejected promises).
 - Redis and SerpApi failures never fail a request: cache errors degrade to a miss, live-API errors
   fall back to curated/synthesized corridors; a failed leg falls back to the synchronous builder.

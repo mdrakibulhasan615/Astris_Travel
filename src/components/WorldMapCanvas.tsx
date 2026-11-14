@@ -12,6 +12,11 @@ import Map, {
   Source,
   type MapRef,
 } from 'react-map-gl/maplibre';
+import {
+  anchorFlightSegments,
+  ensureAirportConnectors,
+  resolveAirport,
+} from '../../shared/airports.ts';
 import { formatDuration } from '../../shared/smartScore.ts';
 import type {
   ModeFilter,
@@ -108,6 +113,16 @@ interface JunctionNode {
   mode: TransitMode;
 }
 
+/** Airport endpoint of a flight line; always sits exactly on the flight polyline's end point. */
+interface AirportNode {
+  id: string;
+  code: string;
+  lng: number;
+  lat: number;
+  name: string;
+  isHighlighted: boolean;
+}
+
 interface MapCalloutItem {
   id: string;
   legId: string;
@@ -148,6 +163,11 @@ export function WorldMapCanvas({
     const flightFeatures: GeoJSON.Feature[] = [];
     const trainFeatures: GeoJSON.Feature[] = [];
     const busFeatures: GeoJSON.Feature[] = [];
+    // Ground legs that connect a city/station to an airport node. Kept in their own source so they
+    // are drawn as distinct dashed connectors and never merge into the flight line.
+    const connectorFeatures: GeoJSON.Feature[] = [];
+    // (plain record: `Map` is shadowed by the react-map-gl import)
+    const airportNodeMap: Record<string, AirportNode> = {};
     const stationDotFeatures: GeoJSON.Feature[] = [];
     const planeBadges: PlaneBadge[] = [];
     const junctionNodes: JunctionNode[] = [];
@@ -176,7 +196,12 @@ export function WorldMapCanvas({
 
       if (!displayOption) return;
 
-      const segments: TransitSegment[] =
+      // Flight fallback (no segment data): anchor to the leg's airports, not the city centres
+      const fallbackFrom =
+        displayOption.mode === 'flight' ? resolveAirport(leg.fromCode) : null;
+      const fallbackTo = displayOption.mode === 'flight' ? resolveAirport(leg.toCode) : null;
+
+      const rawSegments: TransitSegment[] =
         displayOption.segments && displayOption.segments.length > 0
           ? displayOption.segments
           : [
@@ -184,17 +209,25 @@ export function WorldMapCanvas({
                 id: `${leg.id}-fallback`,
                 mode: displayOption.mode,
                 label: displayOption.routeCode,
-                fromName: leg.fromCity,
-                fromCode: leg.fromCode,
-                fromLat: fromStop.lat,
-                fromLng: fromStop.lng,
-                toName: leg.toCity,
-                toCode: leg.toCode,
-                toLat: toStop.lat,
-                toLng: toStop.lng,
+                fromName: fallbackFrom?.name ?? leg.fromCity,
+                fromCode: fallbackFrom?.code ?? leg.fromCode,
+                fromLat: fallbackFrom?.lat ?? fromStop.lat,
+                fromLng: fallbackFrom?.lng ?? fromStop.lng,
+                toName: fallbackTo?.name ?? leg.toCity,
+                toCode: fallbackTo?.code ?? leg.toCode,
+                toLat: fallbackTo?.lat ?? toStop.lat,
+                toLng: fallbackTo?.lng ?? toStop.lng,
                 durationMinutes: Math.round(displayOption.inVehicleHours * 60),
               },
             ];
+
+      // Strict airport anchoring + separate ground connectors (idempotent with server-side data)
+      const segments: TransitSegment[] = ensureAirportConnectors(
+        anchorFlightSegments(rawSegments),
+        fromStop,
+        toStop,
+        displayOption.id
+      );
 
       // Primary segment for leg callout placement
       let primarySegment = segments[0];
@@ -206,7 +239,7 @@ export function WorldMapCanvas({
 
       segments.forEach((seg, segIdx) => {
         // Junction node at intermediate transfer points (not matching main numbered stop pins)
-        if (segIdx > 0) {
+        if (segIdx > 0 && seg.mode !== 'flight') {
           const key = `${seg.fromLat.toFixed(3)},${seg.fromLng.toFixed(3)}`;
           if (!stopIdsSet.has(key)) {
             junctionNodes.push({
@@ -220,6 +253,22 @@ export function WorldMapCanvas({
         }
 
         if (seg.mode === 'flight') {
+          for (const end of [
+            { code: seg.fromCode, name: seg.fromName, lat: seg.fromLat, lng: seg.fromLng },
+            { code: seg.toCode, name: seg.toName, lat: seg.toLat, lng: seg.toLng },
+          ]) {
+            const prev = airportNodeMap[end.code];
+            if (!prev || (isHighlighted && !prev.isHighlighted)) {
+              airportNodeMap[end.code] = {
+                id: `airport-${end.code}`,
+                code: end.code,
+                lng: end.lng,
+                lat: end.lat,
+                name: end.name,
+                isHighlighted,
+              };
+            }
+          }
           try {
             const arc = greatCircle(
               point([seg.fromLng, seg.fromLat]),
@@ -272,10 +321,23 @@ export function WorldMapCanvas({
             // Skip malformed segment
           }
         } else {
+          // A ground segment is a connector when it leads to the next flight's departure airport
+          // or comes from the previous flight's arrival airport.
+          const prevSeg = segments[segIdx - 1];
+          const nextSeg = segments[segIdx + 1];
+          const isConnector =
+            (nextSeg?.mode === 'flight' && nextSeg.fromCode === seg.toCode) ||
+            (prevSeg?.mode === 'flight' && prevSeg.toCode === seg.fromCode);
+
           const lineCoords: [number, number][] =
             seg.waypoints && seg.waypoints.length >= 2
               ? seg.waypoints
-              : [
+              : isConnector
+                ? [
+                    [seg.fromLng, seg.fromLat],
+                    [seg.toLng, seg.toLat],
+                  ]
+                : [
                   [seg.fromLng, seg.fromLat],
                   [
                     (seg.fromLng + seg.toLng) / 2 + 0.08,
@@ -297,7 +359,12 @@ export function WorldMapCanvas({
             },
           };
 
-          if (seg.mode === 'train') {
+          if (isConnector) {
+            connectorFeatures.push({
+              ...lineFeature,
+              properties: { ...lineFeature.properties, color: getModeColor(seg.mode) },
+            });
+          } else if (seg.mode === 'train') {
             trainFeatures.push(lineFeature);
           } else {
             busFeatures.push(lineFeature);
@@ -358,6 +425,8 @@ export function WorldMapCanvas({
       flightGeoJson: { type: 'FeatureCollection' as const, features: flightFeatures },
       trainGeoJson: { type: 'FeatureCollection' as const, features: trainFeatures },
       busGeoJson: { type: 'FeatureCollection' as const, features: busFeatures },
+      connectorGeoJson: { type: 'FeatureCollection' as const, features: connectorFeatures },
+      airportNodes: Object.values(airportNodeMap),
       stationDotsGeoJson: { type: 'FeatureCollection' as const, features: stationDotFeatures },
       planeBadges,
       junctionNodes,
@@ -504,6 +573,32 @@ export function WorldMapCanvas({
           />
         </Source>
 
+        {/* 2b. Airport connectors (metro / express rail / coach to or from an airport): dashed,
+            separate from the flight arc so the flight line stays airport-to-airport. */}
+        <Source id="astris-connector-lines" type="geojson" data={mapLayersData.connectorGeoJson}>
+          <Layer
+            id="astris-connector-casing"
+            type="line"
+            paint={{
+              'line-color': '#FFFFFF',
+              'line-width': ['case', ['boolean', ['get', 'isHighlighted'], false], 5.5, 4],
+              'line-opacity': 0.9,
+            }}
+            layout={{ 'line-cap': 'butt', 'line-join': 'round' }}
+          />
+          <Layer
+            id="astris-connector-stroke"
+            type="line"
+            paint={{
+              'line-color': ['get', 'color'],
+              'line-width': ['case', ['boolean', ['get', 'isHighlighted'], false], 3, 2.2],
+              'line-opacity': 0.95,
+              'line-dasharray': [1.6, 1.6],
+            }}
+            layout={{ 'line-cap': 'butt', 'line-join': 'round' }}
+          />
+        </Source>
+
         {/* 3. Intermediate Station / Stop Dots along Train & Bus Polylines */}
         <Source id="astris-station-dots" type="geojson" data={mapLayersData.stationDotsGeoJson}>
           <Layer
@@ -576,6 +671,23 @@ export function WorldMapCanvas({
               className="w-2.5 h-2.5 rounded-full border-2 border-white shadow-sm"
               style={{ backgroundColor: getModeColor(node.mode) }}
             />
+          </Marker>
+        ))}
+
+        {/* Airport nodes: exact flight-line endpoints, labelled with the airport IATA code */}
+        {mapLayersData.airportNodes.map((node) => (
+          <Marker key={node.id} longitude={node.lng} latitude={node.lat} anchor="center">
+            <div
+              title={node.name}
+              className={`pointer-events-none flex items-center gap-0.5 rounded-full border-2 bg-white px-1 py-px shadow-sm ${
+                node.isHighlighted ? 'border-[#E56B1A]' : 'border-[#FF812E]'
+              }`}
+            >
+              <Plane className="h-2.5 w-2.5 text-[#FF812E]" aria-hidden="true" />
+              <span className="font-mono text-[9px] font-bold leading-none text-[#111827]">
+                {node.code}
+              </span>
+            </div>
           </Marker>
         ))}
 
