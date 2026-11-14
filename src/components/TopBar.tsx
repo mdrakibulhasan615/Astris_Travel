@@ -1,8 +1,8 @@
-import { Compass, Plus, Sparkles, Ticket } from 'lucide-react';
+import { BedDouble, Compass, Plus, Sparkles, Ticket } from 'lucide-react';
 
 interface TopBarProps {
-  activePanel: 'timeline' | 'smart-score' | 'vouchers';
-  onSelectPanel: (panel: 'timeline' | 'smart-score' | 'vouchers') => void;
+  activePanel: 'timeline' | 'stays' | 'smart-score' | 'vouchers';
+  onSelectPanel: (panel: 'timeline' | 'stays' | 'smart-score' | 'vouchers') => void;
   onOpenAddStop: () => void;
   onOpenVouchers: () => void;
   onOptimizeRoute: () => void;
@@ -53,6 +53,18 @@ export function TopBar({
           }`}
         >
           Itinerary
+        </button>
+        <button
+          type="button"
+          onClick={() => onSelectPanel('stays')}
+          className={`py-1.5 border-b-2 transition-colors whitespace-nowrap shrink-0 cursor-pointer inline-flex items-center gap-1.5 ${
+            activePanel === 'stays'
+              ? 'border-[#FF812E] text-[#111827] font-semibold'
+              : 'border-transparent hover:text-[#111827]'
+          }`}
+        >
+          <BedDouble className="w-3.5 h-3.5 text-[#4B5563]" />
+          <span>Stays</span>
         </button>
         <button
           type="button"

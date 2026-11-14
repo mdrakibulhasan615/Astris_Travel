@@ -12,6 +12,7 @@ import type {
 } from './types.ts';
 import { attachBookingUrls } from './affiliate.ts';
 import { normalizeOptionGeometry, pickConnectionHub, resolveAirport } from './airports.ts';
+import { planGroundCorridor } from './groundRouting.ts';
 
 export const VTTS_PRESETS: VttsPreset[] = [
   {
@@ -455,17 +456,17 @@ export function synthesizeCorridorOptions(
   // 1. Direct or fast flight
   const directFlightHours = round2(1.1 + distanceKm / 810);
   const directFlightPrice = Math.round(78 + distanceKm * 0.056);
-  // Exact airport coordinates (never city centres). Only when an airport is unknown to the
-  // client-side table do we fall back to a nearby offset; the server recompute then replaces it
-  // with the real airport from the global `airports` dataset.
+  // Exact airport coordinates (never city centres). An airport missing from every table can only
+  // belong to a stop picked from airport search, whose own coordinates *are* the airport's, so the
+  // stop is the fallback. No invented offsets: a flight line never ends somewhere arbitrary.
   const fromAp = resolveAirport(fromStop.iataCode);
   const toAp = resolveAirport(toStop.iataCode);
   const fromAirportCode = fromAp?.code ?? fromStop.iataCode;
   const toAirportCode = toAp?.code ?? toStop.iataCode;
-  const fromAirportLat = fromAp?.lat ?? fromStop.lat - 0.14;
-  const fromAirportLng = fromAp?.lng ?? fromStop.lng + 0.12;
-  const toAirportLat = toAp?.lat ?? toStop.lat + 0.12;
-  const toAirportLng = toAp?.lng ?? toStop.lng - 0.14;
+  const fromAirportLat = fromAp?.lat ?? fromStop.lat;
+  const fromAirportLng = fromAp?.lng ?? fromStop.lng;
+  const toAirportLat = toAp?.lat ?? toStop.lat;
+  const toAirportLng = toAp?.lng ?? toStop.lng;
   options.push(
     buildRawOption(
       {
@@ -602,19 +603,26 @@ export function synthesizeCorridorOptions(
     );
   }
 
+  // Ground options follow the land network (shared/groundRouting.ts). `none` means the two stops
+  // are on different landmasses, so no train or coach is offered; `unknown` (outside the network)
+  // keeps the straight-line estimate and lets the map draw a neutral arc.
+  const corridor = planGroundCorridor(fromStop, toStop);
+  const hasLandRoute = corridor.status !== 'none';
+  const groundKm = corridor.status === 'routed' ? Math.max(120, corridor.distanceKm) : distanceKm;
+  const groundWaypoints = corridor.status === 'routed' ? corridor.via : undefined;
+  const viaNote =
+    corridor.status === 'routed' && corridor.stations.length > 0
+      ? ` via ${corridor.stations
+          .slice(0, 4)
+          .map((s) => s.name)
+          .join(', ')}${corridor.stations.length > 4 ? ', …' : ''}`
+      : '';
+
   // 3. Rail option (high-speed for <=2600km)
-  if (distanceKm <= 2600) {
-    const isSleeper = distanceKm > 750;
-    const trainHours = round2(isSleeper ? 2.0 + distanceKm / 125 : 0.8 + distanceKm / 215);
-    const trainPrice = Math.round(isSleeper ? 68 + distanceKm * 0.065 : 54 + distanceKm * 0.11);
-    const wp1: [number, number] = [
-      fromStop.lng + (toStop.lng - fromStop.lng) * 0.33 + 0.4,
-      fromStop.lat + (toStop.lat - fromStop.lat) * 0.33 - 0.3,
-    ];
-    const wp2: [number, number] = [
-      fromStop.lng + (toStop.lng - fromStop.lng) * 0.67 - 0.3,
-      fromStop.lat + (toStop.lat - fromStop.lat) * 0.67 + 0.4,
-    ];
+  if (hasLandRoute && groundKm <= 2600) {
+    const isSleeper = groundKm > 750;
+    const trainHours = round2(isSleeper ? 2.0 + groundKm / 125 : 0.8 + groundKm / 215);
+    const trainPrice = Math.round(isSleeper ? 68 + groundKm * 0.065 : 54 + groundKm * 0.11);
     options.push(
       buildRawOption(
         {
@@ -624,17 +632,17 @@ export function synthesizeCorridorOptions(
           isOvernightSleeper: isSleeper,
           carrier: isSleeper ? 'Nightjet Sleeper Rail' : 'EuroExpress Rail',
           carrierCode: isSleeper ? 'NJ' : 'EE',
-          routeCode: `${isSleeper ? 'NJ' : 'EE'} ${400 + (distanceKm % 300)}`,
+          routeCode: `${isSleeper ? 'NJ' : 'EE'} ${400 + (groundKm % 300)}`,
           originStation: `${fromStop.city} Central Station`,
           destinationStation: `${toStop.city} Central Station`,
           departureTime: isSleeper ? '21:15' : '10:30',
           arrivalTime: formatArrivalFromHours((isSleeper ? 21.25 : 10.5) + trainHours),
           inVehicleHours: trainHours,
-          layoverHours: distanceKm > 1200 ? 1.4 : 0,
-          stopsCount: distanceKm > 1200 ? 1 : 0,
+          layoverHours: groundKm > 1200 ? 1.4 : 0,
+          stopsCount: groundKm > 1200 ? 1 : 0,
           basePriceUsd: trainPrice,
-          doorToDoorNotes: `${fromStop.city} Central → ${toStop.city} Central`,
-          co2Kg: Math.round(distanceKm * 0.024),
+          doorToDoorNotes: `${fromStop.city} Central → ${toStop.city} Central${viaNote}`,
+          co2Kg: Math.round(groundKm * 0.024),
           segments: [
             {
               id: `${legId}-trn-s1`,
@@ -649,7 +657,7 @@ export function synthesizeCorridorOptions(
               toLat: toStop.lat,
               toLng: toStop.lng,
               durationMinutes: Math.round(trainHours * 60),
-              waypoints: [[fromStop.lng, fromStop.lat], wp1, wp2, [toStop.lng, toStop.lat]],
+              waypoints: groundWaypoints,
             },
           ],
         },
@@ -659,18 +667,10 @@ export function synthesizeCorridorOptions(
   }
 
   // 4. Intercity bus option (for <=2200km)
-  if (distanceKm <= 2200) {
-    const isSleeperBus = distanceKm > 550;
-    const busHours = round2(1.0 + distanceKm / 78);
-    const busPrice = Math.round(24 + distanceKm * 0.036);
-    const wp1: [number, number] = [
-      fromStop.lng + (toStop.lng - fromStop.lng) * 0.35 - 0.5,
-      fromStop.lat + (toStop.lat - fromStop.lat) * 0.35 + 0.25,
-    ];
-    const wp2: [number, number] = [
-      fromStop.lng + (toStop.lng - fromStop.lng) * 0.7 + 0.35,
-      fromStop.lat + (toStop.lat - fromStop.lat) * 0.7 - 0.3,
-    ];
+  if (hasLandRoute && groundKm <= 2200) {
+    const isSleeperBus = groundKm > 550;
+    const busHours = round2(1.0 + groundKm / 78);
+    const busPrice = Math.round(24 + groundKm * 0.036);
     options.push(
       buildRawOption(
         {
@@ -680,17 +680,17 @@ export function synthesizeCorridorOptions(
           isOvernightSleeper: isSleeperBus,
           carrier: 'FlixCoach Express',
           carrierCode: 'FX',
-          routeCode: `FX ${800 + (distanceKm % 190)}`,
+          routeCode: `FX ${800 + (groundKm % 190)}`,
           originStation: `${fromStop.city} Coach Hub`,
           destinationStation: `${toStop.city} South Terminal`,
           departureTime: isSleeperBus ? '22:00' : '08:15',
           arrivalTime: formatArrivalFromHours((isSleeperBus ? 22 : 8.25) + busHours),
           inVehicleHours: busHours,
-          layoverHours: distanceKm > 1100 ? 2.2 : 0,
-          stopsCount: distanceKm > 1100 ? 1 : 0,
+          layoverHours: groundKm > 1100 ? 2.2 : 0,
+          stopsCount: groundKm > 1100 ? 1 : 0,
           basePriceUsd: busPrice,
-          doorToDoorNotes: `${fromStop.city} Coach Hub → ${toStop.city} Terminal`,
-          co2Kg: Math.round(distanceKm * 0.038),
+          doorToDoorNotes: `${fromStop.city} Coach Hub → ${toStop.city} Terminal${viaNote}`,
+          co2Kg: Math.round(groundKm * 0.038),
           segments: [
             {
               id: `${legId}-bus-s1`,
@@ -705,7 +705,7 @@ export function synthesizeCorridorOptions(
               toLat: toStop.lat,
               toLng: toStop.lng,
               durationMinutes: Math.round(busHours * 60),
-              waypoints: [[fromStop.lng, fromStop.lat], wp1, wp2, [toStop.lng, toStop.lat]],
+              waypoints: groundWaypoints,
             },
           ],
         },
@@ -789,6 +789,19 @@ export function buildLegIds(stops: Pick<TripStop, 'iataCode'>[]): string[] {
   return ids;
 }
 
+/**
+ * True when two consecutive stops are the same place. Stops may repeat freely in an itinerary
+ * (A → B → A), and nothing prevents the same city from ending up back to back; that "leg" needs no
+ * transport, so it carries no options instead of an invented flight from a city to itself.
+ */
+export function isSamePlace(
+  a: Pick<TripStop, 'iataCode' | 'lat' | 'lng'>,
+  b: Pick<TripStop, 'iataCode' | 'lat' | 'lng'>
+): boolean {
+  const km = haversineDistanceKm(a.lat, a.lng, b.lat, b.lng);
+  return km <= 2 || (a.iataCode.toUpperCase() === b.iataCode.toUpperCase() && km <= 60);
+}
+
 export function buildLegsFromStops(
   stops: TripStop[],
   curatedCorridors: Record<string, TransitOption[]>,
@@ -807,17 +820,19 @@ export function buildLegsFromStops(
     const legId = legIds[i];
     const distanceKm = haversineDistanceKm(fromStop.lat, fromStop.lng, toStop.lat, toStop.lng);
 
-    const baseOptions = curatedCorridors[corridorKey]
-      ? curatedCorridors[corridorKey].map((opt) => ({ ...opt, legId }))
-      : synthesizeCorridorOptions(
-          fromStop,
-          toStop,
-          legId,
-          allVouchers,
-          hourlyRateUsd,
-          activeVouchers,
-          scoring.profile
-        );
+    const baseOptions = isSamePlace(fromStop, toStop)
+      ? []
+      : curatedCorridors[corridorKey]
+        ? curatedCorridors[corridorKey].map((opt) => ({ ...opt, legId }))
+        : synthesizeCorridorOptions(
+            fromStop,
+            toStop,
+            legId,
+            allVouchers,
+            hourlyRateUsd,
+            activeVouchers,
+            scoring.profile
+          );
 
     // Invariant: flights are airport-to-airport, bracketed by separate ground connectors
     const geometryOptions = baseOptions.map((opt) =>

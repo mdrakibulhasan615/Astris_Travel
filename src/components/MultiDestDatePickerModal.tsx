@@ -110,7 +110,8 @@ export function MultiDestDatePickerModal({
     for (let idx = 0; idx < stops.length; idx++) {
       const stop = stops[idx];
       const color = stopColorMap[stop.id] ?? '#FF812E';
-      const nights = Math.max(1, diffDaysIso(stop.arrivalDate, stop.departureDate));
+      // The origin is a departure date only: it colours no nights of its own
+      const nights = idx === 0 ? 0 : Math.max(1, diffDaysIso(stop.arrivalDate, stop.departureDate));
 
       for (let n = 0; n < nights; n++) {
         const iso = addDaysIso(stop.arrivalDate, n);
@@ -169,6 +170,12 @@ export function MultiDestDatePickerModal({
   const handleDayClick = (iso: string) => {
     if (!activeStop) return;
     if (prevStopMinArrival && iso < prevStopMinArrival) return;
+
+    if (activeStopIndex === 0) {
+      // Origin: one click picks the departure date (there is no stay to span)
+      onUpdateStopDates(activeStop.id, iso, iso);
+      return;
+    }
 
     if (!draftStartIso) {
       // First click begins range selection for the active stop
@@ -229,8 +236,11 @@ export function MultiDestDatePickerModal({
               </h2>
               {activeStop && (
                 <div className="text-xs font-mono text-[#4B5563] tabular-nums">
-                  {activeStop.city}: {formatShortDate(activeStop.arrivalDate)} →{' '}
-                  {formatShortDate(activeStop.departureDate)} ({activeStop.stayNights}n)
+                  {activeStopIndex === 0
+                    ? `${activeStop.city}: departs ${formatShortDate(activeStop.departureDate)}`
+                    : `${activeStop.city}: ${formatShortDate(activeStop.arrivalDate)} → ${formatShortDate(
+                        activeStop.departureDate
+                      )} (${activeStop.stayNights}n)`}
                 </div>
               )}
             </div>
@@ -278,7 +288,7 @@ export function MultiDestDatePickerModal({
                   {idx + 1}. {stop.city}
                 </span>
                 <span className="font-mono text-[11px] text-[#4B5563] tabular-nums">
-                  {stop.stayNights}n
+                  {idx === 0 ? 'start' : `${stop.stayNights}n`}
                 </span>
               </button>
             );
@@ -459,7 +469,9 @@ export function MultiDestDatePickerModal({
                     )} (${diffDaysIso(draftStartIso, previewEndIso)}n)`
                   : `Check-in ${formatShortDate(draftStartIso)} · Pick check-out`
                 : activeStop
-                  ? `${activeStop.city} · ${formatShortDate(activeStop.arrivalDate)} → ${formatShortDate(activeStop.departureDate)}`
+                  ? activeStopIndex === 0
+                    ? `${activeStop.city} · pick your departure date`
+                    : `${activeStop.city} · ${formatShortDate(activeStop.arrivalDate)} → ${formatShortDate(activeStop.departureDate)}`
                   : ''}
             </span>
             {draftStartIso && (

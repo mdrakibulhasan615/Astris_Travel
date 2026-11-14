@@ -3,7 +3,6 @@ import { logEnvStatus } from './server/env.ts';
 import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createServer as createViteServer } from 'vite';
 import {
   REDIS_CACHE_TTL_SECONDS,
   buildTransitCacheKey,
@@ -23,10 +22,12 @@ import {
   buildLegsFromStops,
   calculateVoucherDiscount,
   haversineDistanceKm,
+  isSamePlace,
   isVoucherCurrentlyValid,
   round2,
   sanitizeHourlyRate,
 } from './shared/smartScore.ts';
+import { getPublicAffiliateConfig } from './shared/affiliate.ts';
 import type {
   OptimizationCandidate,
   RouteOptimizationResult,
@@ -144,6 +145,22 @@ async function buildLegsViaTransitService(
     const distanceKm = haversineDistanceKm(fromStop.lat, fromStop.lng, toStop.lat, toStop.lng);
     const prevSelected = previousSelectedMap?.[legId];
 
+    // The same city twice in a row needs no transport (and must not hit the flight API)
+    if (isSamePlace(fromStop, toStop)) {
+      return {
+        id: legId,
+        fromStopId: fromStop.id,
+        toStopId: toStop.id,
+        fromCity: fromStop.city,
+        fromCode: fromStop.iataCode,
+        toCity: toStop.city,
+        toCode: toStop.iataCode,
+        distanceKm,
+        selectedOptionId: '',
+        transitOptions: [],
+      };
+    }
+
     try {
       const result = await queryTransitWithCache({
         origin: fromStop.iataCode,
@@ -222,7 +239,11 @@ function logLegs(label: string, legs: TripLeg[]): void {
   }
 }
 
-async function startServer() {
+/**
+ * The API without any hosting concerns: no Vite, no static files, no listen(). `api/index.ts`
+ * exports this for Vercel; `startServer` below wraps it for local dev and self-hosting.
+ */
+export function createApp() {
   logEnvStatus();
   const app = express();
   app.use(express.json());
@@ -269,6 +290,12 @@ async function startServer() {
 
   app.get('/api/vouchers', (_req, res) => {
     res.json({ vouchers: VOUCHERS_CATALOG });
+  });
+
+  // Partner ids for the browser's link builders (stays, optimistic transport links). These are
+  // public by nature: every outbound link already carries them.
+  app.get('/api/affiliate/config', (_req, res) => {
+    res.json(getPublicAffiliateConfig());
   });
 
   // Upstash Redis Cache Health & Status Endpoint
@@ -621,8 +648,16 @@ async function startServer() {
     res.json(response);
   });
 
+  return app;
+}
+
+async function startServer() {
+  const app = createApp();
+
   // Vite middleware in development; static serving in production
   if (process.env.NODE_ENV !== 'production') {
+    // Imported lazily so the serverless bundle (api/index.ts) never pulls Vite in
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
@@ -641,7 +676,10 @@ async function startServer() {
   });
 }
 
-startServer().catch((err) => {
-  console.error('[Astris] Server failed to start:', err);
-  process.exit(1);
-});
+// On Vercel the platform calls the handler in api/index.ts; there is no port to listen on
+if (!process.env.VERCEL) {
+  startServer().catch((err) => {
+    console.error('[Astris] Server failed to start:', err);
+    process.exit(1);
+  });
+}

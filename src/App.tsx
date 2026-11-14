@@ -14,11 +14,22 @@ import {
   sortableKeyboardCoordinates,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
-import { Calendar, Map as MapIcon, Plus, RotateCcw, Route, Ticket } from 'lucide-react';
+import {
+  BedDouble,
+  Calendar,
+  Map as MapIcon,
+  Minus,
+  Plus,
+  RotateCcw,
+  Route,
+  Ticket,
+  Users,
+} from 'lucide-react';
 import {
   addDaysIso,
   formatTripDateSpan,
   recalculateDatesAfterReorder,
+  totalTripNights,
   updateStopDatesAndCascade,
   updateStopNightsAndCascade,
 } from '../shared/dateUtils.ts';
@@ -33,6 +44,9 @@ import {
   recalculateOptionsWithVttsAndVouchers,
   round2,
 } from '../shared/smartScore.ts';
+import { configureAffiliate, type AffiliateConfig } from '../shared/affiliate.ts';
+import { registerAirports, type AirportPoint } from '../shared/airports.ts';
+import { buildStaySearches } from '../shared/stays.ts';
 import type {
   DestinationHub,
   ModeFilter,
@@ -49,12 +63,33 @@ import { LegTransitPanel } from './components/LegTransitPanel.tsx';
 import { MultiDestDatePickerModal } from './components/MultiDestDatePickerModal.tsx';
 import { RouteOptimizerModal } from './components/RouteOptimizerModal.tsx';
 import { SortableStopCard } from './components/SortableStopCard.tsx';
+import { StayPanel } from './components/StayPanel.tsx';
 import { TopBar } from './components/TopBar.tsx';
 import { VoucherDrawer } from './components/VoucherDrawer.tsx';
 import { VttsControlPanel } from './components/VttsControlPanel.tsx';
 import { WorldMapCanvas } from './components/WorldMapCanvas.tsx';
 import { ErrorBoundary } from './components/ErrorBoundary.tsx';
 import { logFlightState, verifyLegsMatchResponse } from './flightDebug.ts';
+
+type WorkspacePanel = 'timeline' | 'stays' | 'smart-score' | 'vouchers';
+
+/**
+ * The browser has no airport dataset. Every flight segment the API returns carries exact airport
+ * coordinates, so remember them: later optimistic rebuilds then anchor to the same airports.
+ */
+function learnAirports(legs: TripLeg[]): void {
+  const points: AirportPoint[] = [];
+  for (const leg of legs) {
+    for (const option of leg.transitOptions) {
+      for (const seg of option.segments ?? []) {
+        if (seg.mode !== 'flight') continue;
+        points.push({ code: seg.fromCode, name: seg.fromName, lat: seg.fromLat, lng: seg.fromLng });
+        points.push({ code: seg.toCode, name: seg.toName, lat: seg.toLat, lng: seg.toLng });
+      }
+    }
+  }
+  registerAirports(points);
+}
 
 export default function App() {
   const [trip, setTrip] = useState<Trip>(() => createDefaultTrip());
@@ -63,7 +98,12 @@ export default function App() {
   const [isLoadingInitial, setIsLoadingInitial] = useState(true);
 
   // Sync & workspace UI states
-  const [activePanel, setActivePanel] = useState<'timeline' | 'smart-score' | 'vouchers'>('timeline');
+  const [activePanel, setActivePanel] = useState<WorkspacePanel>('timeline');
+  // Left pane: the route (stops + transport) or the stays for every destination
+  const [leftView, setLeftView] = useState<'route' | 'stays'>('route');
+  const [selectedStays, setSelectedStays] = useState<Record<string, string>>({});
+  // Bumped when partner ids arrive, so stay links are rebuilt with attribution
+  const [affiliateVersion, setAffiliateVersion] = useState(0);
   const [mobileView, setMobileView] = useState<'split-left' | 'split-right'>('split-left');
   const [modeFilter, setModeFilter] = useState<ModeFilter>('all');
   const [hoveredStopId, setHoveredStopId] = useState<string | null>(null);
@@ -97,6 +137,18 @@ export default function App() {
     let mounted = true;
     async function hydrateFromApi() {
       try {
+        // Partner ids first and on their own: they are instant, the trip may wait on live fares
+        fetch('/api/affiliate/config')
+          .then((res) => (res.ok ? res.json() : null))
+          .then((config: AffiliateConfig | null) => {
+            if (!mounted || !config) return;
+            configureAffiliate(config);
+            setAffiliateVersion((v) => v + 1);
+          })
+          .catch(() => {
+            // Links still work without ids; they are just not attributed
+          });
+
         const [tripRes, destRes, voucherRes] = await Promise.all([
           fetch('/api/trips/default'),
           fetch('/api/destinations'),
@@ -105,6 +157,7 @@ export default function App() {
         if (!mounted) return;
         if (tripRes.ok) {
           const tripData: Trip = await tripRes.json();
+          learnAirports(tripData.legs);
           lastApiLegsRef.current = { label: 'initial load', legs: tripData.legs };
           logFlightState('initial load (API response)', tripData.legs);
           setTrip(tripData);
@@ -147,7 +200,8 @@ export default function App() {
     async (
       nextStops: TripStop[],
       nextHourlyRate = trip.hourlyTimeValue,
-      nextVoucherCodes = trip.appliedVoucherCodes
+      nextVoucherCodes = trip.appliedVoucherCodes,
+      nextTravelers = trip.travelers
     ) => {
       const previousSelectedMap: Record<string, string> = {};
       for (const leg of trip.legs) {
@@ -165,7 +219,7 @@ export default function App() {
         nextHourlyRate,
         activeVouchers,
         previousSelectedMap,
-        { profile: trip.travelerProfile, passengers: trip.travelers }
+        { profile: trip.travelerProfile, passengers: nextTravelers }
       );
 
       lastApiLegsRef.current = null; // optimistic legs are local sample data, not an API response
@@ -177,6 +231,7 @@ export default function App() {
         legs: optimisticLegs,
         hourlyTimeValue: nextHourlyRate,
         appliedVoucherCodes: nextVoucherCodes,
+        travelers: nextTravelers,
       }));
 
       const requestId = ++recomputeRequestIdRef.current;
@@ -190,12 +245,13 @@ export default function App() {
             appliedVoucherCodes: nextVoucherCodes,
             previousSelectedMap,
             travelerProfile: trip.travelerProfile,
-            travelers: trip.travelers,
+            travelers: nextTravelers,
           }),
         });
         if (res.ok) {
           const data: { stops: TripStop[]; legs: TripLeg[] } = await res.json();
           if (requestId !== recomputeRequestIdRef.current) return; // superseded by a newer edit
+          learnAirports(data.legs);
           lastApiLegsRef.current = { label: 'recompute', legs: data.legs };
           logFlightState('recompute (API response)', data.legs);
           setTrip((prev) => ({
@@ -329,8 +385,14 @@ export default function App() {
 
   const handleAddDestination = (hub: DestinationHub) => {
     const lastStop = trip.stops[trip.stops.length - 1];
-    const arrivalDate = lastStop ? lastStop.departureDate : '2026-11-18';
-    const departureDate = addDaysIso(arrivalDate, hub.recommendedNights);
+    const arrivalDate = lastStop ? lastStop.departureDate : '2026-11-21';
+    // The first stop of a trip is the origin: a departure date, no nights
+    const departureDate = lastStop ? addDaysIso(arrivalDate, hub.recommendedNights) : arrivalDate;
+
+    // Airport-search results carry the airport's own coordinates (the curated city hubs do not)
+    if ('airportName' in hub) {
+      registerAirports([{ code: hub.iataCode, name: hub.tagline, lat: hub.lat, lng: hub.lng }]);
+    }
 
     const newStop: TripStop = {
       id: `stop-${hub.iataCode.toLowerCase()}-${Date.now()}`,
@@ -381,6 +443,25 @@ export default function App() {
         stops: nextStops,
       };
     });
+  };
+
+  // Travellers flow into every outbound link (flight passengers, hotel guests and rooms)
+  const handleChangeTravelers = (delta: number) => {
+    const next = Math.min(9, Math.max(1, trip.travelers + delta));
+    if (next === trip.travelers) return;
+    recomputeStopsAndLegs(trip.stops, trip.hourlyTimeValue, trip.appliedVoucherCodes, next);
+  };
+
+  const handleOpenStays = (stopId: string) => {
+    setActivePanel('stays');
+    setLeftView('stays');
+    setMobileView('split-left');
+    // The stays view mounts on this render; scroll once its panels exist
+    setTimeout(() => {
+      document
+        .getElementById(`stays-${stopId}`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 60);
   };
 
   const handleOpenDatePicker = (stopId?: string) => {
@@ -467,12 +548,14 @@ export default function App() {
     if (fresh.legs[0]) setActiveLegId(fresh.legs[0].id);
   };
 
-  const handleNavPanelSelect = (panel: 'timeline' | 'smart-score' | 'vouchers') => {
+  const handleNavPanelSelect = (panel: WorkspacePanel) => {
     setActivePanel(panel);
     setMobileView('split-left');
+    if (panel === 'stays') setLeftView('stays');
+    if (panel === 'timeline') setLeftView('route');
     if (panel === 'smart-score' && smartScoreSectionRef.current) {
       smartScoreSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    } else if (panel === 'timeline' && timelineSectionRef.current) {
+    } else if (timelineSectionRef.current && (panel === 'timeline' || panel === 'stays')) {
       timelineSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   };
@@ -507,10 +590,29 @@ export default function App() {
     };
   }, [trip.legs]);
 
-  const totalNights = useMemo(
-    () => trip.stops.reduce((sum, s) => sum + s.stayNights, 0),
-    [trip.stops]
+  const totalNights = useMemo(() => totalTripNights(trip.stops), [trip.stops]);
+
+  // Stays for every destination, ranked by the same Smart Score inputs as the transport options.
+  // `affiliateVersion` is a dependency because the links are rebuilt once partner ids arrive.
+  const staySearches = useMemo(
+    () => buildStaySearches(trip.stops, trip.travelers, trip.hourlyTimeValue, trip.travelerProfile),
+    [trip.stops, trip.travelers, trip.hourlyTimeValue, trip.travelerProfile, affiliateVersion]
   );
+  const stayByStopId = useMemo(
+    () => Object.fromEntries(staySearches.map((s) => [s.stopId, s])),
+    [staySearches]
+  );
+  const staysTotalUsd = useMemo(
+    () =>
+      staySearches.reduce((sum, search) => {
+        const picked =
+          search.options.find((o) => o.id === selectedStays[search.stopId]) ?? search.options[0];
+        return sum + (picked?.totalPriceUsd ?? 0);
+      }, 0),
+    [staySearches, selectedStays]
+  );
+  const handleSelectStay = (stopId: string, optionId: string) =>
+    setSelectedStays((prev) => ({ ...prev, [stopId]: optionId }));
 
   return (
     <div className="min-h-screen lg:h-screen flex flex-col bg-[#FAFAFA] text-[#111827] lg:overflow-hidden">
@@ -574,7 +676,7 @@ export default function App() {
           <div className="flex flex-wrap items-end justify-between gap-4">
             <div>
               <div className="text-xs font-medium text-[#4B5563] tabular-nums">
-                {trip.stops.length} destinations · {totalNights} nights ·{' '}
+                {trip.stops.length} stops · {totalNights} nights ·{' '}
                 {trip.legs.length} transit corridors
               </div>
               <h1 className="mt-1 font-display text-2xl font-bold tracking-tight text-[#111827]">
@@ -591,6 +693,33 @@ export default function App() {
                 <Calendar className="w-3.5 h-3.5 text-[#FF812E]" />
                 <span>{formatTripDateSpan(trip.stops)}</span>
               </button>
+
+              <div
+                role="group"
+                aria-label="Travellers"
+                className="inline-flex items-center gap-0.5 px-1.5 py-1 rounded-xl bg-white border border-neutral-200/80 text-xs font-semibold text-[#111827] shadow-xs shrink-0"
+              >
+                <Users className="w-3.5 h-3.5 text-[#FF812E] ml-1" />
+                <button
+                  type="button"
+                  aria-label="Fewer travellers"
+                  onClick={() => handleChangeTravelers(-1)}
+                  disabled={trip.travelers <= 1}
+                  className="w-6 h-6 flex items-center justify-center rounded-lg text-[#4B5563] hover:text-[#111827] hover:bg-neutral-100 disabled:opacity-40 cursor-pointer"
+                >
+                  <Minus className="w-3 h-3" />
+                </button>
+                <span className="font-mono tabular-nums min-w-4 text-center">{trip.travelers}</span>
+                <button
+                  type="button"
+                  aria-label="More travellers"
+                  onClick={() => handleChangeTravelers(1)}
+                  disabled={trip.travelers >= 9}
+                  className="w-6 h-6 flex items-center justify-center rounded-lg text-[#4B5563] hover:text-[#111827] hover:bg-neutral-100 disabled:opacity-40 cursor-pointer"
+                >
+                  <Plus className="w-3 h-3" />
+                </button>
+              </div>
 
               <button
                 type="button"
@@ -630,9 +759,38 @@ export default function App() {
           {/* Drag-and-Drop Multi-Destination Timeline */}
           <section ref={timelineSectionRef} aria-label="Destination timeline" className="space-y-3">
             <div className="flex items-center justify-between gap-3">
-              <h2 className="font-display text-sm font-bold text-[#111827]">
-                Itinerary &amp; Corridors
-              </h2>
+              <div
+                role="tablist"
+                aria-label="Itinerary view"
+                className="inline-flex p-1 rounded-xl bg-neutral-100"
+              >
+                {(
+                  [
+                    { id: 'route', label: 'Itinerary & Corridors', icon: Route },
+                    { id: 'stays', label: `Stays (${staySearches.length})`, icon: BedDouble },
+                  ] as const
+                ).map((tab) => {
+                  const Icon = tab.icon;
+                  const active = leftView === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      role="tab"
+                      aria-selected={active}
+                      onClick={() => handleNavPanelSelect(tab.id === 'route' ? 'timeline' : 'stays')}
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors cursor-pointer whitespace-nowrap ${
+                        active
+                          ? 'bg-white text-[#111827] font-bold shadow-xs'
+                          : 'text-[#4B5563] font-medium hover:text-[#111827]'
+                      }`}
+                    >
+                      <Icon className="w-3.5 h-3.5 text-[#FF812E]" />
+                      <span>{tab.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
               {trip.stops.length !== 4 && (
                 <button
                   type="button"
@@ -673,6 +831,42 @@ export default function App() {
                   </button>
                 </div>
               </div>
+            ) : leftView === 'stays' ? (
+              <div className="space-y-3">
+                <div className="rounded-2xl bg-white border border-neutral-200/80 shadow-sm px-4 py-3 flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-xs text-[#4B5563]">
+                    <span className="font-semibold text-[#111827]">
+                      {staySearches.length} stay{staySearches.length === 1 ? '' : 's'} ·{' '}
+                      {totalNights} nights · {trip.travelers} guest{trip.travelers === 1 ? '' : 's'}
+                    </span>
+                    <div className="mt-0.5">
+                      Ranked by Smart Score at your travel pacing. Prices are typical estimates;
+                      the partner shows live rates.
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-[11px] font-medium text-[#4B5563]">Est. stays total</div>
+                    <div className="font-display text-lg font-bold text-[#111827] tabular-nums">
+                      ~${staysTotalUsd.toFixed(0)}
+                    </div>
+                  </div>
+                </div>
+                {staySearches.length === 0 ? (
+                  <div className="rounded-2xl bg-white border border-neutral-200/80 p-6 text-center text-xs text-[#4B5563]">
+                    Add a destination after your starting point to compare places to stay.
+                  </div>
+                ) : (
+                  staySearches.map((search) => (
+                    <StayPanel
+                      key={search.stopId}
+                      search={search}
+                      selectedOptionId={selectedStays[search.stopId]}
+                      defaultExpanded
+                      onSelectOption={handleSelectStay}
+                    />
+                  ))
+                )}
+              </div>
             ) : (
               <DndContext
                 sensors={sensors}
@@ -686,11 +880,13 @@ export default function App() {
                   <div className="space-y-1">
                     {trip.stops.map((stop, idx) => {
                       const nextLeg = trip.legs[idx];
+                      const staySearch = stayByStopId[stop.id];
                       return (
                         <div key={stop.id}>
                           <SortableStopCard
                             stop={stop}
                             index={idx}
+                            isOrigin={idx === 0}
                             isHovered={hoveredStopId === stop.id}
                             canRemove={trip.stops.length > 2}
                             onHoverStop={setHoveredStopId}
@@ -701,6 +897,15 @@ export default function App() {
                             onUpdateNights={handleUpdateNights}
                             onRemoveStop={handleRemoveStop}
                           />
+
+                          {staySearch && (
+                            <StayPanel
+                              search={staySearch}
+                              selectedOptionId={selectedStays[stop.id]}
+                              inTimeline
+                              onSelectOption={handleSelectStay}
+                            />
+                          )}
 
                           {nextLeg && (
                             <LegTransitPanel
@@ -752,6 +957,7 @@ export default function App() {
               onSelectLeg={(legId) => {
                 setActiveLegId(legId);
               }}
+              onOpenStays={handleOpenStays}
             />
           </ErrorBoundary>
         </div>

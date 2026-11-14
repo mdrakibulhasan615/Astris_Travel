@@ -24,10 +24,16 @@ export function AddStopModal({
 
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const existingCodes = useMemo(
-    () => new Set(currentStops.map((s) => s.iataCode.toUpperCase())),
-    [currentStops]
-  );
+  // How many times each place is already in the trip. Purely informational: a place can be added
+  // again as often as the traveller likes (A → B → A, or a second pass through the same hub).
+  const visitCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const s of currentStops) {
+      const code = s.iataCode.toUpperCase();
+      counts[code] = (counts[code] ?? 0) + 1;
+    }
+    return counts;
+  }, [currentStops]);
 
   // Auto-focus input on open and reset state
   useEffect(() => {
@@ -88,7 +94,6 @@ export function AddStopModal({
   }, [query, isOpen, destinations]);
 
   const handleSelect = (hub: DestinationHub) => {
-    if (existingCodes.has(hub.iataCode.toUpperCase())) return;
     onAddDestination(hub);
     onClose();
   };
@@ -192,7 +197,7 @@ export function AddStopModal({
               </div>
             ) : (
               results.map((hub, idx) => {
-                const alreadyAdded = existingCodes.has(hub.iataCode.toUpperCase());
+                const visits = visitCounts[hub.iataCode.toUpperCase()] ?? 0;
                 const isHighlighted = idx === highlightedIndex;
 
                 return (
@@ -201,11 +206,9 @@ export function AddStopModal({
                     onClick={() => handleSelect(hub)}
                     onMouseEnter={() => setHighlightedIndex(idx)}
                     className={`flex items-center justify-between gap-3 p-3 rounded-xl border transition-all cursor-pointer ${
-                      alreadyAdded
-                        ? 'bg-neutral-50 border-neutral-200/70 opacity-60 cursor-not-allowed'
-                        : isHighlighted
-                          ? 'bg-[#FFF4ED] border-[#FFD6BA] shadow-xs'
-                          : 'bg-white border-neutral-200/80 hover:border-neutral-300'
+                      isHighlighted
+                        ? 'bg-[#FFF4ED] border-[#FFD6BA] shadow-xs'
+                        : 'bg-white border-neutral-200/80 hover:border-neutral-300'
                     }`}
                   >
                     <div className="min-w-0 space-y-0.5">
@@ -219,6 +222,11 @@ export function AddStopModal({
                         <span className="text-xs text-[#4B5563] truncate">
                           · {hub.country}
                         </span>
+                        {visits > 0 && (
+                          <span className="shrink-0 rounded-md bg-neutral-100 px-1.5 py-0.5 text-[10px] font-medium text-[#4B5563] tabular-nums">
+                            In trip{visits > 1 ? ` ×${visits}` : ''}
+                          </span>
+                        )}
                       </div>
 
                       <div className="text-xs text-[#4B5563] truncate">
@@ -232,19 +240,14 @@ export function AddStopModal({
 
                     <button
                       type="button"
-                      disabled={alreadyAdded}
                       onClick={(e) => {
                         e.stopPropagation();
                         handleSelect(hub);
                       }}
-                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold shrink-0 transition-colors cursor-pointer ${
-                        alreadyAdded
-                          ? 'bg-neutral-200 text-neutral-500 cursor-not-allowed'
-                          : 'bg-[#FF812E] hover:bg-[#E56B1A] text-white shadow-xs'
-                      }`}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold shrink-0 transition-colors cursor-pointer bg-[#FF812E] hover:bg-[#E56B1A] text-white shadow-xs"
                     >
                       <Plus className="w-3.5 h-3.5" />
-                      <span>{alreadyAdded ? 'In Trip' : 'Add Stop'}</span>
+                      <span>{visits > 0 ? 'Add Again' : 'Add Stop'}</span>
                     </button>
                   </div>
                 );
