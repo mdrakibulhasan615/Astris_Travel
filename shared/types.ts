@@ -135,6 +135,18 @@ export interface TransitOption {
   doorToDoorNotes: string;
   co2Kg: number;
   bookingUrl?: string;
+  /**
+   * Where this option's data came from. Only `live` is a real, current fare; `curated` and
+   * `synthesized` are sample/estimated data and the UI labels them as such.
+   */
+  dataSource?: 'live' | 'curated' | 'synthesized';
+  /** Every flight number on the itinerary, in order (live data), e.g. ["PC 123", "PC 456"]. */
+  flightNumbers?: string[];
+  /** Distinct operating airlines in order of first appearance (live data). */
+  carriers?: string[];
+  /** Raw provider timestamps ("YYYY-MM-DD HH:MM") for the first departure / last arrival. */
+  departureAt?: string;
+  arrivalAt?: string;
   expiresAt?: string;
   eligibleVoucherIds: string[];
   appliedVoucherId?: string | null;
