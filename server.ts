@@ -3,7 +3,6 @@ import { logEnvStatus } from './server/env.ts';
 import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createServer as createViteServer } from 'vite';
 import {
   REDIS_CACHE_TTL_SECONDS,
   buildTransitCacheKey,
@@ -240,7 +239,11 @@ function logLegs(label: string, legs: TripLeg[]): void {
   }
 }
 
-async function startServer() {
+/**
+ * The API without any hosting concerns: no Vite, no static files, no listen(). `api/index.ts`
+ * exports this for Vercel; `startServer` below wraps it for local dev and self-hosting.
+ */
+export function createApp() {
   logEnvStatus();
   const app = express();
   app.use(express.json());
@@ -645,8 +648,16 @@ async function startServer() {
     res.json(response);
   });
 
+  return app;
+}
+
+async function startServer() {
+  const app = createApp();
+
   // Vite middleware in development; static serving in production
   if (process.env.NODE_ENV !== 'production') {
+    // Imported lazily so the serverless bundle (api/index.ts) never pulls Vite in
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
@@ -665,7 +676,10 @@ async function startServer() {
   });
 }
 
-startServer().catch((err) => {
-  console.error('[Astris] Server failed to start:', err);
-  process.exit(1);
-});
+// On Vercel the platform calls the handler in api/index.ts; there is no port to listen on
+if (!process.env.VERCEL) {
+  startServer().catch((err) => {
+    console.error('[Astris] Server failed to start:', err);
+    process.exit(1);
+  });
+}
