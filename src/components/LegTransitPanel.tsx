@@ -92,6 +92,10 @@ function BookLink({ option }: { option: TransitOption }) {
       href={option.bookingUrl}
       target="_blank"
       rel="sponsored noopener noreferrer"
+      onClick={() => {
+        // Development aid: the exact URL the browser is about to open
+        if (import.meta.env.DEV) console.debug('[Booking] opening', option.id, option.bookingUrl);
+      }}
       className="inline-flex items-center gap-1 rounded-lg bg-[#FF812E] px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-[#E56B1A] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF812E] focus-visible:ring-offset-1"
       title={isAffiliateUrl(option.bookingUrl) ? 'Opens our booking partner' : 'Opens the booking site'}
     >

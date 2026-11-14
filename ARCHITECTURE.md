@@ -33,14 +33,24 @@ deep links.
 | `npm run lint` | `tsc --noEmit` | Type-check client, server and shared code |
 
 ### Environment variables (`.env.local`, see `.env.example`)
+Loading is centralised in `server/env.ts`, which must be the **first import** of `server.ts` (ES imports
+are hoisted, so a `dotenv.config()` call in the file body would run after services already read
+`process.env`). Order: real environment → `.env.local` → `.env`, resolved from the project root (not the
+cwd). `getEnv()` trims, strips quotes and treats `.env.example` placeholders (`your-…`, `MY_…`) as
+missing; missing keys log a one-time `[env] NAME is not set…` warning at startup and on first use, never
+a crash. **Client:** the browser uses no environment variables (booking links and scores come from the
+server). If one is ever needed, it must be named `VITE_*` and read via `import.meta.env.VITE_*`;
+unprefixed keys (including `GEMINI_API_KEY`) are deliberately never exposed to the bundle.
+
 | Variable | Required | Used by | Purpose |
 | :--- | :--- | :--- | :--- |
 | `PORT` | no (3000) | `server.ts` | HTTP port |
 | `SERPAPI_KEY` | no | `server/transitService.ts` | Live Google Flights search (`engine=google_flights`). Absent → curated/synthesized corridors |
 | `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` | no | `server/transitService.ts` | 12-hour transit cache |
-| `TRAVELPAYOUTS_MARKER` | no | `shared/affiliate.ts` (configured in `transitService.ts`) | Partner marker. Absent → booking links work but are **not attributed** |
-| `TRAVELPAYOUTS_TRS` | no | same | Optional traffic-source sub-id (`trs`) |
-| `TRAVELPAYOUTS_CAMPAIGN_ID`, `TRAVELPAYOUTS_PROGRAM_ID` | no | same | Override Aviasales campaign (default `100`) / program (default `4114`) — verify in your Travelpayouts dashboard |
+| `TRAVELPAYOUTS_MARKER` | no | `shared/affiliate.ts` (configured in `transitService.ts`) | Partner marker, injected as `?marker=`. Absent → booking links work but are **not attributed** |
+| `TRAVELPAYOUTS_TRS` | no | same | Optional sub-id: sent as `marker.subid` (direct mode) or `trs` (redirect mode) |
+| `TRAVELPAYOUTS_LINK_MODE` | no (`direct`) | same | `direct` = `aviasales.com/search/...?marker=`; `redirect` = `tp.media/r?...&u=` |
+| `TRAVELPAYOUTS_CAMPAIGN_ID`, `TRAVELPAYOUTS_PROGRAM_ID` | no | same | Redirect mode only. Aviasales campaign (default `100`) / program (default `4114`) — verify in your Travelpayouts dashboard |
 | `DUFFEL_ACCESS_TOKEN` | **Phase 2 — not read by any code yet** | — | Reserved for native Duffel offers/orders |
 | `GEMINI_API_KEY`, `APP_URL` | no | — | AI Studio scaffolding; **not read by any code today** |
 
@@ -63,6 +73,7 @@ deep links.
 ```text
 ├── server.ts                    # Express entry: API routes, input validation, Vite middleware / static serving
 ├── server/
+│   ├── env.ts                   # dotenv bootstrap (.env.local → .env), getEnv(), missing-key warnings — import FIRST
 │   ├── transitService.ts        # SerpApi integration, Redis cache wrapper, coordinate resolution, fallback corridors
 │   └── airportService.ts        # `airports` dataset search + IATA lookup
 ├── shared/                      # Imported by server AND client
@@ -144,9 +155,13 @@ reintroduce scoring in `backend/`; mirror the output types only (`SmartScoreBrea
    `buildLegsFromStops` (default trip, optimizer, client optimistic updates) and
    `queryTransitWithCache` (cache hit, live SerpApi, fallback). Links are rebuilt on each response,
    so a changed marker, date, or route always wins over stale cached values.
-2. **Flights** → Aviasales search deep link `https://www.aviasales.com/search/{ORIGIN}{DDMM}{DEST}{pax}`
-   (leg departure date from the stop, `travelers` as passengers). With `TRAVELPAYOUTS_MARKER` set it is
-   wrapped: `https://tp.media/r?marker=…&p=…&campaign_id=…[&trs=…]&u=<encoded search url>`.
+2. **Flights** → Aviasales search deep link `https://www.aviasales.com/search/{ORIGIN}{DDMM}{DEST}[{DDMM}]{adults}`
+   — e.g. `KUL2111IST1` (21 Nov, 1 adult) or `KUL2111IST25111` (return 25 Nov). DDMM is strictly
+   zero-padded day + month from the stop's departure date (`2026-03-05` → `0503`); impossible dates
+   (Feb 31) and return-before-departure are rejected. Adults come from `travelers` (clamped 1–9).
+   With `TRAVELPAYOUTS_MARKER` set the link gets `?marker=<marker>[.<subid>]`; in `redirect` mode it is
+   wrapped as `https://tp.media/r?marker=…&p=…&campaign_id=…[&trs=…]&u=<encoded search url>`.
+   Markers/sub-ids/campaign ids are format-validated at startup; invalid values are dropped with a warning.
 3. **Invalid route/date** (non-IATA code, malformed date) → Google Flights search URL, never an empty link.
 4. **Train / bus / ferry** → Rome2Rio route page (no affiliate program wired yet; un-attributed).
 5. The server configures credentials at startup (`configureAffiliate`). The browser has none, so
@@ -154,7 +169,9 @@ reintroduce scoring in `backend/`; mirror the output types only (`SmartScoreBrea
    (typically within one round trip).
 6. UI: `LegTransitPanel` shows a **Book** button per option (and for the selected option when the
    leg is collapsed), `target="_blank"`, `rel="sponsored noopener noreferrer"`.
-7. SerpApi's `booking_token` is not used: resolving it costs an extra paid request per option, so
+7. In development the server logs each distinct generated URL (`[Affiliate] flight KUL→IST …`) and the
+   browser logs the URL on click, so the exact link can be inspected before it opens.
+8. SerpApi's `booking_token` is not used: resolving it costs an extra paid request per option, so
    attribution goes through Aviasales instead.
 
 ---
