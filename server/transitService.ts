@@ -5,6 +5,7 @@ import {
   DESTINATION_HUBS,
   VOUCHERS_CATALOG,
 } from '../shared/mockDataset.ts';
+import { attachBookingUrls, configureAffiliate } from '../shared/affiliate.ts';
 import {
   computeSmartScore,
   haversineDistanceKm,
@@ -16,13 +17,24 @@ import type {
   TransitMode,
   TransitOption,
   TransitSegment,
+  TravelerProfile,
   TripStop,
   Voucher,
 } from '../shared/types.ts';
+import { getAirportByIata } from './airportService.ts';
 
 // Load environment variables (.env.local first, then .env)
 dotenv.config({ path: '.env.local' });
 dotenv.config();
+
+// Travelpayouts affiliate attribution (see shared/affiliate.ts). Without a marker, links are
+// still valid but un-attributed.
+configureAffiliate({
+  marker: process.env.TRAVELPAYOUTS_MARKER,
+  trs: process.env.TRAVELPAYOUTS_TRS,
+  campaignId: process.env.TRAVELPAYOUTS_CAMPAIGN_ID,
+  programId: process.env.TRAVELPAYOUTS_PROGRAM_ID,
+});
 
 export const REDIS_CACHE_TTL_SECONDS = 43200; // 12 hours (EX: 43200)
 
@@ -135,6 +147,8 @@ export interface TransitQueryParams {
   mode?: 'all' | TransitMode;
   hourlyRateUsd?: number;
   activeVouchers?: Voucher[];
+  travelerProfile?: Partial<TravelerProfile>;
+  passengers?: number;
   fromStop?: TripStop;
   toStop?: TripStop;
 }
@@ -147,15 +161,26 @@ export interface TransitQueryResult {
   options: TransitOption[];
 }
 
-function resolveCoordinates(code: string, cityHint?: string): { lat: number; lng: number; city: string } {
-  const match = DESTINATION_HUBS.find(
-    (h) => h.iataCode.toUpperCase() === code.toUpperCase() ||
-      (cityHint && h.city.toLowerCase() === cityHint.toLowerCase())
-  );
+/**
+ * Resolves exact coordinates for an IATA code. Order: caller-supplied stop → curated hubs →
+ * the global `airports` dataset (per ARCHITECTURE.md §3). Previously anything outside the ~20
+ * curated hubs silently resolved to Paris, corrupting distances, CO₂ and map arcs.
+ */
+function resolveCoordinates(
+  code: string,
+  stop?: Pick<TripStop, 'lat' | 'lng' | 'city'>
+): { lat: number; lng: number; city: string } {
+  if (stop && Number.isFinite(stop.lat) && Number.isFinite(stop.lng)) {
+    return { lat: stop.lat, lng: stop.lng, city: stop.city };
+  }
+  const upper = code.toUpperCase();
+  const match =
+    DESTINATION_HUBS.find((h) => h.iataCode.toUpperCase() === upper) ?? getAirportByIata(upper);
   if (match) {
     return { lat: match.lat, lng: match.lng, city: match.city };
   }
-  return { lat: 48.8566, lng: 2.3522, city: cityHint || code };
+  console.warn(`[Transit API] Unknown IATA code "${code}"; coordinates unavailable, using 0,0.`);
+  return { lat: 0, lng: 0, city: code };
 }
 
 /**
@@ -166,7 +191,10 @@ async function fetchSerpApiFlights(
   destination: string,
   date: string,
   hourlyRateUsd: number,
-  activeVouchers: Voucher[]
+  activeVouchers: Voucher[],
+  profile: Partial<TravelerProfile> | undefined,
+  fromStop?: TripStop,
+  toStop?: TripStop
 ): Promise<TransitOption[] | null> {
   if (!SERPAPI_KEY) return null;
 
@@ -201,8 +229,8 @@ async function fetchSerpApiFlights(
       return null;
     }
 
-    const fromCoords = resolveCoordinates(origin);
-    const toCoords = resolveCoordinates(destination);
+    const fromCoords = resolveCoordinates(origin, fromStop);
+    const toCoords = resolveCoordinates(destination, toStop);
     const distanceKm = haversineDistanceKm(fromCoords.lat, fromCoords.lng, toCoords.lat, toCoords.lng);
     const legId = `leg-${origin.toLowerCase()}-${destination.toLowerCase()}`;
 
@@ -226,14 +254,18 @@ async function fetchSerpApiFlights(
       const layoverHours = round2(layoverMinutes / 60);
       const priceUsd = Number(item.price) || Math.round(95 + distanceKm * 0.05);
 
-      const depTime = firstFlt.departure_airport?.time || '09:00';
-      const arrTime = lastFlt.arrival_airport?.time || '14:30';
+      // SerpApi returns "YYYY-MM-DD HH:MM"; keep just the clock time so the engine can parse it
+      const clock = (t?: string) => /(\d{1,2}:\d{2})\s*$/.exec(t ?? '')?.[1];
+      const depTime = clock(firstFlt.departure_airport?.time) || '09:00';
+      const arrTime = clock(lastFlt.arrival_airport?.time) || '14:30';
 
       const eligibleVouchers = VOUCHERS_CATALOG.filter(
         (v) =>
           v.applicableModes.includes('flight') &&
           priceUsd >= v.minSpendUsd &&
-          (!v.applicableCarriers || v.applicableCarriers.includes(carrierCode))
+          (!v.applicableCarriers ||
+            v.applicableCarriers.length === 0 ||
+            v.applicableCarriers.includes(carrierCode))
       ).map((v) => v.id);
 
       const segments: TransitSegment[] = flights.map((flt: {
@@ -241,22 +273,34 @@ async function fetchSerpApiFlights(
         departure_airport?: { name?: string; id?: string };
         arrival_airport?: { name?: string; id?: string };
         duration?: number;
-      }, segIdx: number) => ({
-        id: `${legId}-serp-s${segIdx + 1}`,
-        mode: 'flight' as TransitMode,
-        label: flt.flight_number || `Flight ${segIdx + 1}`,
-        fromName: flt.departure_airport?.name || origin,
-        fromCode: flt.departure_airport?.id || origin,
-        fromLat: fromCoords.lat,
-        fromLng: fromCoords.lng,
-        toName: flt.arrival_airport?.name || destination,
-        toCode: flt.arrival_airport?.id || destination,
-        toLat: toCoords.lat,
-        toLng: toCoords.lng,
-        durationMinutes: Number(flt.duration) || Math.round(inVehicleMinutes / Math.max(1, flights.length)),
-      }));
+      }, segIdx: number) => {
+        // Resolve each hop's own airport so connections render via the layover hub,
+        // not as N overlapping origin→destination arcs.
+        const segFromCode = flt.departure_airport?.id || origin;
+        const segToCode = flt.arrival_airport?.id || destination;
+        const segFrom = segIdx === 0 ? fromCoords : resolveCoordinates(segFromCode);
+        const segTo = segIdx === flights.length - 1 ? toCoords : resolveCoordinates(segToCode);
+        return {
+          id: `${legId}-serp-s${segIdx + 1}`,
+          mode: 'flight' as TransitMode,
+          label: flt.flight_number || `Flight ${segIdx + 1}`,
+          fromName: flt.departure_airport?.name || origin,
+          fromCode: segFromCode,
+          fromLat: segFrom.lat,
+          fromLng: segFrom.lng,
+          toName: flt.arrival_airport?.name || destination,
+          toCode: segToCode,
+          toLat: segTo.lat,
+          toLng: segTo.lng,
+          durationMinutes: Number(flt.duration) || Math.round(inVehicleMinutes / Math.max(1, flights.length)),
+        };
+      });
 
       const dummyOption = {
+        departureTime: depTime,
+        arrivalTime: arrTime,
+        stopsCount: layovers.length,
+        segments,
         basePriceUsd: priceUsd,
         inVehicleHours,
         layoverHours,
@@ -266,7 +310,7 @@ async function fetchSerpApiFlights(
         eligibleVoucherIds: eligibleVouchers,
       };
 
-      const breakdown = computeSmartScore(dummyOption, hourlyRateUsd);
+      const breakdown = computeSmartScore(dummyOption, hourlyRateUsd, null, profile);
 
       return {
         id: `${legId}-serp-${idx + 1}`,
@@ -290,7 +334,6 @@ async function fetchSerpApiFlights(
         smartScoreBreakdown: breakdown,
         doorToDoorNotes: `${origin} Airport (${depTime}) → ${destination} (${arrTime})`,
         co2Kg: Math.round(Number(item.carbon_emissions?.this_flight) / 1000) || Math.round(distanceKm * 0.12),
-        bookingUrl: item.booking_token ? `https://www.google.com/travel/flights` : undefined,
         eligibleVoucherIds: eligibleVouchers,
         appliedVoucherId: null,
         segments,
@@ -298,7 +341,7 @@ async function fetchSerpApiFlights(
     });
 
     console.log(`[Transit API] Successfully parsed ${rawOptions.length} live flights from SerpAPI.`);
-    return recalculateOptionsWithVttsAndVouchers(rawOptions, hourlyRateUsd, activeVouchers);
+    return recalculateOptionsWithVttsAndVouchers(rawOptions, hourlyRateUsd, activeVouchers, profile);
   } catch (err) {
     console.warn('[Transit API] SerpAPI fetch failed or timed out:', err);
     return null;
@@ -313,6 +356,7 @@ function buildFallbackCorridorOptions(
   destination: string,
   hourlyRateUsd: number,
   activeVouchers: Voucher[],
+  profile: Partial<TravelerProfile> | undefined,
   fromStop?: TripStop,
   toStop?: TripStop
 ): TransitOption[] {
@@ -326,14 +370,16 @@ function buildFallbackCorridorOptions(
       legId,
     }));
   } else {
+    const fromResolved = resolveCoordinates(origin);
+    const toResolved = resolveCoordinates(destination);
     const fromCoords = fromStop || {
       id: `stop-${origin.toLowerCase()}`,
       order: 1,
-      city: resolveCoordinates(origin).city,
+      city: fromResolved.city,
       country: '',
       iataCode: origin.toUpperCase(),
-      lat: resolveCoordinates(origin).lat,
-      lng: resolveCoordinates(origin).lng,
+      lat: fromResolved.lat,
+      lng: fromResolved.lng,
       stayNights: 3,
       arrivalDate: '2026-11-18',
       departureDate: '2026-11-21',
@@ -342,11 +388,11 @@ function buildFallbackCorridorOptions(
     const toCoords = toStop || {
       id: `stop-${destination.toLowerCase()}`,
       order: 2,
-      city: resolveCoordinates(destination).city,
+      city: toResolved.city,
       country: '',
       iataCode: destination.toUpperCase(),
-      lat: resolveCoordinates(destination).lat,
-      lng: resolveCoordinates(destination).lng,
+      lat: toResolved.lat,
+      lng: toResolved.lng,
       stayNights: 4,
       arrivalDate: '2026-11-21',
       departureDate: '2026-11-25',
@@ -358,11 +404,12 @@ function buildFallbackCorridorOptions(
       legId,
       VOUCHERS_CATALOG,
       hourlyRateUsd,
-      activeVouchers
+      activeVouchers,
+      profile
     );
   }
 
-  return recalculateOptionsWithVttsAndVouchers(baseOptions, hourlyRateUsd, activeVouchers);
+  return recalculateOptionsWithVttsAndVouchers(baseOptions, hourlyRateUsd, activeVouchers, profile);
 }
 
 /**
@@ -383,9 +430,23 @@ export async function queryTransitWithCache(
     mode = 'all',
     hourlyRateUsd = 15,
     activeVouchers = [],
+    travelerProfile,
+    passengers,
     fromStop,
     toStop,
   } = params;
+
+  // Booking links are (re)built on every response — cached options may pre-date the current
+  // affiliate marker, travel date, or route naming.
+  const withBookingUrls = (opts: TransitOption[]) =>
+    attachBookingUrls(opts, {
+      fromCode: origin.trim().toUpperCase(),
+      toCode: destination.trim().toUpperCase(),
+      fromCity: fromStop?.city,
+      toCity: toStop?.city,
+      date,
+      passengers,
+    });
 
   const cacheKey = buildTransitCacheKey(origin, destination, date, mode);
 
@@ -396,14 +457,15 @@ export async function queryTransitWithCache(
     const scoredCached = recalculateOptionsWithVttsAndVouchers(
       cachedOptions,
       hourlyRateUsd,
-      activeVouchers
+      activeVouchers,
+      travelerProfile
     );
     return {
       cacheKey,
       source: 'redis_cache',
       cached: true,
       ttlSeconds: REDIS_CACHE_TTL_SECONDS,
-      options: scoredCached,
+      options: withBookingUrls(scoredCached),
     };
   }
 
@@ -415,7 +477,10 @@ export async function queryTransitWithCache(
       destination,
       date,
       hourlyRateUsd,
-      activeVouchers
+      activeVouchers,
+      travelerProfile,
+      fromStop,
+      toStop
     );
   }
 
@@ -432,6 +497,7 @@ export async function queryTransitWithCache(
       destination,
       hourlyRateUsd,
       activeVouchers,
+      travelerProfile,
       fromStop,
       toStop
     );
@@ -454,6 +520,6 @@ export async function queryTransitWithCache(
     source,
     cached: false,
     ttlSeconds: REDIS_CACHE_TTL_SECONDS,
-    options: finalOptions,
+    options: withBookingUrls(finalOptions),
   };
 }

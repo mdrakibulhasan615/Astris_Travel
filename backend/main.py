@@ -4,7 +4,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .models import OptimizeRouteRequest, Trip, Voucher
-from .smart_score import haversine_km
+from .geo import haversine_km
 
 app = FastAPI(title="Astris Travel API", version="1.0.0")
 

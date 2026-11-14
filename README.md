@@ -16,7 +16,7 @@ C:\Users\User\antigravity\Astris-Travel
 1. Install dependencies:
    `npm install --legacy-peer-deps`
    `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
+2. (Optional) Copy `.env.example` to `.env.local` and add SerpApi / Upstash / Travelpayouts keys (see ARCHITECTURE.md)
 3. Run the app:
    `npm run dev`
 

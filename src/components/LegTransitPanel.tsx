@@ -5,13 +5,22 @@ import {
   Check,
   ChevronDown,
   ChevronUp,
+  ExternalLink,
   Moon,
   Plane,
   Ship,
   TrainFront,
 } from 'lucide-react';
 import { formatDuration } from '../../shared/smartScore.ts';
-import type { ModeFilter, TransitMode, TripLeg, Voucher } from '../../shared/types.ts';
+import { isAffiliateUrl } from '../../shared/affiliate.ts';
+import type {
+  ModeFilter,
+  ScoreFlag,
+  TransitMode,
+  TransitOption,
+  TripLeg,
+  Voucher,
+} from '../../shared/types.ts';
 
 interface LegTransitPanelProps {
   leg: TripLeg;
@@ -35,6 +44,61 @@ function getModeAccentClass(mode: TransitMode, isSelected: boolean): string {
   if (mode === 'train') return 'text-[#0D9488]';
   if (mode === 'bus') return 'text-[#7C3AED]';
   return 'text-[#0284C7]';
+}
+
+const FLAG_LABELS: Record<ScoreFlag, string> = {
+  'red-eye': 'Red-eye departure',
+  'early-departure': 'Early departure',
+  'late-arrival': 'Late-night arrival',
+  'long-layover': 'Long layover',
+  'overnight-layover': 'Overnight layover',
+  'multi-stop': 'Multi-stop',
+  'airport-change': 'Airport change',
+};
+
+/** Warning-level flags are highlighted; informational ones stay neutral. */
+const WARNING_FLAGS: ReadonlySet<ScoreFlag> = new Set([
+  'red-eye',
+  'overnight-layover',
+  'airport-change',
+  'late-arrival',
+]);
+
+function FlagChips({ flags }: { flags: ScoreFlag[] }) {
+  if (flags.length === 0) return null;
+  return (
+    <div className="flex flex-wrap gap-1">
+      {flags.map((flag) => (
+        <span
+          key={flag}
+          className={`rounded-md px-1.5 py-0.5 text-[10px] font-medium ${
+            WARNING_FLAGS.has(flag)
+              ? 'bg-[#FEF2F2] text-[#B91C1C]'
+              : 'bg-neutral-100 text-[#4B5563]'
+          }`}
+        >
+          {FLAG_LABELS[flag]}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** Outbound affiliate deep link; `sponsored` tells search engines it is a paid referral. */
+function BookLink({ option }: { option: TransitOption }) {
+  if (!option.bookingUrl) return null;
+  return (
+    <a
+      href={option.bookingUrl}
+      target="_blank"
+      rel="sponsored noopener noreferrer"
+      className="inline-flex items-center gap-1 rounded-lg bg-[#FF812E] px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-[#E56B1A] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF812E] focus-visible:ring-offset-1"
+      title={isAffiliateUrl(option.bookingUrl) ? 'Opens our booking partner' : 'Opens the booking site'}
+    >
+      Book {option.mode === 'flight' ? 'flight' : 'route'} · ${option.discountedPriceUsd.toFixed(0)}
+      <ExternalLink className="w-3 h-3" aria-hidden="true" />
+    </a>
+  );
 }
 
 export function LegTransitPanel({
@@ -162,6 +226,12 @@ export function LegTransitPanel({
           </div>
         </button>
 
+        {selectedOption?.bookingUrl && !expanded && (
+          <div className="flex justify-end px-3.5 pb-2.5">
+            <BookLink option={selectedOption} />
+          </div>
+        )}
+
         {expanded && (
           <div className="px-3.5 pb-3.5 pt-1 border-t border-neutral-100 space-y-2">
             {filteredOptions.length === 0 ? (
@@ -173,12 +243,12 @@ export function LegTransitPanel({
                 const isSelected = option.id === selectedOption?.id;
                 const voucherCode = getVoucherCode(option.appliedVoucherId);
                 const { smartScoreBreakdown: b } = option;
-                const hasLongLayover = option.layoverHours >= 6;
-                const hasNormalLayover = option.layoverHours >= 2 && option.layoverHours < 6;
+                const hasLongLayover = option.layoverHours > 4;
+                const hasNormalLayover = option.layoverHours >= 2 && option.layoverHours <= 4;
 
                 return (
+                  <div key={option.id}>
                   <button
-                    key={option.id}
                     type="button"
                     onClick={() => {
                       onActivateLeg(leg.id);
@@ -301,6 +371,11 @@ export function LegTransitPanel({
                       </div>
                     </div>
                   </button>
+                  <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2 px-1">
+                    <FlagChips flags={b.flags} />
+                    <BookLink option={option} />
+                  </div>
+                  </div>
                 );
               })
             )}

@@ -155,7 +155,11 @@ export function RouteOptimizerModal({
                 </div>
               </div>
             </>
-          ) : null}
+          ) : (
+            <p role="alert" className="py-6 text-center text-sm text-[#4B5563]">
+              The route optimizer couldn't complete. Your current itinerary is unchanged; please try again.
+            </p>
+          )}
         </div>
 
         <div className="px-6 py-4 bg-[#FAFAFA] border-t border-neutral-100 flex items-center justify-end gap-3">

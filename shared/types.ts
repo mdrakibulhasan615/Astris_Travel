@@ -21,6 +21,29 @@ export interface VttsPreset {
   description: string;
 }
 
+/** Human-readable reasons an option was penalized; rendered as badges in the UI. */
+export type ScoreFlag =
+  | 'red-eye'
+  | 'early-departure'
+  | 'late-arrival'
+  | 'long-layover'
+  | 'overnight-layover'
+  | 'multi-stop'
+  | 'airport-change';
+
+/**
+ * Traveler preference weights applied on top of the hourly VTTS rate.
+ * score = priceWeight * netPrice + timeWeight * (all time-based penalties)
+ */
+export interface TravelerProfile {
+  /** Elasticity of cash cost. Higher = price-sensitive. Default 1.5. */
+  priceWeight: number;
+  /** Elasticity of time/comfort cost. Higher = time-sensitive. Default 1.0. */
+  timeWeight: number;
+  /** When true, time-of-day (red-eye / early / late) penalties are disabled. */
+  allowRedEyes: boolean;
+}
+
 export interface SmartScoreBreakdown {
   basePriceUsd: number;
   discountAppliedUsd: number;
@@ -30,8 +53,20 @@ export interface SmartScoreBreakdown {
   modeMultiplier: number;
   inVehiclePenaltyUsd: number;
   layoverHours: number;
+  /** Effective layover multiplier = layoverPenaltyUsd / (layoverHours * hourlyRateUsd). */
   layoverMultiplier: number;
   layoverPenaltyUsd: number;
+  /** Combined departure x arrival convenience multiplier (1.0 = neutral). */
+  timeOfDayMultiplier: number;
+  /** Extra USD-equivalent cost from time-of-day inconvenience. */
+  timeOfDayPenaltyUsd: number;
+  /** Multi-stop connection friction. */
+  transferPenaltyUsd: number;
+  /** Friction when consecutive segments use different airports/stations. */
+  airportChangePenaltyUsd: number;
+  priceWeight: number;
+  timeWeight: number;
+  flags: ScoreFlag[];
   totalSmartScore: number;
 }
 
@@ -148,6 +183,7 @@ export interface Trip {
   isRouteOptimized?: boolean;
   vttsTier: VttsTier;
   hourlyTimeValue: number;
+  travelerProfile?: Partial<TravelerProfile>;
   stops: TripStop[];
   legs: TripLeg[];
   appliedVoucherCodes: string[];
