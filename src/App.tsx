@@ -54,6 +54,7 @@ import { VoucherDrawer } from './components/VoucherDrawer.tsx';
 import { VttsControlPanel } from './components/VttsControlPanel.tsx';
 import { WorldMapCanvas } from './components/WorldMapCanvas.tsx';
 import { ErrorBoundary } from './components/ErrorBoundary.tsx';
+import { logFlightState, verifyLegsMatchResponse } from './flightDebug.ts';
 
 export default function App() {
   const [trip, setTrip] = useState<Trip>(() => createDefaultTrip());
@@ -86,6 +87,8 @@ export default function App() {
 
   // Monotonic id for /api/legs/recompute so a slow, older response can't overwrite a newer reorder
   const recomputeRequestIdRef = useRef(0);
+  // Dev only: the legs exactly as the API last returned them, to verify nothing rewrites tickets
+  const lastApiLegsRef = useRef<{ label: string; legs: TripLeg[] } | null>(null);
   const smartScoreSectionRef = useRef<HTMLDivElement | null>(null);
   const timelineSectionRef = useRef<HTMLDivElement | null>(null);
 
@@ -102,6 +105,8 @@ export default function App() {
         if (!mounted) return;
         if (tripRes.ok) {
           const tripData: Trip = await tripRes.json();
+          lastApiLegsRef.current = { label: 'initial load', legs: tripData.legs };
+          logFlightState('initial load (API response)', tripData.legs);
           setTrip(tripData);
           if (tripData.legs[0]) setActiveLegId(tripData.legs[0].id);
         }
@@ -113,8 +118,9 @@ export default function App() {
           const voucherData: { vouchers: Voucher[] } = await voucherRes.json();
           setVouchers(voucherData.vouchers);
         }
-      } catch {
-        // Fallback to local initial dataset cleanly if network request fails
+      } catch (err) {
+        // Fallback to the local SAMPLE dataset (cards are labelled "Sample") if the API is unreachable
+        console.warn('[Flights] initial load failed; showing local sample data:', err);
       } finally {
         if (mounted) setIsLoadingInitial(false);
       }
@@ -124,6 +130,12 @@ export default function App() {
       mounted = false;
     };
   }, []);
+
+  // Dev only: after every state change, confirm the ticket fields still equal the last API response
+  useEffect(() => {
+    const last = lastApiLegsRef.current;
+    if (last) verifyLegsMatchResponse(last.label, last.legs, trip.legs);
+  }, [trip.legs]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -156,6 +168,7 @@ export default function App() {
         { profile: trip.travelerProfile, passengers: trip.travelers }
       );
 
+      lastApiLegsRef.current = null; // optimistic legs are local sample data, not an API response
       setTrip((prev) => ({
         ...prev,
         startDate: normalizedStops[0]?.arrivalDate ?? prev.startDate,
@@ -183,6 +196,8 @@ export default function App() {
         if (res.ok) {
           const data: { stops: TripStop[]; legs: TripLeg[] } = await res.json();
           if (requestId !== recomputeRequestIdRef.current) return; // superseded by a newer edit
+          lastApiLegsRef.current = { label: 'recompute', legs: data.legs };
+          logFlightState('recompute (API response)', data.legs);
           setTrip((prev) => ({
             ...prev,
             startDate: data.stops[0]?.arrivalDate ?? prev.startDate,
@@ -436,13 +451,10 @@ export default function App() {
       result.optimizedStops,
       result.optimizedLegs
     );
-    setTrip((prev) => ({
-      ...prev,
-      startDate: datedStops[0]?.arrivalDate ?? prev.startDate,
-      endDate: datedStops[datedStops.length - 1]?.departureDate ?? prev.endDate,
-      stops: datedStops,
-      legs: result.optimizedLegs,
-    }));
+    // The optimizer ranks with curated/synthesized corridors. Installing its legs directly would
+    // replace live fares with sample data, so apply only the new stop order and re-query every leg
+    // through the same live pipeline (optimistic local update first, API reconcile second).
+    recomputeStopsAndLegs(datedStops);
     if (result.optimizedLegs[0]) {
       setActiveLegId(result.optimizedLegs[0].id);
     }

@@ -64,6 +64,35 @@ const WARNING_FLAGS: ReadonlySet<ScoreFlag> = new Set([
   'late-arrival',
 ]);
 
+/**
+ * Tells the user whether the ticket details are a real provider fare or sample/estimated data.
+ * Sample data (curated or synthesized) must never look like a live fare.
+ */
+function SourceChip({ source }: { source: TransitOption['dataSource'] }) {
+  if (source === 'live') {
+    return (
+      <span
+        title="Real fare from the flight search provider"
+        className="rounded-md bg-[#F0FDF4] px-1.5 py-0.5 text-[10px] font-medium text-[#15803D]"
+      >
+        Live fare
+      </span>
+    );
+  }
+  return (
+    <span
+      title={
+        source === 'curated'
+          ? 'Hand-authored sample itinerary; times, flight number and price are illustrative'
+          : 'Estimated itinerary generated from distance; not a real timetable'
+      }
+      className="rounded-md bg-neutral-100 px-1.5 py-0.5 text-[10px] font-medium text-[#4B5563]"
+    >
+      {source === 'synthesized' ? 'Estimate' : 'Sample'}
+    </span>
+  );
+}
+
 function FlagChips({ flags }: { flags: ScoreFlag[] }) {
   if (flags.length === 0) return null;
   return (
@@ -190,6 +219,9 @@ export function LegTransitPanel({
                     <span className="font-medium text-[#4B5563] truncate">
                       {selectedOption.carrier}
                     </span>
+                    <span className="font-mono font-normal text-[#4B5563]">
+                      {selectedOption.routeCode}
+                    </span>
                   </>
                 )}
               </div>
@@ -251,7 +283,13 @@ export function LegTransitPanel({
                 const hasNormalLayover = option.layoverHours >= 2 && option.layoverHours <= 4;
 
                 return (
-                  <div key={option.id}>
+                  <div
+                    key={option.id}
+                    data-option-id={option.id}
+                    data-source={option.dataSource ?? 'unknown'}
+                    data-route-code={option.routeCode}
+                    data-price={option.basePriceUsd}
+                  >
                   <button
                     type="button"
                     onClick={() => {
@@ -294,7 +332,7 @@ export function LegTransitPanel({
                         </div>
 
                         <div className="text-[11px] text-[#111827] font-mono tabular-nums">
-                          {option.departureTime} → {option.arrivalTime}{' '}
+                          {option.departureTime || '—'} → {option.arrivalTime || '—'}{' '}
                           <span className="font-sans text-[#4B5563]">
                             · {option.originStation} → {option.destinationStation}
                           </span>
@@ -376,7 +414,10 @@ export function LegTransitPanel({
                     </div>
                   </button>
                   <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2 px-1">
-                    <FlagChips flags={b.flags} />
+                    <div className="flex flex-wrap items-center gap-1">
+                      <SourceChip source={option.dataSource} />
+                      <FlagChips flags={b.flags} />
+                    </div>
                     <BookLink option={option} />
                   </div>
                   </div>

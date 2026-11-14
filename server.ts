@@ -117,14 +117,142 @@ function summarizeLegs(legs: TripLeg[]) {
   };
 }
 
+interface LegBuildOptions {
+  hourlyRate: number;
+  activeVouchers: Voucher[];
+  profile?: Partial<TravelerProfile>;
+  passengers: number;
+  previousSelectedMap?: Record<string, string>;
+}
+
+/**
+ * Builds every leg through the transit service (live SerpApi → cache → curated/synthesized
+ * fallback). This is the single place legs are produced for the API, so the initial page load and
+ * later recomputes show the same data. Option objects are passed through unchanged apart from
+ * scoring, geometry normalisation and booking links.
+ */
+async function buildLegsViaTransitService(
+  stops: TripStop[],
+  opts: LegBuildOptions
+): Promise<TripLeg[]> {
+  const { hourlyRate, activeVouchers, profile, passengers, previousSelectedMap } = opts;
+  const legIds = buildLegIds(stops);
+
+  const legPromises = stops.slice(0, -1).map(async (fromStop, i): Promise<TripLeg | undefined> => {
+    const toStop = stops[i + 1];
+    const legId = legIds[i];
+    const distanceKm = haversineDistanceKm(fromStop.lat, fromStop.lng, toStop.lat, toStop.lng);
+    const prevSelected = previousSelectedMap?.[legId];
+
+    try {
+      const result = await queryTransitWithCache({
+        origin: fromStop.iataCode,
+        destination: toStop.iataCode,
+        date: fromStop.departureDate,
+        mode: 'all',
+        hourlyRateUsd: hourlyRate,
+        activeVouchers,
+        travelerProfile: profile,
+        passengers,
+        fromStop,
+        toStop,
+      });
+      const rankedOptions = result.options.map((o) => ({ ...o, legId }));
+      console.log(
+        `[Flight Data] ${legId}: ${rankedOptions.length} options from ${result.source}` +
+          ` (${rankedOptions.filter((o) => o.dataSource === 'live').length} live)`
+      );
+      return {
+        id: legId,
+        fromStopId: fromStop.id,
+        toStopId: toStop.id,
+        fromCity: fromStop.city,
+        fromCode: fromStop.iataCode,
+        toCity: toStop.city,
+        toCode: toStop.iataCode,
+        distanceKm,
+        selectedOptionId: rankedOptions.some((o) => o.id === prevSelected)
+          ? prevSelected!
+          : rankedOptions[0]?.id ?? '',
+        transitOptions: rankedOptions,
+      };
+    } catch (err) {
+      console.warn(
+        `[Flight Data] ${legId}: transit query failed, using curated/synthesized SAMPLE data:`,
+        err
+      );
+      const fallback = buildLegsFromStops(
+        [fromStop, toStop],
+        CURATED_CORRIDOR_OPTIONS,
+        VOUCHERS_CATALOG,
+        hourlyRate,
+        activeVouchers,
+        undefined,
+        { profile, passengers }
+      )[0];
+      if (!fallback) return undefined;
+      // A 2-stop rebuild always yields the base id; restore this leg's (possibly suffixed) id
+      return {
+        ...fallback,
+        id: legId,
+        selectedOptionId: fallback.transitOptions.some((o) => o.id === prevSelected)
+          ? prevSelected!
+          : fallback.selectedOptionId,
+      };
+    }
+  });
+
+  return (await Promise.all(legPromises)).filter((l): l is TripLeg => Boolean(l));
+}
+
+/** Development log of exactly what the API is about to send, for comparison with the browser log. */
+function logLegs(label: string, legs: TripLeg[]): void {
+  if (process.env.NODE_ENV === 'production') return;
+  for (const leg of legs) {
+    const o = leg.transitOptions.find((x) => x.id === leg.selectedOptionId) ?? leg.transitOptions[0];
+    if (!o) {
+      console.log(`[Flight Data] ${label} ${leg.id}: no options`);
+      continue;
+    }
+    console.log(
+      `[Flight Data] ${label} ${leg.id} selected=${o.id} src=${o.dataSource ?? '?'} | ` +
+        `${o.carrier} ${o.routeCode} | ${o.departureTime || '--:--'} → ${o.arrivalTime || '--:--'} | ` +
+        `${o.inVehicleHours}h+${o.layoverHours}h layover | $${o.basePriceUsd} (net $${o.discountedPriceUsd})`
+    );
+  }
+}
+
 async function startServer() {
   logEnvStatus();
   const app = express();
   app.use(express.json());
 
   // Health & initial dataset
-  app.get('/api/trips/default', (_req, res) => {
-    res.json(createDefaultTrip());
+  // The initial trip used to be pure mock data (TK 61 etc.), so live SerpApi fares only appeared
+  // after the first edit. It now runs through the same pipeline as /api/legs/recompute, with a
+  // time budget so a slow provider can't block the page (falls back to the labelled sample data).
+  app.get('/api/trips/default', async (_req, res) => {
+    const trip = createDefaultTrip();
+    try {
+      const activeVouchers = resolveActiveVouchers(trip.appliedVoucherCodes);
+      const legs = await Promise.race([
+        buildLegsViaTransitService(trip.stops, {
+          hourlyRate: trip.hourlyTimeValue,
+          activeVouchers,
+          passengers: trip.travelers,
+        }),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 9000)),
+      ]);
+      if (legs && legs.length === trip.legs.length) {
+        trip.legs = legs;
+      } else {
+        console.warn('[Flight Data] default trip: live pipeline timed out, serving SAMPLE data.');
+      }
+    } catch (err) {
+      console.warn('[Flight Data] default trip: live pipeline failed, serving SAMPLE data:', err);
+    }
+    logLegs('default-trip', trip.legs);
+    res.json(trip);
   });
 
   app.get('/api/destinations', (_req, res) => {
@@ -284,77 +412,18 @@ async function startServer() {
     const rate = sanitizeHourlyRate(hourlyTimeValue);
     const normalizedStops = stops.map((s, idx) => ({ ...s, order: idx + 1 }));
     const activeVouchers = resolveActiveVouchers(appliedVoucherCodes);
-    const legIds = buildLegIds(normalizedStops);
     const profile = sanitizeProfile(rawProfile);
     const passengers = Number(travelers) || 1;
 
-    // Query each corridor transit options concurrently via Upstash Redis caching wrapper
-    const legPromises: Promise<TripLeg | undefined>[] = [];
-    for (let i = 0; i < normalizedStops.length - 1; i++) {
-      const fromStop = normalizedStops[i];
-      const toStop = normalizedStops[i + 1];
-      const legId = legIds[i];
-      const distanceKm = haversineDistanceKm(fromStop.lat, fromStop.lng, toStop.lat, toStop.lng);
-
-      legPromises.push(
-        queryTransitWithCache({
-          origin: fromStop.iataCode,
-          destination: toStop.iataCode,
-          date: fromStop.departureDate,
-          mode: 'all',
-          hourlyRateUsd: rate,
-          activeVouchers,
-          travelerProfile: profile,
-          passengers,
-          fromStop,
-          toStop,
-        }).then((result) => {
-          const rankedOptions = result.options.map((o) => ({ ...o, legId }));
-          const prevSelected = previousSelectedMap?.[legId];
-          const validPrev = rankedOptions.some((o) => o.id === prevSelected);
-
-          const leg: TripLeg = {
-            id: legId,
-            fromStopId: fromStop.id,
-            toStopId: toStop.id,
-            fromCity: fromStop.city,
-            fromCode: fromStop.iataCode,
-            toCity: toStop.city,
-            toCode: toStop.iataCode,
-            distanceKm,
-            selectedOptionId: validPrev ? prevSelected! : rankedOptions[0]?.id ?? '',
-            transitOptions: rankedOptions,
-          };
-          return leg;
-        }).catch((err) => {
-          console.warn(`[Transit Cache] Failed leg query for ${fromStop.iataCode}->${toStop.iataCode}, using synchronous fallback:`, err);
-          // Graceful fallback to synchronous builder if query fails
-          const fallback = buildLegsFromStops(
-            [fromStop, toStop],
-            CURATED_CORRIDOR_OPTIONS,
-            VOUCHERS_CATALOG,
-            rate,
-            activeVouchers,
-            undefined,
-            { profile, passengers }
-          )[0];
-          if (!fallback) return undefined;
-          // A 2-stop rebuild always yields the base id; restore this leg's (possibly suffixed) id
-          const prevSelected = previousSelectedMap?.[legId];
-          const leg: TripLeg = {
-            ...fallback,
-            id: legId,
-            selectedOptionId: fallback.transitOptions.some((o) => o.id === prevSelected)
-              ? prevSelected!
-              : fallback.selectedOptionId,
-          };
-          return leg;
-        })
-      );
-    }
-
-    const legs = await Promise.all(legPromises);
-    res.json({ stops: normalizedStops, legs: legs.filter(Boolean) });
+    const legs = await buildLegsViaTransitService(normalizedStops, {
+      hourlyRate: rate,
+      activeVouchers,
+      profile,
+      passengers,
+      previousSelectedMap,
+    });
+    logLegs('recompute', legs);
+    res.json({ stops: normalizedStops, legs });
    } catch (err: any) {
     // Express 4 does not catch rejected async handlers; without this the request hangs forever
     console.error('[Legs Recompute API] Error:', err);

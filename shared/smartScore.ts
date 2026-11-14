@@ -749,6 +749,7 @@ function buildRawOption(
     smartScoreBreakdown: placeholderBreakdown,
     eligibleVoucherIds,
     appliedVoucherId: null,
+    dataSource: 'synthesized',
   };
 }
 

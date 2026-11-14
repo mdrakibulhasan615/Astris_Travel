@@ -19,7 +19,9 @@ deep links.
 - **Backend (primary):** Node.js + Express 4 in a single entry, `server.ts`, run with `tsx`.
   In development it mounts Vite as middleware; in production it serves `dist/`.
 - **Caching:** Upstash Redis (`@upstash/redis`, HTTP/REST) — **12-hour (`43200s`) TTL** on transit
-  search responses. Redis is optional: without credentials the server runs in fallback mode.
+  search responses, with an in-process L1 cache of the same TTL in front of it. **Only live (SerpApi)
+  results are cached**; curated/synthesized fallbacks are rebuilt each time so sample data can never be
+  served as a cache hit or shadow real fares. Redis is optional.
 - **Shared code:** `shared/` is imported by both server and client (pure TypeScript, no Node APIs).
 - **Prototype persistence (not wired to the app):** `backend/` is a FastAPI + PostgreSQL schema
   prototype. It serves mock data and the route optimizer only. **It contains no scoring logic** —
@@ -106,7 +108,7 @@ Imports use explicit `.ts`/`.tsx` extensions (`allowImportingTsExtensions`).
 ### HTTP API (`server.ts`)
 | Route | Purpose |
 | :--- | :--- |
-| `GET /api/trips/default` | Default trip with scored legs and booking URLs |
+| `GET /api/trips/default` | Default trip; legs go through the same live pipeline as `/api/legs/recompute` (9 s budget, then labelled sample data) |
 | `GET /api/destinations`, `GET /api/airports/search?q=&limit=` | Airport hubs / autocomplete |
 | `GET /api/vouchers`, `POST /api/vouchers/validate` | Catalog; validate a code against current legs |
 | `GET\|POST /api/transit/query` | Single-corridor query through the Redis wrapper (`X-Cache-*` headers) |
@@ -205,7 +207,29 @@ ground travel to/from the airport is a *separate* connecting segment.
 - The map re-applies anchoring/connectors defensively before drawing, and a flight with no segment data
   falls back to the leg's airports rather than city centres.
 
-## 8. Reliability Conventions
+## 8. Flight Data Integrity (backend → UI)
+
+- **One pipeline:** `/api/trips/default` and `/api/legs/recompute` both call `buildLegsViaTransitService`
+  (live SerpApi → cache → curated/synthesized fallback). Previously the first page load was pure mock
+  data (e.g. "TK 61") and live fares only appeared after the first edit.
+- **Provider fields are not invented.** `fetchSerpApiFlights` copies airline(s), every flight number
+  (`routeCode` = `"QR 851 + QR 239"`, plus `flightNumbers[]`/`carriers[]`), departure/arrival clock times
+  (with `+Nd` computed from the real dates), duration, layovers and price verbatim. An itinerary without
+  a price, flights or duration is **dropped**, never given a placeholder fare/time.
+- **`dataSource`** (`live` | `curated` | `synthesized`) travels on every `TransitOption`. Cards show
+  **Live fare**, **Sample** or **Estimate** chips so illustrative data is never mistaken for a ticket.
+  Optimistic client updates (reorder, add stop) are sample data until the server response replaces them;
+  the route optimizer ranks with sample corridors, so *Apply* only takes the new stop order and re-queries.
+- **UI binding:** `LegTransitPanel` renders `option.carrier`, `routeCode`, `departureTime`/`arrivalTime`,
+  `inVehicleHours`, `basePriceUsd`/`discountedPriceUsd` directly from the option (no local arrays);
+  cards expose `data-option-id`, `data-route-code`, `data-price`, `data-source` for inspection.
+- **Dev logging:** server prints `[Flight Data] <label> <leg> selected=… src=… | carrier flight | dep → arr
+  | $price`; the browser logs `[Flights] … → state` tables and, after every state change, checks the ticket
+  fields against the last API response (`src/flightDebug.ts`) and logs an error on any difference.
+- **Known limitation:** when SerpApi returns results, the leg's options are flights only; curated ground
+  alternatives (train/bus) for that corridor are not merged in.
+
+## 9. Reliability Conventions
 - Async Express handlers wrap their bodies in `try/catch` (Express 4 does not catch rejected promises).
 - Redis and SerpApi failures never fail a request: cache errors degrade to a miss, live-API errors
   fall back to curated/synthesized corridors; a failed leg falls back to the synchronous builder.

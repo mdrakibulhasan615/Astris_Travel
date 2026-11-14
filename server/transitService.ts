@@ -116,9 +116,35 @@ export function buildTransitCacheKey(
   return `transit:cache:${normOrigin}:${normDest}:${normDate}:${normMode}`;
 }
 
+// In-process L1 cache so repeated page loads don't burn SerpApi quota when Redis is absent or
+// down. Same 12-hour TTL as Redis. Only LIVE results are ever cached (see queryTransitWithCache).
+const MEMORY_CACHE_MAX = 200;
+const memoryCache = new Map<string, { expires: number; options: TransitOption[] }>();
+
+function getMemoryCached(cacheKey: string): TransitOption[] | null {
+  const hit = memoryCache.get(cacheKey);
+  if (!hit) return null;
+  if (hit.expires < Date.now()) {
+    memoryCache.delete(cacheKey);
+    return null;
+  }
+  return hit.options;
+}
+
+function setMemoryCached(cacheKey: string, options: TransitOption[]): void {
+  if (memoryCache.size >= MEMORY_CACHE_MAX) {
+    const oldest = memoryCache.keys().next().value;
+    if (oldest !== undefined) memoryCache.delete(oldest);
+  }
+  memoryCache.set(cacheKey, { expires: Date.now() + REDIS_CACHE_TTL_SECONDS * 1000, options });
+}
+
 export async function getCachedTransit(
   cacheKey: string
-): Promise<TransitOption[] | null> {
+): Promise<{ options: TransitOption[]; layer: 'memory' | 'redis' } | null> {
+  const mem = getMemoryCached(cacheKey);
+  if (mem) return { options: mem, layer: 'memory' };
+
   const client = getRedisClient();
   if (!client) return null;
 
@@ -126,7 +152,8 @@ export async function getCachedTransit(
     const cached = await client.get<TransitOption[]>(cacheKey);
     if (cached && Array.isArray(cached) && cached.length > 0) {
       console.log(`[Upstash Redis] Cache HIT for key: ${cacheKey} (${cached.length} options)`);
-      return cached;
+      setMemoryCached(cacheKey, cached);
+      return { options: cached, layer: 'redis' };
     }
     console.log(`[Upstash Redis] Cache MISS for key: ${cacheKey}`);
   } catch (err) {
@@ -139,8 +166,11 @@ export async function setCachedTransit(
   cacheKey: string,
   options: TransitOption[]
 ): Promise<boolean> {
+  if (!options || options.length === 0) return false;
+  setMemoryCached(cacheKey, options);
+
   const client = getRedisClient();
-  if (!client || !options || options.length === 0) return false;
+  if (!client) return false;
 
   try {
     // 12-hour TTL: EX 43200
@@ -168,7 +198,7 @@ export interface TransitQueryParams {
 
 export interface TransitQueryResult {
   cacheKey: string;
-  source: 'redis_cache' | 'live_api' | 'fallback_corridor';
+  source: 'redis_cache' | 'memory_cache' | 'live_api' | 'fallback_corridor';
   cached: boolean;
   ttlSeconds: number;
   options: TransitOption[];
@@ -261,30 +291,66 @@ async function fetchSerpApiFlights(
     const distanceKm = haversineDistanceKm(fromAirport.lat, fromAirport.lng, toAirport.lat, toAirport.lng);
     const legId = `leg-${origin.toLowerCase()}-${destination.toLowerCase()}`;
 
-    const rawOptions: TransitOption[] = flightGroups.slice(0, 6).map((item, idx) => {
-      const flights = Array.isArray(item.flights) ? item.flights : [];
-      const firstFlt = flights[0] || {};
-      const lastFlt = flights[flights.length - 1] || firstFlt;
-      const carrier = firstFlt.airline || 'Commercial Airline';
-      const flightNum = firstFlt.flight_number || `${origin}-${destination}`;
-      const carrierCode = (firstFlt.flight_number?.slice(0, 2) || carrier.slice(0, 2)).toUpperCase();
+    // Provider timestamps look like "2026-11-21 09:30"
+    const parseStamp = (t?: string) => {
+      const m = /^(\d{4}-\d{2}-\d{2})[ T](\d{1,2}:\d{2})/.exec(t ?? '');
+      return m ? { date: m[1], clock: m[2].padStart(5, '0') } : null;
+    };
+    const dayDiff = (from: string, to: string) =>
+      Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
 
-      const totalDurationMinutes = Number(item.total_duration) || 180;
+    // Options are built ONLY from fields the provider returned. A missing price/duration drops the
+    // option rather than substituting an invented value (a made-up fare shown as real is worse
+    // than one fewer row).
+    const rawOptions: TransitOption[] = [];
+    let skipped = 0;
+    flightGroups.slice(0, 6).forEach((item, idx) => {
+      const flights = Array.isArray(item.flights) ? item.flights : [];
+      const priceUsd = Number(item.price);
+      if (flights.length === 0 || !(priceUsd > 0)) {
+        skipped++;
+        return;
+      }
+
+      const firstFlt = flights[0];
+      const lastFlt = flights[flights.length - 1];
+      const flightNumbers: string[] = flights
+        .map((f: { flight_number?: string }) => (f.flight_number ?? '').trim())
+        .filter(Boolean);
+      const carriers: string[] = Array.from(
+        new Set<string>(
+          flights.map((f: { airline?: string }) => (f.airline ?? '').trim()).filter(Boolean)
+        )
+      );
+      // "TK 61" -> "TK"; falls back to the airline's initials only if no flight number exists
+      const carrierCode = (
+        /^([A-Z0-9]{2})\s*\d/i.exec(flightNumbers[0] ?? '')?.[1] ??
+        (carriers[0] ?? '').slice(0, 2)
+      ).toUpperCase();
+
       const layovers = Array.isArray(item.layovers) ? item.layovers : [];
       const layoverMinutes = layovers.reduce(
         (sum: number, l: { duration?: number }) => sum + (Number(l.duration) || 0),
         0
       );
-      const inVehicleMinutes = Math.max(30, totalDurationMinutes - layoverMinutes);
-
+      const hopMinutes = flights.reduce(
+        (sum: number, f: { duration?: number }) => sum + (Number(f.duration) || 0),
+        0
+      );
+      const totalMinutes = Number(item.total_duration) || hopMinutes + layoverMinutes;
+      const inVehicleMinutes = totalMinutes - layoverMinutes > 0 ? totalMinutes - layoverMinutes : hopMinutes;
+      if (!(inVehicleMinutes > 0)) {
+        skipped++;
+        return;
+      }
       const inVehicleHours = round2(inVehicleMinutes / 60);
       const layoverHours = round2(layoverMinutes / 60);
-      const priceUsd = Number(item.price) || Math.round(95 + distanceKm * 0.05);
 
-      // SerpApi returns "YYYY-MM-DD HH:MM"; keep just the clock time so the engine can parse it
-      const clock = (t?: string) => /(\d{1,2}:\d{2})\s*$/.exec(t ?? '')?.[1];
-      const depTime = clock(firstFlt.departure_airport?.time) || '09:00';
-      const arrTime = clock(lastFlt.arrival_airport?.time) || '14:30';
+      const dep = parseStamp(firstFlt.departure_airport?.time);
+      const arr = parseStamp(lastFlt.arrival_airport?.time);
+      const depTime = dep?.clock ?? '';
+      const offset = dep && arr ? dayDiff(dep.date, arr.date) : 0;
+      const arrTime = arr ? `${arr.clock}${offset > 0 ? ` +${offset}d` : ''}` : '';
 
       const eligibleVouchers = VOUCHERS_CATALOG.filter(
         (v) =>
@@ -309,22 +375,22 @@ async function fetchSerpApiFlights(
         const segFrom = resolveAirportCoords(segFromCode);
         const segTo = resolveAirportCoords(segToCode);
         return {
-          id: `${legId}-serp-s${segIdx + 1}`,
+          id: `${legId}-serp-${idx + 1}-s${segIdx + 1}`,
           mode: 'flight' as TransitMode,
           label: flt.flight_number || `Flight ${segIdx + 1}`,
-          fromName: flt.departure_airport?.name || origin,
+          fromName: flt.departure_airport?.name || segFrom.code,
           fromCode: segFrom.code,
           fromLat: segFrom.lat,
           fromLng: segFrom.lng,
-          toName: flt.arrival_airport?.name || destination,
+          toName: flt.arrival_airport?.name || segTo.code,
           toCode: segTo.code,
           toLat: segTo.lat,
           toLng: segTo.lng,
-          durationMinutes: Number(flt.duration) || Math.round(inVehicleMinutes / Math.max(1, flights.length)),
+          durationMinutes: Number(flt.duration) || Math.round(inVehicleMinutes / flights.length),
         };
       });
 
-      const dummyOption = {
+      const scorable = {
         departureTime: depTime,
         arrivalTime: arrTime,
         stopsCount: layovers.length,
@@ -337,21 +403,29 @@ async function fetchSerpApiFlights(
         carrierCode,
         eligibleVoucherIds: eligibleVouchers,
       };
+      const breakdown = computeSmartScore(scorable, hourlyRateUsd, null, profile);
 
-      const breakdown = computeSmartScore(dummyOption, hourlyRateUsd, null, profile);
+      const co2FromApi = Number(item.carbon_emissions?.this_flight) / 1000;
+      const originCode = segments[0].fromCode;
+      const destCode = segments[segments.length - 1].toCode;
 
-      return {
+      rawOptions.push({
         id: `${legId}-serp-${idx + 1}`,
         legId,
         mode: 'flight',
         isOvernightSleeper: false,
-        carrier,
+        // Displayed verbatim from the provider
+        carrier: carriers.join(' + ') || carrierCode,
         carrierCode,
-        routeCode: flightNum,
-        originStation: firstFlt.departure_airport?.name || `${origin} Airport`,
-        destinationStation: lastFlt.arrival_airport?.name || `${destination} Airport`,
+        routeCode: flightNumbers.join(' + ') || `${originCode}-${destCode}`,
+        flightNumbers,
+        carriers,
+        originStation: firstFlt.departure_airport?.name || `${originCode} Airport`,
+        destinationStation: lastFlt.arrival_airport?.name || `${destCode} Airport`,
         departureTime: depTime,
         arrivalTime: arrTime,
+        departureAt: firstFlt.departure_airport?.time,
+        arrivalAt: lastFlt.arrival_airport?.time,
         inVehicleHours,
         layoverHours,
         layoverHub: layovers[0]?.id || undefined,
@@ -360,13 +434,19 @@ async function fetchSerpApiFlights(
         discountedPriceUsd: breakdown.discountedPriceUsd,
         smartScore: breakdown.totalSmartScore,
         smartScoreBreakdown: breakdown,
-        doorToDoorNotes: `${origin} Airport (${depTime}) → ${destination} (${arrTime})`,
-        co2Kg: Math.round(Number(item.carbon_emissions?.this_flight) / 1000) || Math.round(distanceKm * 0.12),
+        doorToDoorNotes: `${originCode} (${depTime || '--:--'}) → ${destCode} (${arrTime || '--:--'})`,
+        // CO₂ is the one non-ticket field estimated when the provider omits it
+        co2Kg: co2FromApi > 0 ? Math.round(co2FromApi) : Math.round(distanceKm * 0.12),
         eligibleVoucherIds: eligibleVouchers,
         appliedVoucherId: null,
         segments,
-      };
+        dataSource: 'live',
+      });
     });
+    if (skipped > 0) {
+      console.warn(`[Transit API] Skipped ${skipped} SerpApi itinerary(ies) missing price/duration/flights.`);
+    }
+    if (rawOptions.length === 0) return null;
 
     console.log(`[Transit API] Successfully parsed ${rawOptions.length} live flights from SerpAPI.`);
     return recalculateOptionsWithVttsAndVouchers(rawOptions, hourlyRateUsd, activeVouchers, profile);
@@ -493,18 +573,18 @@ export async function queryTransitWithCache(
   const cacheKey = buildTransitCacheKey(origin, destination, date, mode);
 
   // 1. Check Redis cache
-  const cachedOptions = await getCachedTransit(cacheKey);
-  if (cachedOptions && cachedOptions.length > 0) {
+  const cachedHit = await getCachedTransit(cacheKey);
+  if (cachedHit && cachedHit.options.length > 0) {
     // Re-score cached options in case hourlyRateUsd or activeVouchers changed
     const scoredCached = recalculateOptionsWithVttsAndVouchers(
-      cachedOptions,
+      cachedHit.options,
       hourlyRateUsd,
       activeVouchers,
       travelerProfile
     );
     return {
       cacheKey,
-      source: 'redis_cache',
+      source: cachedHit.layer === 'memory' ? 'memory_cache' : 'redis_cache',
       cached: true,
       ttlSeconds: REDIS_CACHE_TTL_SECONDS,
       options: withBookingUrls(scoredCached),
@@ -554,8 +634,12 @@ export async function queryTransitWithCache(
     }
   }
 
-  // 4. Store in Redis with 12-hour TTL (EX: 43200)
-  await setCachedTransit(cacheKey, finalOptions);
+  // 4. Cache LIVE results only (12-hour TTL). Curated/synthesized fallbacks are cheap to rebuild and
+  //    depend on the caller's stops; caching them made stale sample data masquerade as a cache hit
+  //    and shadow real fares once the live API became reachable.
+  if (source === 'live_api') {
+    await setCachedTransit(cacheKey, finalOptions);
+  }
 
   return {
     cacheKey,

@@ -211,6 +211,7 @@ function makeBaseOption(
     smartScore: breakdown.totalSmartScore,
     smartScoreBreakdown: breakdown,
     appliedVoucherId: null,
+    dataSource: 'curated',
   };
 }
 
