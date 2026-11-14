@@ -12,7 +12,8 @@ import {
   TrainFront,
 } from 'lucide-react';
 import { formatDuration } from '../../shared/smartScore.ts';
-import { isAffiliateUrl } from '../../shared/affiliate.ts';
+import { PROVIDER_NAMES } from '../../shared/affiliate.ts';
+import { SmartScoreBadge } from './SmartScoreBadge.tsx';
 import type {
   ModeFilter,
   ScoreFlag,
@@ -113,9 +114,15 @@ function FlagChips({ flags }: { flags: ScoreFlag[] }) {
   );
 }
 
-/** Outbound affiliate deep link; `sponsored` tells search engines it is a paid referral. */
+/**
+ * Direct link to the merchant's results for this exact option (route, airports, date, travellers,
+ * and the airline for real fares). `sponsored` tells search engines it is a paid referral.
+ */
 function BookLink({ option }: { option: TransitOption }) {
   if (!option.bookingUrl) return null;
+  const merchant = option.bookingProvider ? PROVIDER_NAMES[option.bookingProvider] : 'partner site';
+  // Only a live fare has a price worth repeating on the button; estimates are a search, not a quote
+  const isLive = option.dataSource === 'live';
   return (
     <a
       href={option.bookingUrl}
@@ -126,9 +133,11 @@ function BookLink({ option }: { option: TransitOption }) {
         if (import.meta.env.DEV) console.debug('[Booking] opening', option.id, option.bookingUrl);
       }}
       className="inline-flex items-center gap-1 rounded-lg bg-[#FF812E] px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-[#E56B1A] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF812E] focus-visible:ring-offset-1"
-      title={isAffiliateUrl(option.bookingUrl) ? 'Opens our booking partner' : 'Opens the booking site'}
+      title={`Opens ${merchant} with this route, date and travellers filled in`}
     >
-      Book {option.mode === 'flight' ? 'flight' : 'route'} · ${option.discountedPriceUsd.toFixed(0)}
+      {isLive
+        ? `Book on ${merchant} · $${option.discountedPriceUsd.toFixed(0)}`
+        : `Find on ${merchant}`}
       <ExternalLink className="w-3 h-3" aria-hidden="true" />
     </a>
   );
@@ -243,10 +252,13 @@ export function LegTransitPanel({
                   <span className="font-mono font-semibold text-[#111827]">
                     ${selectedOption.discountedPriceUsd.toFixed(0)}
                   </span>
-                  <span aria-hidden="true">·</span>
-                  <span className="font-mono text-[#E56B1A] font-medium">
-                    Score: {selectedOption.smartScore.toFixed(0)}
-                  </span>
+                  <SmartScoreBadge score={selectedOption.smartScore} size="sm" />
+                </div>
+              )}
+
+              {!selectedOption && leg.transitOptions.length === 0 && (
+                <div className="mt-0.5 text-[11px] text-[#4B5563]">
+                  Same city as the previous stop · no transport needed
                 </div>
               )}
             </div>
@@ -272,7 +284,9 @@ export function LegTransitPanel({
           <div className="px-3.5 pb-3.5 pt-1 border-t border-neutral-100 space-y-2">
             {filteredOptions.length === 0 ? (
               <div className="py-3 text-center text-xs text-[#4B5563]">
-                No {modeFilter} options on {leg.fromCode} → {leg.toCode}.
+                {leg.transitOptions.length === 0
+                  ? `You are already in ${leg.toCity}: these two stops are the same place.`
+                  : `No ${modeFilter} options on ${leg.fromCode} → ${leg.toCode}.`}
               </div>
             ) : (
               filteredOptions.map((option, idx) => {
@@ -394,8 +408,8 @@ export function LegTransitPanel({
                           </span>
                         </div>
 
-                        <div className="font-mono text-[11px] font-semibold text-[#E56B1A] tabular-nums">
-                          Score: {option.smartScore.toFixed(0)}
+                        <div>
+                          <SmartScoreBadge score={option.smartScore} />
                         </div>
 
                         {voucherCode && b.discountAppliedUsd > 0 && (

@@ -6,6 +6,8 @@ import type { TripStop } from '../../shared/types.ts';
 interface SortableStopCardProps {
   stop: TripStop;
   index: number;
+  /** The first stop is the departure point: it has a departure date, not a stay. */
+  isOrigin: boolean;
   isHovered: boolean;
   canRemove: boolean;
   onHoverStop: (stopId: string | null) => void;
@@ -18,6 +20,7 @@ interface SortableStopCardProps {
 export function SortableStopCard({
   stop,
   index,
+  isOrigin,
   isHovered,
   canRemove,
   onHoverStop,
@@ -80,18 +83,27 @@ export function SortableStopCard({
               <span className="text-xs text-[#4B5563] truncate">
                 {stop.country} · <span className="font-mono">{stop.iataCode}</span>
               </span>
+              {isOrigin && (
+                <span className="rounded-md bg-[#FFF4ED] border border-[#FFD6BA] px-1.5 py-px text-[10px] font-semibold text-[#E56B1A]">
+                  Trip start
+                </span>
+              )}
             </div>
 
             <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] font-mono text-[#4B5563] tabular-nums">
               <button
                 type="button"
                 onClick={() => onOpenDatePicker(stop.id)}
-                aria-label={`Edit dates for ${stop.city}`}
+                aria-label={
+                  isOrigin ? `Edit departure date from ${stop.city}` : `Edit dates for ${stop.city}`
+                }
                 className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg border border-neutral-200/80 bg-neutral-50/80 hover:bg-[#FFF4ED] hover:border-[#FFD6BA] hover:text-[#111827] transition-colors cursor-pointer"
               >
                 <Calendar className="w-3 h-3 text-[#FF812E] shrink-0" />
                 <span>
-                  {stop.arrivalDate} → {stop.departureDate}
+                  {isOrigin
+                    ? `Departs ${stop.departureDate}`
+                    : `${stop.arrivalDate} → ${stop.departureDate}`}
                 </span>
               </button>
               <span aria-hidden="true">·</span>
@@ -103,6 +115,7 @@ export function SortableStopCard({
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0">
+          {!isOrigin && (
           <div className="inline-flex items-center rounded-xl border border-neutral-200 bg-neutral-50/70 p-0.5">
             <button
               type="button"
@@ -125,6 +138,7 @@ export function SortableStopCard({
               <Plus className="w-3 h-3" />
             </button>
           </div>
+          )}
 
           {canRemove && (
             <button

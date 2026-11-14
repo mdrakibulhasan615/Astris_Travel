@@ -6,7 +6,7 @@ import {
   DESTINATION_HUBS,
   VOUCHERS_CATALOG,
 } from '../shared/mockDataset.ts';
-import { attachBookingUrls, configureAffiliate } from '../shared/affiliate.ts';
+import { attachBookingUrls, configureAffiliate, isFlixCarrier } from '../shared/affiliate.ts';
 import {
   normalizeOptionGeometry,
   registerAirportResolver,
@@ -28,6 +28,7 @@ import type {
   Voucher,
 } from '../shared/types.ts';
 import { getAirportByIata } from './airportService.ts';
+import { resolveFlixbusRoute } from './flixbusService.ts';
 
 // Give the shared airport-anchoring logic the full global dataset (6,300+ airports) server-side.
 registerAirportResolver((code) => {
@@ -37,14 +38,21 @@ registerAirportResolver((code) => {
     : null;
 });
 
-// Travelpayouts affiliate attribution (see shared/affiliate.ts). Without a marker, links are
-// still valid but un-attributed.
+// Partner ids for the direct merchant links (see shared/affiliate.ts). Every id is optional:
+// without one, that merchant's links still land on the exact search, just un-attributed.
 configureAffiliate({
-  marker: getEnv('TRAVELPAYOUTS_MARKER'),
-  trs: getEnv('TRAVELPAYOUTS_TRS'),
-  campaignId: getEnv('TRAVELPAYOUTS_CAMPAIGN_ID'),
-  programId: getEnv('TRAVELPAYOUTS_PROGRAM_ID'),
-  linkMode: getEnv('TRAVELPAYOUTS_LINK_MODE') === 'redirect' ? 'redirect' : 'direct',
+  tripcomAllianceId: getEnv('TRIPCOM_ALLIANCE_ID'),
+  tripcomSid: getEnv('TRIPCOM_SID'),
+  bookingAid: getEnv('BOOKING_AID'),
+  agodaCid: getEnv('AGODA_CID'),
+  twelveGoAffiliateId: getEnv('TWELVEGO_AFFILIATE_ID'),
+  trackingTemplates: {
+    tripcom: getEnv('TRIPCOM_TRACKING_TEMPLATE'),
+    flixbus: getEnv('FLIXBUS_TRACKING_TEMPLATE'),
+    '12go': getEnv('TWELVEGO_TRACKING_TEMPLATE'),
+    booking: getEnv('BOOKING_TRACKING_TEMPLATE'),
+    agoda: getEnv('AGODA_TRACKING_TEMPLATE'),
+  },
   debug: process.env.NODE_ENV !== 'production',
 });
 
@@ -209,14 +217,13 @@ export interface TransitQueryResult {
  * airport table and the global `airports` dataset (ARCHITECTURE.md §3). City-centre hub
  * coordinates are deliberately NOT used: flight lines must start and end on the tarmac.
  */
-function resolveAirportCoords(code: string): { lat: number; lng: number; code: string; city: string } {
+function resolveAirportCoords(
+  code: string
+): { lat: number; lng: number; code: string; city: string } | null {
   const airport = resolveAirport(code);
-  if (airport) {
-    const meta = getAirportByIata(airport.code);
-    return { lat: airport.lat, lng: airport.lng, code: airport.code, city: meta?.city ?? airport.name };
-  }
-  console.warn(`[Transit API] Unknown airport code "${code}"; coordinates unavailable, using 0,0.`);
-  return { lat: 0, lng: 0, code: code.toUpperCase(), city: code };
+  if (!airport) return null;
+  const meta = getAirportByIata(airport.code);
+  return { lat: airport.lat, lng: airport.lng, code: airport.code, city: meta?.city ?? airport.name };
 }
 
 /** City-level coordinates for a trip stop (used for ground connectors and synthetic corridors). */
@@ -230,7 +237,11 @@ function resolveCityCoords(
   const hub = DESTINATION_HUBS.find((h) => h.iataCode.toUpperCase() === code.toUpperCase());
   if (hub) return { lat: hub.lat, lng: hub.lng, city: hub.city };
   const ap = resolveAirportCoords(code);
-  return { lat: ap.lat, lng: ap.lng, city: ap.city };
+  if (ap) return { lat: ap.lat, lng: ap.lng, city: ap.city };
+  // Only reachable from /api/transit/query with a code no dataset knows; such a query gets the
+  // synthesized corridor with degenerate geometry rather than an error.
+  console.warn(`[Transit API] Unknown location code "${code}"; no coordinates available.`);
+  return { lat: 0, lng: 0, city: code.toUpperCase() };
 }
 
 /**
@@ -286,9 +297,9 @@ async function fetchSerpApiFlights(
       return null;
     }
 
-    const fromAirport = resolveAirportCoords(origin);
-    const toAirport = resolveAirportCoords(destination);
-    const distanceKm = haversineDistanceKm(fromAirport.lat, fromAirport.lng, toAirport.lat, toAirport.lng);
+    const fromPoint = resolveCityCoords(origin, fromStop);
+    const toPoint = resolveCityCoords(destination, toStop);
+    const distanceKm = haversineDistanceKm(fromPoint.lat, fromPoint.lng, toPoint.lat, toPoint.lng);
     const legId = `leg-${origin.toLowerCase()}-${destination.toLowerCase()}`;
 
     // Provider timestamps look like "2026-11-21 09:30"
@@ -361,19 +372,30 @@ async function fetchSerpApiFlights(
             v.applicableCarriers.includes(carrierCode))
       ).map((v) => v.id);
 
+      // Every hop is anchored to its OWN airport (SerpApi reports the real departure/arrival
+      // airport, e.g. SAW vs IST), so connections render via the layover airport and a flight
+      // line never starts or ends at a city centre. Ground connectors are added afterwards.
+      // A hop whose airport no dataset knows cannot be drawn truthfully, so the fare is dropped
+      // rather than given a line to an invented point.
+      const hopAirports = flights.map(
+        (flt: { departure_airport?: { id?: string }; arrival_airport?: { id?: string } }) => ({
+          from: resolveAirportCoords(flt.departure_airport?.id || origin),
+          to: resolveAirportCoords(flt.arrival_airport?.id || destination),
+        })
+      );
+      if (hopAirports.some((h: { from: unknown; to: unknown }) => !h.from || !h.to)) {
+        skipped++;
+        return;
+      }
+
       const segments: TransitSegment[] = flights.map((flt: {
         flight_number?: string;
         departure_airport?: { name?: string; id?: string };
         arrival_airport?: { name?: string; id?: string };
         duration?: number;
       }, segIdx: number) => {
-        // Every hop is anchored to its OWN airport (SerpApi reports the real departure/arrival
-        // airport, e.g. SAW vs IST), so connections render via the layover airport and a flight
-        // line never starts or ends at a city centre. Ground connectors are added afterwards.
-        const segFromCode = flt.departure_airport?.id || origin;
-        const segToCode = flt.arrival_airport?.id || destination;
-        const segFrom = resolveAirportCoords(segFromCode);
-        const segTo = resolveAirportCoords(segToCode);
+        const segFrom = hopAirports[segIdx].from!;
+        const segTo = hopAirports[segIdx].to!;
         return {
           id: `${legId}-serp-${idx + 1}-s${segIdx + 1}`,
           mode: 'flight' as TransitMode,
@@ -444,7 +466,9 @@ async function fetchSerpApiFlights(
       });
     });
     if (skipped > 0) {
-      console.warn(`[Transit API] Skipped ${skipped} SerpApi itinerary(ies) missing price/duration/flights.`);
+      console.warn(
+        `[Transit API] Skipped ${skipped} SerpApi itinerary(ies) missing price/duration/flights or with an unknown airport.`
+      );
     }
     if (rawOptions.length === 0) return null;
 
@@ -554,8 +578,15 @@ export async function queryTransitWithCache(
     lat: c.lat,
     lng: c.lng,
   });
-  const withBookingUrls = (opts: TransitOption[]) =>
-    attachBookingUrls(
+  const withBookingUrls = async (opts: TransitOption[]): Promise<TransitOption[]> => {
+    // FlixBus needs its own city ids; only ask when this corridor actually has a FlixBus coach
+    const flixbus = opts.some((o) => o.mode === 'bus' && isFlixCarrier(o))
+      ? await resolveFlixbusRoute(
+          { city: fromCity.city, lat: fromCity.lat, lng: fromCity.lng },
+          { city: toCity.city, lat: toCity.lat, lng: toCity.lng }
+        )
+      : null;
+    return attachBookingUrls(
       // Airport-anchor flights and bracket them with separate ground connectors
       opts.map((o) =>
         normalizeOptionGeometry(o, cityPoint(origin, fromCity), cityPoint(destination, toCity))
@@ -563,12 +594,14 @@ export async function queryTransitWithCache(
       {
         fromCode: origin.trim().toUpperCase(),
         toCode: destination.trim().toUpperCase(),
-        fromCity: fromStop?.city,
-        toCity: toStop?.city,
+        fromCity: fromCity.city,
+        toCity: toCity.city,
         date,
         passengers,
+        flixbus,
       }
     );
+  };
 
   const cacheKey = buildTransitCacheKey(origin, destination, date, mode);
 
@@ -587,7 +620,7 @@ export async function queryTransitWithCache(
       source: cachedHit.layer === 'memory' ? 'memory_cache' : 'redis_cache',
       cached: true,
       ttlSeconds: REDIS_CACHE_TTL_SECONDS,
-      options: withBookingUrls(scoredCached),
+      options: await withBookingUrls(scoredCached),
     };
   }
 
@@ -646,6 +679,6 @@ export async function queryTransitWithCache(
     source,
     cached: false,
     ttlSeconds: REDIS_CACHE_TTL_SECONDS,
-    options: withBookingUrls(finalOptions),
+    options: await withBookingUrls(finalOptions),
   };
 }

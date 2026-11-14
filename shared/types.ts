@@ -109,8 +109,15 @@ export interface TransitSegment {
   toLat: number;
   toLng: number;
   durationMinutes: number;
-  waypoints?: [number, number][]; // [lng, lat] intermediate stations/stops for ground polylines
+  /**
+   * [lng, lat] stations/stops the ground leg calls at, endpoints included. The map smooths a curve
+   * through them (`shared/groundRouting.ts`), so these are places, not polyline vertices.
+   */
+  waypoints?: [number, number][];
 }
+
+/** Merchants we deep-link to directly (no metasearch hop). */
+export type BookingProvider = 'tripcom' | 'flixbus' | '12go' | 'booking' | 'agoda';
 
 export interface TransitOption {
   id: string;
@@ -135,6 +142,8 @@ export interface TransitOption {
   doorToDoorNotes: string;
   co2Kg: number;
   bookingUrl?: string;
+  /** Merchant `bookingUrl` lands on. */
+  bookingProvider?: BookingProvider;
   /**
    * Where this option's data came from. Only `live` is a real, current fare; `curated` and
    * `synthesized` are sample/estimated data and the UI labels them as such.
@@ -233,4 +242,69 @@ export interface VoucherValidationResult {
   reason?: string;
   eligibleLegIds: string[];
   estimatedSavingsUsd: number;
+}
+
+// ── Stays (hotel layer) ─────────────────────────────────────────────────────────────────────────
+
+export type StayCategory = 'hostel' | 'budget' | 'midrange' | 'apartment' | 'upscale' | 'luxury';
+
+/** Same shape of idea as `SmartScoreBreakdown`: every term in USD, lower total is better. */
+export interface StayScoreBreakdown {
+  nights: number;
+  adults: number;
+  nightlyPriceUsd: number;
+  totalPriceUsd: number;
+  hourlyRateUsd: number;
+  /** Door-to-centre time, one way. */
+  commuteMinutesOneWay: number;
+  commuteHours: number;
+  commutePenaltyUsd: number;
+  /** Share of the hours spent at the property that counts as lost comfort (0 = none). */
+  comfortMultiplier: number;
+  comfortPenaltyUsd: number;
+  priceWeight: number;
+  timeWeight: number;
+  totalSmartScore: number;
+}
+
+export interface StayLink {
+  provider: Extract<BookingProvider, 'booking' | 'agoda'>;
+  providerName: string;
+  url: string;
+}
+
+/** A category of accommodation for one stop. Prices are estimates, never live rates. */
+export interface StayOption {
+  id: string;
+  stopId: string;
+  category: StayCategory;
+  title: string;
+  description: string;
+  /** Hotel star class used for the partner filter, when the category has one. */
+  starClass?: number;
+  /** Whole party, per night. */
+  nightlyPriceUsd: number;
+  totalPriceUsd: number;
+  commuteMinutesOneWay: number;
+  smartScore: number;
+  smartScoreBreakdown: StayScoreBreakdown;
+  dataSource: 'synthesized';
+  links: StayLink[];
+}
+
+/** Everything the "Staying in [City]?" card needs for one stop. */
+export interface StaySearch {
+  stopId: string;
+  stopIndex: number;
+  city: string;
+  country: string;
+  checkIn: string;
+  checkOut: string;
+  nights: number;
+  adults: number;
+  rooms: number;
+  /** Unfiltered city + dates search on each partner. */
+  links: StayLink[];
+  /** Ranked by Smart Score, best first. */
+  options: StayOption[];
 }
