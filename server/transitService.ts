@@ -7,6 +7,11 @@ import {
 } from '../shared/mockDataset.ts';
 import { attachBookingUrls, configureAffiliate } from '../shared/affiliate.ts';
 import {
+  normalizeOptionGeometry,
+  registerAirportResolver,
+  resolveAirport,
+} from '../shared/airports.ts';
+import {
   computeSmartScore,
   haversineDistanceKm,
   recalculateOptionsWithVttsAndVouchers,
@@ -22,6 +27,14 @@ import type {
   Voucher,
 } from '../shared/types.ts';
 import { getAirportByIata } from './airportService.ts';
+
+// Give the shared airport-anchoring logic the full global dataset (6,300+ airports) server-side.
+registerAirportResolver((code) => {
+  const airport = getAirportByIata(code);
+  return airport
+    ? { code: airport.iataCode, name: airport.tagline || airport.city, lat: airport.lat, lng: airport.lng }
+    : null;
+});
 
 // Load environment variables (.env.local first, then .env)
 dotenv.config({ path: '.env.local' });
@@ -162,25 +175,32 @@ export interface TransitQueryResult {
 }
 
 /**
- * Resolves exact coordinates for an IATA code. Order: caller-supplied stop → curated hubs →
- * the global `airports` dataset (per ARCHITECTURE.md §3). Previously anything outside the ~20
- * curated hubs silently resolved to Paris, corrupting distances, CO₂ and map arcs.
+ * Resolves the exact AIRPORT coordinates for an IATA (airport or metro/city) code via the shared
+ * airport table and the global `airports` dataset (ARCHITECTURE.md §3). City-centre hub
+ * coordinates are deliberately NOT used: flight lines must start and end on the tarmac.
  */
-function resolveCoordinates(
+function resolveAirportCoords(code: string): { lat: number; lng: number; code: string; city: string } {
+  const airport = resolveAirport(code);
+  if (airport) {
+    const meta = getAirportByIata(airport.code);
+    return { lat: airport.lat, lng: airport.lng, code: airport.code, city: meta?.city ?? airport.name };
+  }
+  console.warn(`[Transit API] Unknown airport code "${code}"; coordinates unavailable, using 0,0.`);
+  return { lat: 0, lng: 0, code: code.toUpperCase(), city: code };
+}
+
+/** City-level coordinates for a trip stop (used for ground connectors and synthetic corridors). */
+function resolveCityCoords(
   code: string,
   stop?: Pick<TripStop, 'lat' | 'lng' | 'city'>
 ): { lat: number; lng: number; city: string } {
   if (stop && Number.isFinite(stop.lat) && Number.isFinite(stop.lng)) {
     return { lat: stop.lat, lng: stop.lng, city: stop.city };
   }
-  const upper = code.toUpperCase();
-  const match =
-    DESTINATION_HUBS.find((h) => h.iataCode.toUpperCase() === upper) ?? getAirportByIata(upper);
-  if (match) {
-    return { lat: match.lat, lng: match.lng, city: match.city };
-  }
-  console.warn(`[Transit API] Unknown IATA code "${code}"; coordinates unavailable, using 0,0.`);
-  return { lat: 0, lng: 0, city: code };
+  const hub = DESTINATION_HUBS.find((h) => h.iataCode.toUpperCase() === code.toUpperCase());
+  if (hub) return { lat: hub.lat, lng: hub.lng, city: hub.city };
+  const ap = resolveAirportCoords(code);
+  return { lat: ap.lat, lng: ap.lng, city: ap.city };
 }
 
 /**
@@ -229,9 +249,9 @@ async function fetchSerpApiFlights(
       return null;
     }
 
-    const fromCoords = resolveCoordinates(origin, fromStop);
-    const toCoords = resolveCoordinates(destination, toStop);
-    const distanceKm = haversineDistanceKm(fromCoords.lat, fromCoords.lng, toCoords.lat, toCoords.lng);
+    const fromAirport = resolveAirportCoords(origin);
+    const toAirport = resolveAirportCoords(destination);
+    const distanceKm = haversineDistanceKm(fromAirport.lat, fromAirport.lng, toAirport.lat, toAirport.lng);
     const legId = `leg-${origin.toLowerCase()}-${destination.toLowerCase()}`;
 
     const rawOptions: TransitOption[] = flightGroups.slice(0, 6).map((item, idx) => {
@@ -274,22 +294,23 @@ async function fetchSerpApiFlights(
         arrival_airport?: { name?: string; id?: string };
         duration?: number;
       }, segIdx: number) => {
-        // Resolve each hop's own airport so connections render via the layover hub,
-        // not as N overlapping origin→destination arcs.
+        // Every hop is anchored to its OWN airport (SerpApi reports the real departure/arrival
+        // airport, e.g. SAW vs IST), so connections render via the layover airport and a flight
+        // line never starts or ends at a city centre. Ground connectors are added afterwards.
         const segFromCode = flt.departure_airport?.id || origin;
         const segToCode = flt.arrival_airport?.id || destination;
-        const segFrom = segIdx === 0 ? fromCoords : resolveCoordinates(segFromCode);
-        const segTo = segIdx === flights.length - 1 ? toCoords : resolveCoordinates(segToCode);
+        const segFrom = resolveAirportCoords(segFromCode);
+        const segTo = resolveAirportCoords(segToCode);
         return {
           id: `${legId}-serp-s${segIdx + 1}`,
           mode: 'flight' as TransitMode,
           label: flt.flight_number || `Flight ${segIdx + 1}`,
           fromName: flt.departure_airport?.name || origin,
-          fromCode: segFromCode,
+          fromCode: segFrom.code,
           fromLat: segFrom.lat,
           fromLng: segFrom.lng,
           toName: flt.arrival_airport?.name || destination,
-          toCode: segToCode,
+          toCode: segTo.code,
           toLat: segTo.lat,
           toLng: segTo.lng,
           durationMinutes: Number(flt.duration) || Math.round(inVehicleMinutes / Math.max(1, flights.length)),
@@ -370,8 +391,8 @@ function buildFallbackCorridorOptions(
       legId,
     }));
   } else {
-    const fromResolved = resolveCoordinates(origin);
-    const toResolved = resolveCoordinates(destination);
+    const fromResolved = resolveCityCoords(origin);
+    const toResolved = resolveCityCoords(destination);
     const fromCoords = fromStop || {
       id: `stop-${origin.toLowerCase()}`,
       order: 1,
@@ -438,15 +459,29 @@ export async function queryTransitWithCache(
 
   // Booking links are (re)built on every response — cached options may pre-date the current
   // affiliate marker, travel date, or route naming.
+  const fromCity = resolveCityCoords(origin, fromStop);
+  const toCity = resolveCityCoords(destination, toStop);
+  const cityPoint = (code: string, c: { lat: number; lng: number; city: string }) => ({
+    city: c.city,
+    iataCode: code.trim().toUpperCase(),
+    lat: c.lat,
+    lng: c.lng,
+  });
   const withBookingUrls = (opts: TransitOption[]) =>
-    attachBookingUrls(opts, {
-      fromCode: origin.trim().toUpperCase(),
-      toCode: destination.trim().toUpperCase(),
-      fromCity: fromStop?.city,
-      toCity: toStop?.city,
-      date,
-      passengers,
-    });
+    attachBookingUrls(
+      // Airport-anchor flights and bracket them with separate ground connectors
+      opts.map((o) =>
+        normalizeOptionGeometry(o, cityPoint(origin, fromCity), cityPoint(destination, toCity))
+      ),
+      {
+        fromCode: origin.trim().toUpperCase(),
+        toCode: destination.trim().toUpperCase(),
+        fromCity: fromStop?.city,
+        toCity: toStop?.city,
+        date,
+        passengers,
+      }
+    );
 
   const cacheKey = buildTransitCacheKey(origin, destination, date, mode);
 

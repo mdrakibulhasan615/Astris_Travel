@@ -11,6 +11,7 @@ import type {
   VttsPreset,
 } from './types.ts';
 import { attachBookingUrls } from './affiliate.ts';
+import { normalizeOptionGeometry, pickConnectionHub, resolveAirport } from './airports.ts';
 
 export const VTTS_PRESETS: VttsPreset[] = [
   {
@@ -454,10 +455,17 @@ export function synthesizeCorridorOptions(
   // 1. Direct or fast flight
   const directFlightHours = round2(1.1 + distanceKm / 810);
   const directFlightPrice = Math.round(78 + distanceKm * 0.056);
-  const fromAirportLat = fromStop.lat - 0.14;
-  const fromAirportLng = fromStop.lng + 0.12;
-  const toAirportLat = toStop.lat + 0.12;
-  const toAirportLng = toStop.lng - 0.14;
+  // Exact airport coordinates (never city centres). Only when an airport is unknown to the
+  // client-side table do we fall back to a nearby offset; the server recompute then replaces it
+  // with the real airport from the global `airports` dataset.
+  const fromAp = resolveAirport(fromStop.iataCode);
+  const toAp = resolveAirport(toStop.iataCode);
+  const fromAirportCode = fromAp?.code ?? fromStop.iataCode;
+  const toAirportCode = toAp?.code ?? toStop.iataCode;
+  const fromAirportLat = fromAp?.lat ?? fromStop.lat - 0.14;
+  const fromAirportLng = fromAp?.lng ?? fromStop.lng + 0.12;
+  const toAirportLat = toAp?.lat ?? toStop.lat + 0.12;
+  const toAirportLng = toAp?.lng ?? toStop.lng - 0.14;
   options.push(
     buildRawOption(
       {
@@ -468,27 +476,27 @@ export function synthesizeCorridorOptions(
         carrier: distanceKm > 3500 ? 'Turkish Airlines' : 'Astris Skyways',
         carrierCode: distanceKm > 3500 ? 'TK' : 'AS',
         routeCode: `${distanceKm > 3500 ? 'TK' : 'AS'} ${110 + (distanceKm % 780)}`,
-        originStation: `${fromStop.iataCode} Intl Airport`,
-        destinationStation: `${toStop.iataCode} Intl Airport`,
+        originStation: `${fromAp?.name ?? fromStop.iataCode} (${fromAirportCode})`,
+        destinationStation: `${toAp?.name ?? toStop.iataCode} (${toAirportCode})`,
         departureTime: '09:40',
         arrivalTime: formatArrivalFromHours(9.67 + directFlightHours),
         inVehicleHours: directFlightHours,
         layoverHours: 0,
         stopsCount: 0,
         basePriceUsd: directFlightPrice,
-        doorToDoorNotes: `${fromStop.city} Rail → ${fromStop.iataCode} → ${toStop.iataCode} → ${toStop.city} Metro`,
+        doorToDoorNotes: `${fromStop.city} Rail → ${fromAirportCode} → ${toAirportCode} → ${toStop.city} Metro`,
         co2Kg: Math.round(distanceKm * 0.115),
         segments: [
           {
             id: `${legId}-flt-direct-s1`,
             mode: 'train',
-            label: `${fromStop.iataCode} Express`,
+            label: `${fromStop.city} → ${fromAirportCode} transfer`,
             fromName: fromStop.city,
             fromCode: fromStop.iataCode,
             fromLat: fromStop.lat,
             fromLng: fromStop.lng,
-            toName: `${fromStop.iataCode} Airport`,
-            toCode: fromStop.iataCode,
+            toName: `${fromAirportCode} Airport`,
+            toCode: fromAirportCode,
             toLat: fromAirportLat,
             toLng: fromAirportLng,
             durationMinutes: 25,
@@ -497,12 +505,12 @@ export function synthesizeCorridorOptions(
             id: `${legId}-flt-direct-s2`,
             mode: 'flight',
             label: `${distanceKm > 3500 ? 'TK' : 'AS'} ${110 + (distanceKm % 780)}`,
-            fromName: `${fromStop.iataCode} Airport`,
-            fromCode: fromStop.iataCode,
+            fromName: `${fromAirportCode} Airport`,
+            fromCode: fromAirportCode,
             fromLat: fromAirportLat,
             fromLng: fromAirportLng,
-            toName: `${toStop.iataCode} Airport`,
-            toCode: toStop.iataCode,
+            toName: `${toAirportCode} Airport`,
+            toCode: toAirportCode,
             toLat: toAirportLat,
             toLng: toAirportLng,
             durationMinutes: Math.round(directFlightHours * 60),
@@ -510,9 +518,9 @@ export function synthesizeCorridorOptions(
           {
             id: `${legId}-flt-direct-s3`,
             mode: 'train',
-            label: `${toStop.city} Rail`,
-            fromName: `${toStop.iataCode} Airport`,
-            fromCode: toStop.iataCode,
+            label: `${toAirportCode} → ${toStop.city} transfer`,
+            fromName: `${toAirportCode} Airport`,
+            fromCode: toAirportCode,
             fromLat: toAirportLat,
             fromLng: toAirportLng,
             toName: toStop.city,
@@ -532,9 +540,11 @@ export function synthesizeCorridorOptions(
     const layoverHrs = distanceKm > 4500 ? 6.5 : 3.2;
     const oneStopHours = round2(directFlightHours + 1.2);
     const oneStopPrice = Math.round(directFlightPrice * 0.76);
-    const midLat = (fromStop.lat + toStop.lat) / 2 + 2.5;
-    const midLng = (fromStop.lng + toStop.lng) / 2 - 2.0;
-    const hubCode = distanceKm > 4500 ? 'DOH' : 'SAW';
+    // Real connection airport minimising the detour (exact coordinates, not a midpoint)
+    const hub = pickConnectionHub(fromAp ?? fromStop, toAp ?? toStop, [fromAirportCode, toAirportCode]);
+    const hubCode = hub.code;
+    const midLat = hub.lat;
+    const midLng = hub.lng;
     options.push(
       buildRawOption(
         {
@@ -545,8 +555,8 @@ export function synthesizeCorridorOptions(
           carrier: 'Pegasus Connect',
           carrierCode: 'PC',
           routeCode: `PC ${302 + (distanceKm % 500)}`,
-          originStation: `${fromStop.iataCode} Terminal 1`,
-          destinationStation: `${toStop.iataCode} Terminal 2`,
+          originStation: `${fromAp?.name ?? fromStop.iataCode} (${fromAirportCode})`,
+          destinationStation: `${toAp?.name ?? toStop.iataCode} (${toAirportCode})`,
           departureTime: '13:15',
           arrivalTime: formatArrivalFromHours(13.25 + oneStopHours + layoverHrs),
           inVehicleHours: oneStopHours,
@@ -554,18 +564,18 @@ export function synthesizeCorridorOptions(
           layoverHub: hubCode,
           stopsCount: 1,
           basePriceUsd: oneStopPrice,
-          doorToDoorNotes: `${fromStop.iataCode} → ${hubCode} (${layoverHrs}h) → ${toStop.iataCode}`,
+          doorToDoorNotes: `${fromAirportCode} → ${hubCode} (${layoverHrs}h) → ${toAirportCode}`,
           co2Kg: Math.round(distanceKm * 0.132),
           segments: [
             {
               id: `${legId}-flt-c-s1`,
               mode: 'flight',
               label: `PC Leg 1`,
-              fromName: fromStop.city,
-              fromCode: fromStop.iataCode,
-              fromLat: fromStop.lat,
-              fromLng: fromStop.lng,
-              toName: hubCode,
+              fromName: `${fromAirportCode} Airport`,
+              fromCode: fromAirportCode,
+              fromLat: fromAirportLat,
+              fromLng: fromAirportLng,
+              toName: `${hubCode} Airport`,
               toCode: hubCode,
               toLat: midLat,
               toLng: midLng,
@@ -575,14 +585,14 @@ export function synthesizeCorridorOptions(
               id: `${legId}-flt-c-s2`,
               mode: 'flight',
               label: `PC Leg 2`,
-              fromName: hubCode,
+              fromName: `${hubCode} Airport`,
               fromCode: hubCode,
               fromLat: midLat,
               fromLng: midLng,
-              toName: toStop.city,
-              toCode: toStop.iataCode,
-              toLat: toStop.lat,
-              toLng: toStop.lng,
+              toName: `${toAirportCode} Airport`,
+              toCode: toAirportCode,
+              toLat: toAirportLat,
+              toLng: toAirportLng,
               durationMinutes: Math.round((oneStopHours * 60) / 2),
             },
           ],
@@ -808,9 +818,14 @@ export function buildLegsFromStops(
           scoring.profile
         );
 
+    // Invariant: flights are airport-to-airport, bracketed by separate ground connectors
+    const geometryOptions = baseOptions.map((opt) =>
+      normalizeOptionGeometry(opt, fromStop, toStop)
+    );
+
     const rankedOptions = attachBookingUrls(
       recalculateOptionsWithVttsAndVouchers(
-        baseOptions,
+        geometryOptions,
         hourlyRateUsd,
         activeVouchers,
         scoring.profile
