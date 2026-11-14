@@ -23,10 +23,12 @@ import {
   buildLegsFromStops,
   calculateVoucherDiscount,
   haversineDistanceKm,
+  isSamePlace,
   isVoucherCurrentlyValid,
   round2,
   sanitizeHourlyRate,
 } from './shared/smartScore.ts';
+import { getPublicAffiliateConfig } from './shared/affiliate.ts';
 import type {
   OptimizationCandidate,
   RouteOptimizationResult,
@@ -143,6 +145,22 @@ async function buildLegsViaTransitService(
     const legId = legIds[i];
     const distanceKm = haversineDistanceKm(fromStop.lat, fromStop.lng, toStop.lat, toStop.lng);
     const prevSelected = previousSelectedMap?.[legId];
+
+    // The same city twice in a row needs no transport (and must not hit the flight API)
+    if (isSamePlace(fromStop, toStop)) {
+      return {
+        id: legId,
+        fromStopId: fromStop.id,
+        toStopId: toStop.id,
+        fromCity: fromStop.city,
+        fromCode: fromStop.iataCode,
+        toCity: toStop.city,
+        toCode: toStop.iataCode,
+        distanceKm,
+        selectedOptionId: '',
+        transitOptions: [],
+      };
+    }
 
     try {
       const result = await queryTransitWithCache({
@@ -269,6 +287,12 @@ async function startServer() {
 
   app.get('/api/vouchers', (_req, res) => {
     res.json({ vouchers: VOUCHERS_CATALOG });
+  });
+
+  // Partner ids for the browser's link builders (stays, optimistic transport links). These are
+  // public by nature: every outbound link already carries them.
+  app.get('/api/affiliate/config', (_req, res) => {
+    res.json(getPublicAffiliateConfig());
   });
 
   // Upstash Redis Cache Health & Status Endpoint

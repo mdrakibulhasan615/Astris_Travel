@@ -1,5 +1,12 @@
 import { buildLegsFromStops, computeSmartScore } from './smartScore.ts';
-import type { DestinationHub, TransitOption, Trip, TripStop, Voucher } from './types.ts';
+import type {
+  DestinationHub,
+  TransitOption,
+  TransitSegment,
+  Trip,
+  TripStop,
+  Voucher,
+} from './types.ts';
 
 export const VOUCHERS_CATALOG: Voucher[] = [
   {
@@ -150,8 +157,10 @@ export const INITIAL_STOPS: TripStop[] = [
     iataCode: 'KUL',
     lat: 3.139,
     lng: 101.6869,
+    // Origin: a departure point, not a stay (single date). `stayNights` only matters if the stop
+    // is later dragged to another position; see `stopNights` in dateUtils.
     stayNights: 3,
-    arrivalDate: '2026-11-18',
+    arrivalDate: '2026-11-21',
     departureDate: '2026-11-21',
     notes: 'Depart KL Sentral via KLIA Ekspres (28m to terminal)',
   },
@@ -196,6 +205,32 @@ export const INITIAL_STOPS: TripStop[] = [
   },
 ];
 
+/**
+ * Where the airport links used by the curated options actually run ([lng, lat], city end first).
+ * A segment that names one of these and has no waypoints of its own is drawn along it, so the
+ * Havabus crosses the Bosphorus on the bridge instead of the Sea of Marmara.
+ */
+const CONNECTOR_TRACKS: Record<string, [number, number][]> = {
+  'KLIA Ekspres': [[101.6869, 3.139], [101.6845, 3.025], [101.693, 2.91], [101.7099, 2.7456]],
+  SkyBus: [[101.6869, 3.139], [101.668, 3.045], [101.655, 2.93], [101.69, 2.815], [101.7099, 2.7456]],
+  'M11 Metro': [[28.9784, 41.0082], [28.952, 41.095], [28.885, 41.182], [28.7519, 41.2753]],
+  'Havabus SAW': [[28.9784, 41.0082], [29.034, 41.045], [29.1, 40.99], [29.23, 40.93], [29.3092, 40.8986]],
+  'Heathrow Express': [[-0.1276, 51.5072], [-0.175, 51.515], [-0.312, 51.501], [-0.4543, 51.47]],
+  'Stansted Express': [[-0.1276, 51.5072], [-0.06, 51.588], [0.095, 51.781], [0.165, 51.867], [0.235, 51.886]],
+  'RER B': [[2.3522, 48.8566], [2.355, 48.881], [2.495, 48.932], [2.5479, 49.0097]],
+};
+
+function withConnectorTrack(seg: TransitSegment): TransitSegment {
+  const track = CONNECTOR_TRACKS[seg.label];
+  if (!track || seg.waypoints || seg.mode === 'flight') return seg;
+  const gap = (p: [number, number]) => (p[0] - seg.fromLng) ** 2 + (p[1] - seg.fromLat) ** 2;
+  const ordered = gap(track[0]) <= gap(track[track.length - 1]) ? track : [...track].reverse();
+  return {
+    ...seg,
+    waypoints: [[seg.fromLng, seg.fromLat], ...ordered.slice(1, -1), [seg.toLng, seg.toLat]],
+  };
+}
+
 // Curated corridor transit options for the 4-stop default trip (plus reverse corridors)
 function makeBaseOption(
   partial: Omit<
@@ -207,6 +242,7 @@ function makeBaseOption(
   const breakdown = computeSmartScore(partial, 15, null);
   return {
     ...partial,
+    segments: partial.segments?.map(withConnectorTrack),
     discountedPriceUsd: breakdown.discountedPriceUsd,
     smartScore: breakdown.totalSmartScore,
     smartScoreBreakdown: breakdown,
