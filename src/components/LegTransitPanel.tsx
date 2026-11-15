@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type CSSProperties } from 'react';
 import {
   AlertTriangle,
   Bus,
@@ -19,11 +19,11 @@ import { describeBaggage } from '../../shared/ticketDetails.ts';
 import { useCurrency } from '../currency.tsx';
 import { formatDuration } from '../../shared/smartScore.ts';
 import { PROVIDER_NAMES } from '../../shared/affiliate.ts';
+import { BoardingPass, TagPill } from './BoardingPass.tsx';
 import { SmartScoreBadge } from './SmartScoreBadge.tsx';
 import type {
   BaggageInfo,
   ModeFilter,
-  OptionTag,
   ScoreFlag,
   TicketType,
   TransitMode,
@@ -144,11 +144,14 @@ function BookLink({
   url = option.bookingUrl,
   label,
   secondary = false,
+  accent,
 }: {
   option: TransitOption;
   url?: string;
   label?: string;
   secondary?: boolean;
+  /** Brand colours (boarding pass): overrides the default orange button and fills the stub width. */
+  accent?: CSSProperties;
 }) {
   const { fmt } = useCurrency();
   if (!url) return null;
@@ -170,10 +173,15 @@ function BookLink({
         // Development aid: the exact URL the browser is about to open
         if (import.meta.env.DEV) console.debug('[Booking] opening', option.id, url);
       }}
+      style={secondary ? undefined : accent}
       className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11px] font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF812E] focus-visible:ring-offset-1 ${
+        accent ? 'w-full justify-center py-1.5 hover:brightness-95' : ''
+      } ${
         secondary
           ? 'border border-neutral-200 bg-white text-[#111827] hover:border-[#FFD6BA] hover:bg-[#FFF4ED]'
-          : 'bg-[#FF812E] text-white hover:bg-[#E56B1A]'
+          : accent
+            ? ''
+            : 'bg-[#FF812E] text-white hover:bg-[#E56B1A]'
       }`}
       title={`Opens ${merchant} with this route, date and travellers filled in`}
     >
@@ -184,47 +192,27 @@ function BookLink({
 }
 
 /** Ground return tickets are sold per direction, so they get one button each way. */
-function BookLinks({ option }: { option: TransitOption }) {
+function BookLinks({ option, accent }: { option: TransitOption; accent?: CSSProperties }) {
   if (!option.bookingUrl) return null;
   if (option.ticketType === 'return' && option.returnBookingUrl) {
     const merchant = option.bookingProvider ? PROVIDER_NAMES[option.bookingProvider] : 'partner site';
     return (
-      <div className="flex flex-wrap items-center gap-1.5">
-        <BookLink option={option} label={`Outbound on ${merchant}`} />
+      <div className={accent ? 'space-y-1.5' : 'flex flex-wrap items-center gap-1.5'}>
+        <BookLink option={option} label={`Outbound on ${merchant}`} accent={accent} />
         <BookLink
           option={option}
           url={option.returnBookingUrl}
           label={`Way back on ${merchant}`}
           secondary
+          accent={accent}
         />
       </div>
     );
   }
-  return <BookLink option={option} />;
+  return <BookLink option={option} accent={accent} />;
 }
 
 const legLabel = (l: TripLeg) => `${l.fromCode} → ${l.toCode}`;
-
-const TAG_LABELS: Record<OptionTag, string> = {
-  cheapest: 'Cheapest',
-  'cheapest-direct': 'Cheapest Direct',
-  direct: 'Direct',
-};
-
-/** `Cheapest` / `Cheapest Direct` / `Direct` badge (ranking tags, see shared/ranking.ts). */
-function TagPill({ tag }: { tag: OptionTag }) {
-  return (
-    <span
-      className={`rounded-full px-2 py-px text-[10px] font-semibold whitespace-nowrap ${
-        tag === 'direct'
-          ? 'bg-neutral-100 text-[#374151]'
-          : 'border border-[#BBF7D0] bg-[#F0FDF4] text-[#15803D]'
-      }`}
-    >
-      {TAG_LABELS[tag]}
-    </span>
-  );
-}
 
 const BAG_TONE = { good: 'text-[#15803D]', warn: 'text-[#B45309]', muted: 'text-[#4B5563]' } as const;
 
@@ -572,6 +560,35 @@ export function LegTransitPanel({
                 const { smartScoreBreakdown: b } = option;
                 const hasLongLayover = option.layoverHours > 4;
                 const hasNormalLayover = option.layoverHours >= 2 && option.layoverHours <= 4;
+
+                // Flights are drawn as boarding passes; trains, coaches and ferries keep the compact card
+                if (option.mode === 'flight') {
+                  return (
+                    <BoardingPass
+                      key={option.id}
+                      option={option}
+                      rank={idx}
+                      isSelected={isSelected}
+                      voucherCode={voucherCode}
+                      departureDate={leg.departureDate}
+                      onSelect={() => {
+                        onActivateLeg(leg.id);
+                        onSelectOption(leg.id, option.id);
+                      }}
+                      extras={
+                        <>
+                          <SourceChip source={option.dataSource} />
+                          <FlagChips flags={b.flags} />
+                        </>
+                      }
+                      renderBook={
+                        coveredByLeg
+                          ? undefined
+                          : (accent) => <BookLinks option={option} accent={accent} />
+                      }
+                    />
+                  );
+                }
 
                 return (
                   <div
