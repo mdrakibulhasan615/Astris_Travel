@@ -193,7 +193,7 @@ export function BoardingPass({
         className="grid @[28rem]:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]"
         style={{ background: palette.background, color: palette.text }}
       >
-        <div className="flex min-w-0 items-center justify-between gap-x-3 px-4 py-1.5">
+        <div className="flex min-w-0 items-center justify-between gap-x-3 px-4 py-[3px]">
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <Plane className="h-4 w-4 shrink-0" aria-hidden="true" />
             <span
@@ -235,7 +235,7 @@ export function BoardingPass({
             type="button"
             aria-pressed={isSelected}
             aria-label={`${palette.label || option.carrier} ${flightNumbers}, ${origin} to ${destination}`}
-            className="relative flex min-w-0 flex-1 flex-col gap-2 px-3 py-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#FF812E]"
+            className="relative flex min-w-0 flex-1 flex-col gap-1 px-3 py-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#FF812E]"
           >
             {/* Faint airplane watermark behind the route */}
             <Plane
@@ -282,7 +282,7 @@ export function BoardingPass({
             {/* Route hero */}
             <div className="relative grid grid-cols-[auto_minmax(1.5rem,1fr)_auto] items-center gap-2 @md:gap-3">
               <div className="min-w-0">
-                <div className="font-display text-2xl font-black leading-none tracking-tight text-[#111827]">
+                <div className="font-display text-xl font-black leading-none tracking-tight text-[#111827]">
                   {origin}
                 </div>
                 <div className="mt-0.5 font-mono text-sm font-bold text-[#111827]">{dep.clock}</div>
@@ -291,7 +291,7 @@ export function BoardingPass({
                 </div>
               </div>
 
-              <div className="relative flex items-center self-start pt-2" aria-hidden="true">
+              <div className="relative flex items-center self-start pt-1.5" aria-hidden="true">
                 <div className="h-0 flex-1 border-t-2 border-dashed" style={{ borderColor: palette.accent }} />
                 <Plane
                   className="mx-1 h-5 w-5 shrink-0 rotate-45"
@@ -300,7 +300,7 @@ export function BoardingPass({
                 />
                 <div className="h-0 flex-1 border-t-2 border-dashed" style={{ borderColor: palette.accent }} />
                 {hubs.length > 0 && option.stopsCount > 0 && (
-                  <div className="absolute inset-x-0 top-[1.35rem] text-center font-mono text-[9px] font-bold uppercase tracking-wide text-[#4B5563]">
+                  <div className="absolute inset-x-0 top-[1.1rem] text-center font-mono text-[9px] font-bold uppercase tracking-wide text-[#4B5563]">
                     via {hubs.slice(0, 3).join(' · ')}
                   </div>
                 )}
@@ -353,7 +353,7 @@ export function BoardingPass({
         />
 
         {/* Stub */}
-        <div className="relative border-t-[1.5px] border-dashed border-neutral-300 px-3 pb-2.5 pt-2 @[28rem]:flex @[28rem]:flex-col @[28rem]:gap-1.5 @[28rem]:border-t-0">
+        <div className="relative border-t-[1.5px] border-dashed border-neutral-300 px-3 pb-1 pt-1 @[28rem]:flex @[28rem]:flex-col @[28rem]:gap-1 @[28rem]:border-t-0">
           {/* Tear line (horizontal on narrow screens) notches */}
           {(['left-0 -translate-x-1/2', 'right-0 translate-x-1/2'] as const).map((side) => (
             <span
@@ -374,7 +374,7 @@ export function BoardingPass({
               <div className="@[28rem]:hidden"><MicroLabel>Baggage</MicroLabel></div>
               {bags ? (
                 <div
-                  className="space-y-1 text-[10.5px] font-medium leading-tight"
+                  className="space-y-0.5 text-[10.5px] font-medium leading-tight"
                   title={
                     option.baggage?.source === 'typical'
                       ? 'Typical economy allowance for this carrier; confirm it for your fare when booking.'
@@ -404,7 +404,7 @@ export function BoardingPass({
                     {fmt(option.basePriceUsd)}
                   </span>
                 )}
-                <span className="whitespace-nowrap font-display text-lg font-extrabold leading-none text-[#111827] tabular-nums">
+                <span className="whitespace-nowrap font-display text-base font-extrabold leading-none text-[#111827] tabular-nums">
                   {fmt(option.discountedPriceUsd)}
                 </span>
                 <SmartScoreBadge score={option.smartScore} size="sm" />
@@ -425,7 +425,7 @@ export function BoardingPass({
       </div>
 
       {/* Bottom accent strip */}
-      <div className="h-1.5" style={{ background: palette.background }} />
+      <div className="h-[3px]" style={{ background: palette.background }} />
 
       {/* Punched semicircles where the tear line meets the top and bottom edges (wide screens) */}
       <span
