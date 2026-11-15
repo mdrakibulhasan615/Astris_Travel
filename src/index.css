@@ -69,6 +69,9 @@
  * properties set from JS (src/useTicketMask.ts): --tear-y (seam position), --pitch (scallop spacing). */
 .ticket-shape {
   --edge: #d1d5db;
+  /* Other tickets sit above the selected one's shadow, so it can never fall across them */
+  position: relative;
+  z-index: 1;
   filter: drop-shadow(1px 0 0 var(--edge)) drop-shadow(-1px 0 0 var(--edge)) drop-shadow(0 1px 0 var(--edge))
     drop-shadow(0 -1px 0 var(--edge)) drop-shadow(0 1px 2px rgb(0 0 0 / 0.1));
   transition:
@@ -81,11 +84,12 @@
 }
 .ticket-shape[data-selected='true'] {
   --edge: #ff812e;
+  z-index: 0;
   /* lifts 4px and slides right by 8.6% of the ticket's own width */
   transform: translate(8.6%, -4px);
   filter: drop-shadow(1.5px 0 0 var(--edge)) drop-shadow(-1.5px 0 0 var(--edge))
     drop-shadow(0 1.5px 0 var(--edge)) drop-shadow(0 -1.5px 0 var(--edge))
-    drop-shadow(0 10px 12px rgb(249 115 22 / 0.3));
+    drop-shadow(0 6px 10px rgb(0 0 0 / 0.18));
 }
 @media (prefers-reduced-motion: reduce) {
   .ticket-shape {

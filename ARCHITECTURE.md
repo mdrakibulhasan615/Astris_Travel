@@ -497,5 +497,5 @@ Tickets are drawn as their true shapes, not rectangles with white circles painte
 are real holes cut with CSS `mask-image` on the inner ticket element (`.mask-bp`, `.mask-bus`, `.mask-train`); the
 outline and shadow are chained `drop-shadow()` filters on the wrapper (`.ticket-shape`), so they follow the cut-outs
 (a filter on the same element as the mask would run before it and be cut away). A selected ticket
-(`data-selected`) gets an orange outline, lifts 4 px, slides right by 8.6 % of its own width and gets a larger orange shadow. `useTicketMask` measures the
+(`data-selected`) gets an orange outline, lifts 4 px, slides right by 8.6 % of its own width and gets a larger soft black shadow (drawn beneath neighbouring tickets, so it never overlaps them). `useTicketMask` measures the
 seam (stub top / fare band) into `--tear-y` and picks `--pitch` so whole scallops fit the bus ticket's height.
