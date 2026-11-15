@@ -23,7 +23,6 @@ import {
   Plus,
   RotateCcw,
   Route,
-  Ticket,
   Users,
 } from 'lucide-react';
 import {
@@ -37,7 +36,6 @@ import {
 import {
   CURATED_CORRIDOR_OPTIONS,
   DESTINATION_HUBS,
-  VOUCHERS_CATALOG,
   createDefaultTrip,
 } from '../shared/mockDataset.ts';
 import { buildLegsFromStops, rescoreLegs, round2 } from '../shared/smartScore.ts';
@@ -55,8 +53,6 @@ import type {
   Trip,
   TripLeg,
   TripStop,
-  Voucher,
-  VoucherValidationResult,
   VttsTier,
 } from '../shared/types.ts';
 import { AddStopModal } from './components/AddStopModal.tsx';
@@ -68,14 +64,13 @@ import { RouteOptimizerModal } from './components/RouteOptimizerModal.tsx';
 import { SortableStopCard } from './components/SortableStopCard.tsx';
 import { StayPanel } from './components/StayPanel.tsx';
 import { TopBar } from './components/TopBar.tsx';
-import { VoucherDrawer } from './components/VoucherDrawer.tsx';
 import { VttsControlPanel } from './components/VttsControlPanel.tsx';
 import { WorldMapCanvas } from './components/WorldMapCanvas.tsx';
 import type { OverlayLine } from '../shared/groundSchedule.ts';
 import { ErrorBoundary } from './components/ErrorBoundary.tsx';
 import { logFlightState, verifyLegsMatchResponse } from './flightDebug.ts';
 
-type WorkspacePanel = 'timeline' | 'stays' | 'smart-score' | 'vouchers';
+type WorkspacePanel = 'timeline' | 'stays';
 
 /**
  * The browser has no airport dataset. Every flight segment the API returns carries exact airport
@@ -101,7 +96,6 @@ export default function App() {
   const [dataMode, setDataMode] = useState<'live' | 'mock' | undefined>(undefined);
   const [trip, setTrip] = useState<Trip>(() => createDefaultTrip());
   const [destinations, setDestinations] = useState<DestinationHub[]>(DESTINATION_HUBS);
-  const [vouchers, setVouchers] = useState<Voucher[]>(VOUCHERS_CATALOG);
   const [isLoadingInitial, setIsLoadingInitial] = useState(true);
 
   // Sync & workspace UI states
@@ -138,7 +132,6 @@ export default function App() {
   const [isAddStopOpen, setIsAddStopOpen] = useState(false);
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
   const [datePickerStopId, setDatePickerStopId] = useState<string | null>(null);
-  const [isVoucherDrawerOpen, setIsVoucherDrawerOpen] = useState(false);
   const [isOptimizerOpen, setIsOptimizerOpen] = useState(false);
   const [isOptimizing, setIsOptimizing] = useState(false);
   const [optimizerResult, setOptimizerResult] = useState<RouteOptimizationResult | null>(null);
@@ -150,7 +143,7 @@ export default function App() {
   const smartScoreSectionRef = useRef<HTMLDivElement | null>(null);
   const timelineSectionRef = useRef<HTMLDivElement | null>(null);
 
-  // Fetch initial trip, destinations, and vouchers from Express backend
+  // Fetch initial trip and destinations from Express backend
   useEffect(() => {
     let mounted = true;
     async function hydrateFromApi() {
@@ -176,10 +169,9 @@ export default function App() {
             // Links still work without ids; they are just not attributed
           });
 
-        const [tripRes, destRes, voucherRes] = await Promise.all([
+        const [tripRes, destRes] = await Promise.all([
           fetch('/api/trips/default'),
           fetch('/api/destinations'),
-          fetch('/api/vouchers'),
         ]);
         if (!mounted) return;
         if (tripRes.ok) {
@@ -193,10 +185,6 @@ export default function App() {
         if (destRes.ok) {
           const destData: { destinations: DestinationHub[] } = await destRes.json();
           setDestinations(destData.destinations);
-        }
-        if (voucherRes.ok) {
-          const voucherData: { vouchers: Voucher[] } = await voucherRes.json();
-          setVouchers(voucherData.vouchers);
         }
       } catch (err) {
         // Fallback to the local SAMPLE dataset (cards are labelled "Sample") if the API is unreachable
@@ -227,7 +215,6 @@ export default function App() {
     async (
       nextStops: TripStop[],
       nextHourlyRate = trip.hourlyTimeValue,
-      nextVoucherCodes = trip.appliedVoucherCodes,
       nextTravelers = trip.travelers,
       nextPrefs: Record<string, LegTicketPref> = trip.legPrefs ?? {}
     ) => {
@@ -237,15 +224,12 @@ export default function App() {
       }
 
       const normalizedStops = nextStops.map((s, idx) => ({ ...s, order: idx + 1 }));
-      const activeVouchers = vouchers.filter((v) => nextVoucherCodes.includes(v.code));
 
       // Instant optimistic update so DnD & map arcs update at 60fps
       const optimisticLegs = buildLegsFromStops(
         normalizedStops,
         CURATED_CORRIDOR_OPTIONS,
-        vouchers,
         nextHourlyRate,
-        activeVouchers,
         previousSelectedMap,
         {
           profile: trip.travelerProfile,
@@ -264,7 +248,6 @@ export default function App() {
         stops: normalizedStops,
         legs: optimisticLegs,
         hourlyTimeValue: nextHourlyRate,
-        appliedVoucherCodes: nextVoucherCodes,
         travelers: nextTravelers,
         legPrefs: nextPrefs,
       }));
@@ -277,7 +260,6 @@ export default function App() {
           body: JSON.stringify({
             stops: normalizedStops,
             hourlyTimeValue: nextHourlyRate,
-            appliedVoucherCodes: nextVoucherCodes,
             previousSelectedMap,
             travelerProfile: trip.travelerProfile,
             travelers: nextTravelers,
@@ -304,12 +286,10 @@ export default function App() {
     },
     [
       trip.hourlyTimeValue,
-      trip.appliedVoucherCodes,
       trip.legs,
       trip.legPrefs,
       trip.travelerProfile,
       trip.travelers,
-      vouchers,
     ]
   );
 
@@ -317,14 +297,10 @@ export default function App() {
   const applyVttsRate = useCallback(
     (tier: VttsTier, hourlyRateUsd: number) => {
       setTrip((prev) => {
-        const activeVouchers = vouchers.filter((v) =>
-          prev.appliedVoucherCodes.includes(v.code)
-        );
         // Both ticket structures are re-scored: a different time value can change which wins
         const updatedLegs = rescoreLegs(
           prev.legs,
           hourlyRateUsd,
-          activeVouchers,
           prev.travelerProfile,
           prev.legPrefs
         );
@@ -336,57 +312,7 @@ export default function App() {
         };
       });
     },
-    [vouchers]
-  );
-
-  const handleToggleVoucher = useCallback(
-    (code: string) => {
-      setTrip((prev) => {
-        const exists = prev.appliedVoucherCodes.includes(code);
-        const nextCodes = exists
-          ? prev.appliedVoucherCodes.filter((c) => c !== code)
-          : [...prev.appliedVoucherCodes, code];
-        const activeVouchers = vouchers.filter((v) => nextCodes.includes(v.code));
-
-        const updatedLegs = rescoreLegs(
-          prev.legs,
-          prev.hourlyTimeValue,
-          activeVouchers,
-          prev.travelerProfile,
-          prev.legPrefs
-        );
-
-        return {
-          ...prev,
-          appliedVoucherCodes: nextCodes,
-          legs: updatedLegs,
-        };
-      });
-    },
-    [vouchers]
-  );
-
-  const handleValidateVoucherCode = useCallback(
-    async (code: string): Promise<VoucherValidationResult> => {
-      try {
-        const res = await fetch('/api/vouchers/validate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ code, legs: trip.legs }),
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return (await res.json()) as VoucherValidationResult;
-      } catch {
-        // Previously a network/5xx error rejected unhandled and the drawer showed nothing
-        return {
-          valid: false,
-          reason: 'Could not reach the voucher service. Check your connection and try again.',
-          eligibleLegIds: [],
-          estimatedSavingsUsd: 0,
-        };
-      }
-    },
-    [trip.legs]
+    []
   );
 
   // Moves a stop (from the list's drag handle or the route bar) and re-dates what follows
@@ -398,15 +324,10 @@ export default function App() {
       ...s,
       order: idx + 1,
     }));
-    const activeVouchers = vouchers.filter((v) =>
-      trip.appliedVoucherCodes.includes(v.code)
-    );
     const prelimLegs = buildLegsFromStops(
       reordered,
       CURATED_CORRIDOR_OPTIONS,
-      vouchers,
       trip.hourlyTimeValue,
-      activeVouchers,
       undefined,
       { profile: trip.travelerProfile, passengers: trip.travelers }
     );
@@ -457,15 +378,10 @@ export default function App() {
     const remaining = trip.stops
       .filter((s) => s.id !== stopId)
       .map((s, idx) => ({ ...s, order: idx + 1 }));
-    const activeVouchers = vouchers.filter((v) =>
-      trip.appliedVoucherCodes.includes(v.code)
-    );
     const prelimLegs = buildLegsFromStops(
       remaining,
       CURATED_CORRIDOR_OPTIONS,
-      vouchers,
       trip.hourlyTimeValue,
-      activeVouchers,
       undefined,
       { profile: trip.travelerProfile, passengers: trip.travelers }
     );
@@ -489,7 +405,7 @@ export default function App() {
   const handleChangeTravelers = (delta: number) => {
     const next = Math.min(9, Math.max(1, trip.travelers + delta));
     if (next === trip.travelers) return;
-    recomputeStopsAndLegs(trip.stops, trip.hourlyTimeValue, trip.appliedVoucherCodes, next);
+    recomputeStopsAndLegs(trip.stops, trip.hourlyTimeValue, next);
   };
 
   /**
@@ -516,7 +432,6 @@ export default function App() {
     recomputeStopsAndLegs(
       trip.stops,
       trip.hourlyTimeValue,
-      trip.appliedVoucherCodes,
       trip.travelers,
       prefs
     );
@@ -599,7 +514,6 @@ export default function App() {
         body: JSON.stringify({
           stops: trip.stops,
           hourlyTimeValue: trip.hourlyTimeValue,
-          appliedVoucherCodes: trip.appliedVoucherCodes,
           travelerProfile: trip.travelerProfile,
           travelers: trip.travelers,
           lockOrigin: true,
@@ -642,9 +556,7 @@ export default function App() {
     setMobileView('split-left');
     if (panel === 'stays') setLeftView('stays');
     if (panel === 'timeline') setLeftView('route');
-    if (panel === 'smart-score' && smartScoreSectionRef.current) {
-      smartScoreSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    } else if (timelineSectionRef.current && (panel === 'timeline' || panel === 'stays')) {
+    if (timelineSectionRef.current) {
       timelineSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   };
@@ -652,7 +564,6 @@ export default function App() {
   // Compute live trip totals
   const totals = useMemo(() => {
     let totalCostUsd = 0;
-    let totalSavingsUsd = 0;
     let totalHours = 0;
     let totalSmartScore = 0;
     let totalDistanceKm = 0;
@@ -662,14 +573,12 @@ export default function App() {
       // A return ticket is counted once, on the leg that carries it; the leg it covers adds nothing
       const t = legTotals(leg);
       totalCostUsd += t.costUsd;
-      totalSavingsUsd += t.savingsUsd;
       totalHours += t.hours;
       totalSmartScore += t.score;
     }
 
     return {
       totalCostUsd: round2(totalCostUsd),
-      totalSavingsUsd: round2(totalSavingsUsd),
       totalHours: round2(totalHours),
       totalSmartScore: round2(totalSmartScore),
       totalDistanceKm,
@@ -706,10 +615,8 @@ export default function App() {
         activePanel={activePanel}
         onSelectPanel={handleNavPanelSelect}
         onOpenAddStop={() => setIsAddStopOpen(true)}
-        onOpenVouchers={() => setIsVoucherDrawerOpen(true)}
         onOptimizeRoute={handleOptimizeRoute}
         isOptimizing={isOptimizing}
-        activeVoucherCount={trip.appliedVoucherCodes.length}
         dataMode={dataMode}
       />
 
@@ -810,15 +717,6 @@ export default function App() {
 
               <button
                 type="button"
-                onClick={() => setIsVoucherDrawerOpen(true)}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white border border-neutral-200/80 hover:border-neutral-300 text-xs font-semibold text-[#111827] shadow-xs transition-colors whitespace-nowrap shrink-0 cursor-pointer"
-              >
-                <Ticket className="w-3.5 h-3.5 text-[#FF812E]" />
-                <span>Vouchers ({trip.appliedVoucherCodes.length})</span>
-              </button>
-
-              <button
-                type="button"
                 onClick={() => setIsAddStopOpen(true)}
                 className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white border border-neutral-200/80 hover:border-[#FFD6BA] hover:bg-[#FFF4ED] text-xs font-semibold text-[#111827] shadow-xs transition-colors whitespace-nowrap shrink-0 cursor-pointer"
               >
@@ -834,7 +732,6 @@ export default function App() {
               vttsTier={trip.vttsTier}
               hourlyTimeValue={trip.hourlyTimeValue}
               totalCostUsd={totals.totalCostUsd}
-              totalSavingsUsd={totals.totalSavingsUsd}
               totalHours={totals.totalHours}
               totalSmartScore={totals.totalSmartScore}
               totalDistanceKm={totals.totalDistanceKm}
@@ -931,8 +828,7 @@ export default function App() {
                       {totalNights} nights · {trip.travelers} guest{trip.travelers === 1 ? '' : 's'}
                     </span>
                     <div className="mt-0.5">
-                      Ranked by Smart Score at your travel pacing. Prices are typical estimates;
-                      the partner shows live rates.
+                      Cheapest first. Prices are typical estimates; the partner shows live rates.
                     </div>
                   </div>
                   <div className="text-right">
@@ -1005,7 +901,6 @@ export default function App() {
                               coveredByLeg={trip.legs.find((l) => l.id === nextLeg.coveredByLegId)}
                               onChangeTicket={handleChangeLegTicket}
                               modeFilter={modeFilter}
-                              vouchers={vouchers}
                               isActive={
                                 hoveredLegId === nextLeg.id || activeLegId === nextLeg.id
                               }
@@ -1099,16 +994,6 @@ export default function App() {
         initialStopId={datePickerStopId}
         onClose={() => setIsDatePickerOpen(false)}
         onUpdateStopDates={handleUpdateStopDates}
-      />
-
-      <VoucherDrawer
-        isOpen={isVoucherDrawerOpen}
-        vouchers={vouchers}
-        appliedCodes={trip.appliedVoucherCodes}
-        legs={trip.legs}
-        onClose={() => setIsVoucherDrawerOpen(false)}
-        onToggleVoucher={handleToggleVoucher}
-        onValidateCode={handleValidateVoucherCode}
       />
 
       <Analytics />

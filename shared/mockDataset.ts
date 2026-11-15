@@ -5,57 +5,7 @@ import type {
   TransitSegment,
   Trip,
   TripStop,
-  Voucher,
 } from './types.ts';
-
-export const VOUCHERS_CATALOG: Voucher[] = [
-  {
-    id: 'v-astris15',
-    code: 'ASTRIS15',
-    title: '15% Off Long-Haul & Regional Flights',
-    discountType: 'percentage',
-    discountValue: 15,
-    maxDiscountUsd: 65,
-    minSpendUsd: 120,
-    applicableModes: ['flight'],
-    expiresAt: '2026-12-31',
-    description: 'Save 15% (up to $65) on qualifying flight bookings over $120.',
-  },
-  {
-    id: 'v-railpass20',
-    code: 'RAIL20',
-    title: '$20 Off High-Speed & Sleeper Rail',
-    discountType: 'fixed',
-    discountValue: 20,
-    minSpendUsd: 70,
-    applicableModes: ['train'],
-    expiresAt: '2026-12-31',
-    description: 'Instant $20 credit on Eurostar, TGV, or overnight Nightjet rail legs.',
-  },
-  {
-    id: 'v-coach10',
-    code: 'COACH10',
-    title: '$10 Off Intercity Express Coaches',
-    discountType: 'fixed',
-    discountValue: 10,
-    minSpendUsd: 30,
-    applicableModes: ['bus'],
-    expiresAt: '2026-12-31',
-    description: 'Flat $10 off European and cross-border coach bookings over $30.',
-  },
-  {
-    id: 'v-tkvip40',
-    code: 'ISTHUB40',
-    title: '$40 Off Turkish Airlines Corridors',
-    discountType: 'fixed',
-    discountValue: 40,
-    minSpendUsd: 200,
-    applicableModes: ['flight'],
-    applicableCarriers: ['TK'],
-    expiresAt: '2026-12-31',
-    description: 'Exclusive $40 partner rebate on Turkish Airlines (TK) routes over $200.',
-  },
-];
 
 export const DESTINATION_HUBS: DestinationHub[] = [
   {
@@ -233,20 +183,15 @@ function withConnectorTrack(seg: TransitSegment): TransitSegment {
 
 // Curated corridor transit options for the 4-stop default trip (plus reverse corridors)
 function makeBaseOption(
-  partial: Omit<
-    TransitOption,
-    'discountedPriceUsd' | 'smartScore' | 'smartScoreBreakdown' | 'appliedVoucherId'
-  >
+  partial: Omit<TransitOption, 'smartScore' | 'smartScoreBreakdown'>
 ): TransitOption {
-  // Seed with the real engine (neutral $15/hr, no voucher); callers re-rank on every request.
-  const breakdown = computeSmartScore(partial, 15, null);
+  // Seed with the real engine (neutral $15/hr); callers re-rank on every request.
+  const breakdown = computeSmartScore(partial, 15);
   return {
     ...partial,
     segments: partial.segments?.map(withConnectorTrack),
-    discountedPriceUsd: breakdown.discountedPriceUsd,
     smartScore: breakdown.totalSmartScore,
     smartScoreBreakdown: breakdown,
-    appliedVoucherId: null,
     dataSource: 'curated',
   };
 }
@@ -270,7 +215,6 @@ export const CURATED_CORRIDOR_OPTIONS: Record<string, TransitOption[]> = {
       basePriceUsd: 465,
       doorToDoorNotes: 'KLIA Ekspres 28m → TK 61 11h 12m → M11 Metro 38m',
       co2Kg: 745,
-      eligibleVoucherIds: ['v-astris15', 'v-tkvip40'],
       segments: [
         {
           id: 'kul-ist-tk-s1',
@@ -346,7 +290,6 @@ export const CURATED_CORRIDOR_OPTIONS: Record<string, TransitOption[]> = {
       basePriceUsd: 392,
       doorToDoorNotes: 'KLIA Ekspres 28m → EY 411 → AUH (2h 48m) → EY 97',
       co2Kg: 810,
-      eligibleVoucherIds: ['v-astris15'],
       segments: [
         {
           id: 'kul-ist-ey-s1',
@@ -424,7 +367,6 @@ export const CURATED_CORRIDOR_OPTIONS: Record<string, TransitOption[]> = {
       basePriceUsd: 329,
       doorToDoorNotes: 'Airport Bus 55m → SV 835 → JED (8h 12m) → SV 257',
       co2Kg: 842,
-      eligibleVoucherIds: ['v-astris15'],
       segments: [
         {
           id: 'kul-ist-sv-s1',
@@ -489,7 +431,6 @@ export const CURATED_CORRIDOR_OPTIONS: Record<string, TransitOption[]> = {
       basePriceUsd: 218,
       doorToDoorNotes: 'M11 Metro 38m → TK 1985 4h 09m → Heathrow Express 15m',
       co2Kg: 268,
-      eligibleVoucherIds: ['v-astris15', 'v-tkvip40'],
       segments: [
         {
           id: 'ist-lon-tk-s1',
@@ -559,7 +500,6 @@ export const CURATED_CORRIDOR_OPTIONS: Record<string, TransitOption[]> = {
       basePriceUsd: 152,
       doorToDoorNotes: 'Havabus 65m → PC 2662 → ADB (3h 06m) → Stansted Express 47m',
       co2Kg: 295,
-      eligibleVoucherIds: ['v-astris15'],
       segments: [
         {
           id: 'ist-lon-pc-s1',
@@ -637,7 +577,6 @@ export const CURATED_CORRIDOR_OPTIONS: Record<string, TransitOption[]> = {
       basePriceUsd: 138,
       doorToDoorNotes: 'A3 991 → Athens (7h 24m) → A3 602 → Heathrow Express 15m',
       co2Kg: 288,
-      eligibleVoucherIds: ['v-astris15'],
       segments: [
         {
           id: 'ist-lon-a3-s1',
@@ -687,7 +626,6 @@ export const CURATED_CORRIDOR_OPTIONS: Record<string, TransitOption[]> = {
       basePriceUsd: 245,
       doorToDoorNotes: 'NJ 462 Sleeper → Brussels-Midi (2h 30m) → Eurostar ES 9132',
       co2Kg: 31,
-      eligibleVoucherIds: ['v-railpass20'],
       segments: [
         {
           id: 'ist-lon-nj-s1',
@@ -754,7 +692,6 @@ export const CURATED_CORRIDOR_OPTIONS: Record<string, TransitOption[]> = {
       basePriceUsd: 124,
       doorToDoorNotes: 'St Pancras Intl → Channel Tunnel → Paris Gare du Nord (2h 16m)',
       co2Kg: 6,
-      eligibleVoucherIds: ['v-railpass20'],
       segments: [
         {
           id: 'lon-par-es-s1',
@@ -797,7 +734,6 @@ export const CURATED_CORRIDOR_OPTIONS: Record<string, TransitOption[]> = {
       basePriceUsd: 149,
       doorToDoorNotes: 'Heathrow Express 15m → BA 308 1h 20m → RER B 35m',
       co2Kg: 79,
-      eligibleVoucherIds: ['v-astris15'],
       segments: [
         {
           id: 'lon-par-ba-s1',
@@ -860,7 +796,6 @@ export const CURATED_CORRIDOR_OPTIONS: Record<string, TransitOption[]> = {
       basePriceUsd: 38,
       doorToDoorNotes: 'Victoria Coach → Dover/Calais → Amiens → Paris Bercy Seine',
       co2Kg: 18,
-      eligibleVoucherIds: ['v-coach10'],
       segments: [
         {
           id: 'lon-par-fx-s1',
@@ -903,7 +838,6 @@ export const CURATED_CORRIDOR_OPTIONS: Record<string, TransitOption[]> = {
       basePriceUsd: 46,
       doorToDoorNotes: 'Overnight sleeper coach via Eurotunnel → Paris Bercy Seine',
       co2Kg: 17,
-      eligibleVoucherIds: ['v-coach10'],
       segments: [
         {
           id: 'lon-par-bb-s1',
@@ -947,7 +881,6 @@ export const CURATED_CORRIDOR_OPTIONS: Record<string, TransitOption[]> = {
       basePriceUsd: 122,
       doorToDoorNotes: 'Paris Gare du Nord → Channel Tunnel → London St Pancras',
       co2Kg: 6,
-      eligibleVoucherIds: ['v-railpass20'],
       segments: [
         {
           id: 'par-lon-es-s1',
@@ -990,7 +923,6 @@ export const CURATED_CORRIDOR_OPTIONS: Record<string, TransitOption[]> = {
       basePriceUsd: 39,
       doorToDoorNotes: 'Paris Bercy Seine → Calais/Dover → London Victoria',
       co2Kg: 18,
-      eligibleVoucherIds: ['v-coach10'],
       segments: [
         {
           id: 'par-lon-fx-s1',
@@ -1034,7 +966,6 @@ export const CURATED_CORRIDOR_OPTIONS: Record<string, TransitOption[]> = {
       basePriceUsd: 204,
       doorToDoorNotes: 'M11 Metro 38m → TK 1823 3h 40m → RER B 35m',
       co2Kg: 242,
-      eligibleVoucherIds: ['v-astris15', 'v-tkvip40'],
       segments: [
         {
           id: 'ist-par-tk-s1',
@@ -1098,7 +1029,6 @@ export const CURATED_CORRIDOR_OPTIONS: Record<string, TransitOption[]> = {
       basePriceUsd: 146,
       doorToDoorNotes: 'SAW → Antalya (2h 24m) → Paris Orly → Orlyval 28m',
       co2Kg: 265,
-      eligibleVoucherIds: ['v-astris15'],
       segments: [
         {
           id: 'ist-par-pc-s1',
@@ -1135,11 +1065,6 @@ export const CURATED_CORRIDOR_OPTIONS: Record<string, TransitOption[]> = {
 
 export function createDefaultTrip(): Trip {
   const hourlyTimeValue = 15; // Balanced Explorer default ($15/hr)
-  const appliedVoucherCodes = ['ASTRIS15', 'RAIL20'];
-  const activeVouchers = VOUCHERS_CATALOG.filter((v) =>
-    appliedVoucherCodes.includes(v.code)
-  );
-
   return {
     id: 'trip-eurasia-2026',
     title: 'Eurasia Autumn Grand Tour',
@@ -1148,13 +1073,6 @@ export function createDefaultTrip(): Trip {
     vttsTier: 'explorer',
     hourlyTimeValue,
     stops: INITIAL_STOPS,
-    legs: buildLegsFromStops(
-      INITIAL_STOPS,
-      CURATED_CORRIDOR_OPTIONS,
-      VOUCHERS_CATALOG,
-      hourlyTimeValue,
-      activeVouchers
-    ),
-    appliedVoucherCodes,
+    legs: buildLegsFromStops(INITIAL_STOPS, CURATED_CORRIDOR_OPTIONS, hourlyTimeValue),
   };
 }

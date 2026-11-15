@@ -1,5 +1,5 @@
 /**
- * Display currency. Every price in the app is computed and ranked in USD (fares, vouchers, the
+ * Display currency. Every price in the app is computed and ranked in USD (fares, the
  * Smart Score); the currency switcher only changes how an amount is shown, so switching never
  * re-queries fares or changes a ranking. Rates come from `GET /api/rates` (ECB reference rates via
  * Frankfurter, cached on the server); the table below is the fallback when they cannot be fetched.

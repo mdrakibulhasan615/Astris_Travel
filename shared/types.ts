@@ -56,8 +56,6 @@ export interface TravelerProfile {
 
 export interface SmartScoreBreakdown {
   basePriceUsd: number;
-  discountAppliedUsd: number;
-  discountedPriceUsd: number;
   hourlyRateUsd: number;
   inVehicleHours: number;
   modeMultiplier: number;
@@ -210,7 +208,6 @@ export interface TransitOption {
   layoverHub?: string;
   stopsCount: number;
   basePriceUsd: number;
-  discountedPriceUsd: number;
   smartScore: number;
   smartScoreBreakdown: SmartScoreBreakdown;
   doorToDoorNotes: string;
@@ -252,8 +249,6 @@ export interface TransitOption {
   departureAt?: string;
   arrivalAt?: string;
   expiresAt?: string;
-  eligibleVoucherIds: string[];
-  appliedVoucherId?: string | null;
   segments?: TransitSegment[];
 }
 
@@ -300,24 +295,6 @@ export interface TripLeg {
   fareKey?: string;
 }
 
-export interface Voucher {
-  id: string;
-  code: string;
-  providerName?: string;
-  platformSource?: string;
-  title: string;
-  discountType: 'percentage' | 'fixed';
-  discountValue: number;
-  maxDiscountUsd?: number;
-  minSpendUsd: number;
-  applicableModes: TransitMode[];
-  applicableCarriers?: string[];
-  validFrom?: string;
-  expiresAt: string;
-  isActive?: boolean;
-  description: string;
-}
-
 export interface Trip {
   id: string;
   userId?: string;
@@ -332,7 +309,6 @@ export interface Trip {
   travelerProfile?: Partial<TravelerProfile>;
   stops: TripStop[];
   legs: TripLeg[];
-  appliedVoucherCodes: string[];
   /** Ticket choices the traveller made, by leg id. */
   legPrefs?: Record<string, LegTicketPref>;
 }
@@ -361,14 +337,6 @@ export interface RouteOptimizationResult {
   topCandidates: OptimizationCandidate[];
   alreadyOptimal: boolean;
   summaryMessage: string;
-}
-
-export interface VoucherValidationResult {
-  valid: boolean;
-  voucher?: Voucher;
-  reason?: string;
-  eligibleLegIds: string[];
-  estimatedSavingsUsd: number;
 }
 
 // ── Stays (hotel layer) ─────────────────────────────────────────────────────────────────────────

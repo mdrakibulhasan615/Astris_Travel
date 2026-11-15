@@ -15,16 +15,13 @@ import { searchAirports } from './server/airportService.ts';
 import {
   CURATED_CORRIDOR_OPTIONS,
   DESTINATION_HUBS,
-  VOUCHERS_CATALOG,
   createDefaultTrip,
 } from './shared/mockDataset.ts';
 import {
   buildLegIds,
   buildLegsFromStops,
-  calculateVoucherDiscount,
   haversineDistanceKm,
   isSamePlace,
-  isVoucherCurrentlyValid,
   round2,
   sanitizeHourlyRate,
 } from './shared/smartScore.ts';
@@ -50,8 +47,6 @@ import type {
   TravelerProfile,
   TripLeg,
   TripStop,
-  Voucher,
-  VoucherValidationResult,
 } from './shared/types.ts';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -83,17 +78,6 @@ function sanitizeLegPrefs(raw: unknown): Record<string, LegTicketPref> {
     };
   }
   return out;
-}
-
-/** Case-insensitive code match against the catalog, excluding expired / inactive vouchers. */
-function resolveActiveVouchers(codes: unknown): Voucher[] {
-  if (!Array.isArray(codes)) return [];
-  const wanted = new Set(
-    codes.filter((c): c is string => typeof c === 'string').map((c) => c.trim().toUpperCase())
-  );
-  return VOUCHERS_CATALOG.filter(
-    (v) => wanted.has(v.code.toUpperCase()) && isVoucherCurrentlyValid(v)
-  );
 }
 
 function getPermutations<T>(items: T[]): T[][] {
@@ -147,7 +131,6 @@ function summarizeLegs(legs: TripLeg[]) {
 
 interface LegBuildOptions {
   hourlyRate: number;
-  activeVouchers: Voucher[];
   profile?: Partial<TravelerProfile>;
   passengers: number;
   previousSelectedMap?: Record<string, string>;
@@ -165,7 +148,7 @@ async function buildLegsViaTransitService(
   stops: TripStop[],
   opts: LegBuildOptions
 ): Promise<TripLeg[]> {
-  const { hourlyRate, activeVouchers, profile, passengers, previousSelectedMap, legPrefs } = opts;
+  const { hourlyRate, profile, passengers, previousSelectedMap, legPrefs } = opts;
   const legIds = buildLegIds(stops);
   // A later leg that comes back (A to B ... B to A) makes a return ticket worth pricing
   const pairs = pairStops(stops);
@@ -206,7 +189,6 @@ async function buildLegsViaTransitService(
           returnDate: ret,
           mode: 'all',
           hourlyRateUsd: hourlyRate,
-          activeVouchers,
           travelerProfile: profile,
           passengers,
           fromStop,
@@ -251,9 +233,7 @@ async function buildLegsViaTransitService(
       const fallback = buildLegsFromStops(
         [fromStop, toStop],
         CURATED_CORRIDOR_OPTIONS,
-        VOUCHERS_CATALOG,
         hourlyRate,
-        activeVouchers,
         undefined,
         { profile, passengers }
       )[0];
@@ -286,7 +266,7 @@ function logLegs(label: string, legs: TripLeg[]): void {
     console.log(
       `[Flight Data] ${label} ${leg.id} selected=${o.id} src=${o.dataSource ?? '?'} | ` +
         `${o.carrier} ${o.routeCode} | ${o.departureTime || '--:--'} → ${o.arrivalTime || '--:--'} | ` +
-        `${o.inVehicleHours}h+${o.layoverHours}h layover | $${o.basePriceUsd} (net $${o.discountedPriceUsd})`
+        `${o.inVehicleHours}h+${o.layoverHours}h layover | $${o.basePriceUsd}`
     );
   }
 }
@@ -307,11 +287,9 @@ export function createApp() {
   app.get('/api/trips/default', async (_req, res) => {
     const trip = createDefaultTrip();
     try {
-      const activeVouchers = resolveActiveVouchers(trip.appliedVoucherCodes);
       const legs = await Promise.race([
         buildLegsViaTransitService(trip.stops, {
           hourlyRate: trip.hourlyTimeValue,
-          activeVouchers,
           passengers: trip.travelers,
         }),
         new Promise<null>((resolve) => setTimeout(() => resolve(null), 9000)),
@@ -338,10 +316,6 @@ export function createApp() {
     const limit = Math.max(1, Math.min(50, Number(req.query.limit || 15)));
     const results = searchAirports(q, limit);
     res.json({ query: q, count: results.length, results });
-  });
-
-  app.get('/api/vouchers', (_req, res) => {
-    res.json({ vouchers: VOUCHERS_CATALOG });
   });
 
   // Whether fares are live or sample data (read-only; the switch lives in code/env, not the UI)
@@ -451,12 +425,6 @@ export function createApp() {
       const returnDate = String(req.query.returnDate || '').trim() || undefined;
       const mode = (String(req.query.mode || 'all').trim().toLowerCase()) as 'all' | TransitMode;
       const hourlyRate = sanitizeHourlyRate(req.query.hourlyRate ?? 15);
-      const voucherCodesParam = String(req.query.voucherCodes || '').trim();
-      const appliedCodes = voucherCodesParam
-        ? voucherCodesParam.split(',').map((c) => c.trim()).filter(Boolean)
-        : [];
-      const activeVouchers = resolveActiveVouchers(appliedCodes);
-
       if (!origin || !destination) {
         return res.status(400).json({
           error: 'Missing required parameters: "origin" and "destination" are required.',
@@ -470,7 +438,6 @@ export function createApp() {
         returnDate,
         mode,
         hourlyRateUsd: hourlyRate,
-        activeVouchers,
         travelerProfile: sanitizeProfile({
           priceWeight: req.query.priceWeight,
           timeWeight: req.query.timeWeight,
@@ -499,7 +466,6 @@ export function createApp() {
         returnDate,
         mode = 'all',
         hourlyRate = 15,
-        appliedVoucherCodes = [],
         travelerProfile,
         passengers = 1,
       } = req.body as {
@@ -509,7 +475,6 @@ export function createApp() {
         returnDate?: string;
         mode?: 'all' | TransitMode;
         hourlyRate?: number;
-        appliedVoucherCodes?: string[];
         travelerProfile?: Partial<TravelerProfile>;
         passengers?: number;
       };
@@ -524,8 +489,6 @@ export function createApp() {
         return res.status(400).json({ error: '"origin" and "destination" must be strings.' });
       }
 
-      const activeVouchers = resolveActiveVouchers(appliedVoucherCodes);
-
       const result = await queryTransitWithCache({
         origin,
         destination,
@@ -533,7 +496,6 @@ export function createApp() {
         returnDate,
         mode,
         hourlyRateUsd: sanitizeHourlyRate(hourlyRate),
-        activeVouchers,
         travelerProfile: sanitizeProfile(travelerProfile),
         passengers: Number(passengers) || 1,
       });
@@ -549,13 +511,12 @@ export function createApp() {
     }
   });
 
-  // Recompute legs when stops change, VTTS changes, or vouchers toggle (with Redis caching wrapper)
+  // Recompute legs when stops change or VTTS changes (with Redis caching wrapper)
   app.post('/api/legs/recompute', async (req, res) => {
    try {
     const {
       stops = [],
       hourlyTimeValue = 15,
-      appliedVoucherCodes = [],
       previousSelectedMap = {},
       travelerProfile: rawProfile,
       travelers = 1,
@@ -565,7 +526,6 @@ export function createApp() {
       hourlyTimeValue: number;
       travelerProfile?: Partial<TravelerProfile>;
       travelers?: number;
-      appliedVoucherCodes: string[];
       previousSelectedMap?: Record<string, string>;
       legPrefs?: unknown;
     };
@@ -575,13 +535,11 @@ export function createApp() {
     }
     const rate = sanitizeHourlyRate(hourlyTimeValue);
     const normalizedStops = stops.map((s, idx) => ({ ...s, order: idx + 1 }));
-    const activeVouchers = resolveActiveVouchers(appliedVoucherCodes);
     const profile = sanitizeProfile(rawProfile);
     const passengers = Number(travelers) || 1;
 
     const legs = await buildLegsViaTransitService(normalizedStops, {
       hourlyRate: rate,
-      activeVouchers,
       profile,
       passengers,
       previousSelectedMap,
@@ -601,7 +559,6 @@ export function createApp() {
     const {
       stops = [],
       hourlyTimeValue: rawHourlyTimeValue = 15,
-      appliedVoucherCodes = [],
       lockOrigin = true,
       travelerProfile: rawProfile,
       travelers = 1,
@@ -610,7 +567,6 @@ export function createApp() {
       hourlyTimeValue: number;
       travelerProfile?: Partial<TravelerProfile>;
       travelers?: number;
-      appliedVoucherCodes: string[];
       lockOrigin?: boolean;
     };
 
@@ -619,15 +575,12 @@ export function createApp() {
     }
 
     const hourlyTimeValue = sanitizeHourlyRate(rawHourlyTimeValue);
-    const activeVouchers = resolveActiveVouchers(appliedVoucherCodes);
     const scoring = { profile: sanitizeProfile(rawProfile), passengers: Number(travelers) || 1 };
 
     const originalLegs = buildLegsFromStops(
       stops,
       CURATED_CORRIDOR_OPTIONS,
-      VOUCHERS_CATALOG,
       hourlyTimeValue,
-      activeVouchers,
       undefined,
       scoring
     );
@@ -675,9 +628,7 @@ export function createApp() {
       const legs = buildLegsFromStops(
         entry.stops,
         CURATED_CORRIDOR_OPTIONS,
-        VOUCHERS_CATALOG,
         hourlyTimeValue,
-        activeVouchers,
         undefined,
         scoring
       );
@@ -731,68 +682,6 @@ export function createApp() {
     };
 
     res.json(result);
-  });
-
-  // Voucher validation endpoint
-  app.post('/api/vouchers/validate', (req, res) => {
-    const { code = '', legs = [] } = req.body as {
-      code: string;
-      legs: TripLeg[];
-    };
-
-    const normalizedCode = typeof code === 'string' ? code.trim().toUpperCase() : '';
-    const voucher = VOUCHERS_CATALOG.find(
-      (v) => v.code.toUpperCase() === normalizedCode
-    );
-
-    if (!voucher) {
-      const invalid: VoucherValidationResult = {
-        valid: false,
-        reason: `Code "${normalizedCode || 'EMPTY'}" was not recognized. Try ASTRIS15, RAIL20, ISTHUB40, or COACH10.`,
-        eligibleLegIds: [],
-        estimatedSavingsUsd: 0,
-      };
-      return res.json(invalid);
-    }
-
-    if (!isVoucherCurrentlyValid(voucher)) {
-      const expired: VoucherValidationResult = {
-        valid: false,
-        reason: `Code "${voucher.code}" is not currently active (valid until ${voucher.expiresAt}).`,
-        eligibleLegIds: [],
-        estimatedSavingsUsd: 0,
-      };
-      return res.json(expired);
-    }
-
-    const eligibleLegIds: string[] = [];
-    let estimatedSavingsUsd = 0;
-
-    for (const leg of Array.isArray(legs) ? legs : []) {
-      if (!Array.isArray(leg?.transitOptions)) continue;
-      const bestOnLeg = leg.transitOptions.reduce((maxSav, opt) => {
-        const sav = calculateVoucherDiscount(opt, voucher);
-        return sav > maxSav ? sav : maxSav;
-      }, 0);
-
-      if (bestOnLeg > 0) {
-        eligibleLegIds.push(leg.id);
-        estimatedSavingsUsd += bestOnLeg;
-      }
-    }
-
-    const response: VoucherValidationResult = {
-      valid: true,
-      voucher,
-      eligibleLegIds,
-      estimatedSavingsUsd: round2(estimatedSavingsUsd),
-      reason:
-        eligibleLegIds.length > 0
-          ? `Matches ${eligibleLegIds.length} leg${eligibleLegIds.length > 1 ? 's' : ''} in your itinerary.`
-          : 'Valid promo code, though none of your current legs meet its mode/minimum spend rules.',
-    };
-
-    res.json(response);
   });
 
   return app;

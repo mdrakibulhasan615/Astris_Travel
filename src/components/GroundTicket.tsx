@@ -26,7 +26,6 @@ interface GroundTicketProps {
   option: TransitOption;
   rank: number;
   isSelected: boolean;
-  voucherCode?: string | null;
   departureDate?: string;
   /** Leg endpoints (city codes), shown large on the ticket; station names go underneath. */
   fromCode: string;
@@ -87,7 +86,6 @@ function BusTicket({
   option,
   rank,
   isSelected,
-  voucherCode,
   departureDate,
   fromCode,
   toCode,
@@ -218,17 +216,9 @@ function BusTicket({
                 <MicroLabel>{f.isReturn ? 'Return total' : 'Fare'} · per person</MicroLabel>
                 <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1">
                   <span className="whitespace-nowrap font-display text-base font-extrabold leading-none tabular-nums">
-                    {fmt(option.discountedPriceUsd)}
+                    {fmt(option.basePriceUsd)}
                   </span>
-                  {b.discountAppliedUsd > 0 && (
-                    <span className="font-mono text-[11px] leading-none line-through tabular-nums">{fmt(option.basePriceUsd)}</span>
-                  )}
                 </div>
-                {voucherCode && b.discountAppliedUsd > 0 && (
-                  <div className="font-mono text-[11px] font-semibold text-[#166534] tabular-nums">
-                    -{fmt(b.discountAppliedUsd)} · {voucherCode}
-                  </div>
-                )}
                 <div className="mt-1">
                   <SmartScoreBadge score={option.smartScore} size="sm" />
                 </div>
@@ -255,7 +245,6 @@ function TrainTicket({
   option,
   rank,
   isSelected,
-  voucherCode,
   departureDate,
   fromCode,
   toCode,
@@ -407,19 +396,9 @@ function TrainTicket({
               </div>
               <div className="flex items-baseline gap-2">
                 <span className="whitespace-nowrap font-display text-lg font-extrabold leading-tight tabular-nums">
-                  {fmt(option.discountedPriceUsd)}
+                  {fmt(option.basePriceUsd)}
                 </span>
-                {b.discountAppliedUsd > 0 && (
-                  <span className={`${mono} text-[11px] leading-none text-white/80 line-through tabular-nums`}>
-                    {fmt(option.basePriceUsd)}
-                  </span>
-                )}
               </div>
-              {voucherCode && b.discountAppliedUsd > 0 && (
-                <div className={`${mono} text-[11px] font-semibold text-[#BBF7D0] tabular-nums`}>
-                  -{fmt(b.discountAppliedUsd)} · {voucherCode}
-                </div>
-              )}
             </div>
             {renderBook && (
               <div className="ml-auto w-full min-w-[10rem] space-y-1.5 @md:w-44">{renderBook({ background: '#FFFFFF', color: TRAIN_ACCENT })}</div>

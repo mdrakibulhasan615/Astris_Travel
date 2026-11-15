@@ -112,7 +112,7 @@ function cheapest(options: TransitOption[] | undefined, flightsOnly: boolean): T
   let best: TransitOption | null = null;
   for (const o of options ?? []) {
     if (flightsOnly && o.mode !== 'flight') continue;
-    if (!best || o.discountedPriceUsd < best.discountedPriceUsd) best = o;
+    if (!best || o.basePriceUsd < best.basePriceUsd) best = o;
   }
   return best;
 }
@@ -133,8 +133,8 @@ export function compareFares(
   const rt = cheapest(leg.returnOptions, live);
   if (!out || !back || !rt) return null;
 
-  const oneWayTotalUsd = Math.round((out.discountedPriceUsd + back.discountedPriceUsd) * 100) / 100;
-  const returnTotalUsd = rt.discountedPriceUsd;
+  const oneWayTotalUsd = Math.round((out.basePriceUsd + back.basePriceUsd) * 100) / 100;
+  const returnTotalUsd = rt.basePriceUsd;
   const diff = oneWayTotalUsd - returnTotalUsd;
   return {
     basis: live ? 'live' : 'estimate',
@@ -207,17 +207,15 @@ export function finalizeLegs(
 /** What one leg adds to the trip totals. A covered leg adds nothing: its fare is in the return. */
 export function legTotals(leg: TripLeg): {
   costUsd: number;
-  savingsUsd: number;
   hours: number;
   score: number;
 } {
-  if (leg.coveredByLegId) return { costUsd: 0, savingsUsd: 0, hours: 0, score: 0 };
+  if (leg.coveredByLegId) return { costUsd: 0, hours: 0, score: 0 };
   const selected = leg.transitOptions.find((o) => o.id === leg.selectedOptionId) ?? leg.transitOptions[0];
-  if (!selected) return { costUsd: 0, savingsUsd: 0, hours: 0, score: 0 };
+  if (!selected) return { costUsd: 0, hours: 0, score: 0 };
   const journeys = selected.ticketType === 'return' ? 2 : 1;
   return {
-    costUsd: selected.discountedPriceUsd,
-    savingsUsd: selected.smartScoreBreakdown.discountAppliedUsd,
+    costUsd: selected.basePriceUsd,
     hours: (selected.inVehicleHours + selected.layoverHours) * journeys,
     score: selected.smartScore,
   };

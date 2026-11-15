@@ -4,7 +4,6 @@ import { Redis } from '@upstash/redis';
 import {
   CURATED_CORRIDOR_OPTIONS,
   DESTINATION_HUBS,
-  VOUCHERS_CATALOG,
 } from '../shared/mockDataset.ts';
 import { AFFILIATE_DEFAULTS } from '../shared/config.ts';
 import { attachBookingUrls, configureAffiliate, isFlixCarrier } from '../shared/affiliate.ts';
@@ -20,7 +19,7 @@ import {
   computeSmartScore,
   deriveReturnOptions,
   haversineDistanceKm,
-  recalculateOptionsWithVttsAndVouchers,
+  recalculateOptions,
   round2,
   synthesizeCorridorOptions,
 } from '../shared/smartScore.ts';
@@ -32,7 +31,6 @@ import type {
   TransitSegment,
   TravelerProfile,
   TripStop,
-  Voucher,
 } from '../shared/types.ts';
 import { getAirportByIata } from './airportService.ts';
 import { resolveFlixbusRoute } from './flixbusService.ts';
@@ -210,7 +208,6 @@ export interface TransitQueryParams {
   returnDate?: string;
   mode?: 'all' | TransitMode;
   hourlyRateUsd?: number;
-  activeVouchers?: Voucher[];
   travelerProfile?: Partial<TravelerProfile>;
   passengers?: number;
   fromStop?: TripStop;
@@ -265,7 +262,6 @@ async function fetchSerpApiFlights(
   destination: string,
   date: string,
   hourlyRateUsd: number,
-  activeVouchers: Voucher[],
   profile: Partial<TravelerProfile> | undefined,
   fromStop?: TripStop,
   toStop?: TripStop,
@@ -392,15 +388,6 @@ async function fetchSerpApiFlights(
       const offset = dep && arr ? dayDiff(dep.date, arr.date) : 0;
       const arrTime = arr ? `${arr.clock}${offset > 0 ? ` +${offset}d` : ''}` : '';
 
-      const eligibleVouchers = VOUCHERS_CATALOG.filter(
-        (v) =>
-          v.applicableModes.includes('flight') &&
-          priceUsd >= v.minSpendUsd &&
-          (!v.applicableCarriers ||
-            v.applicableCarriers.length === 0 ||
-            v.applicableCarriers.includes(carrierCode))
-      ).map((v) => v.id);
-
       // Every hop is anchored to its OWN airport (SerpApi reports the real departure/arrival
       // airport, e.g. SAW vs IST), so connections render via the layover airport and a flight
       // line never starts or ends at a city centre. Ground connectors are added afterwards.
@@ -490,9 +477,8 @@ async function fetchSerpApiFlights(
         isOvernightSleeper: false,
         mode: 'flight' as TransitMode,
         carrierCode,
-        eligibleVoucherIds: eligibleVouchers,
       };
-      const breakdown = computeSmartScore(scorable, hourlyRateUsd, null, profile);
+      const breakdown = computeSmartScore(scorable, hourlyRateUsd, profile);
 
       const co2FromApi = Number(item.carbon_emissions?.this_flight) / 1000;
       const originCode = segments[0].fromCode;
@@ -520,14 +506,11 @@ async function fetchSerpApiFlights(
         layoverHub: layovers[0]?.id || undefined,
         stopsCount: layovers.length,
         basePriceUsd: priceUsd,
-        discountedPriceUsd: breakdown.discountedPriceUsd,
         smartScore: breakdown.totalSmartScore,
         smartScoreBreakdown: breakdown,
         doorToDoorNotes: `${originCode} (${depTime || '--:--'}) → ${destCode} (${arrTime || '--:--'})`,
         // CO₂ is the one non-ticket field estimated when the provider omits it
         co2Kg: co2FromApi > 0 ? Math.round(co2FromApi) : Math.round(distanceKm * 0.12),
-        eligibleVoucherIds: eligibleVouchers,
-        appliedVoucherId: null,
         segments,
         dataSource: 'live',
         ticketType: returnDate ? 'return' : undefined,
@@ -551,7 +534,7 @@ async function fetchSerpApiFlights(
     if (rawOptions.length === 0) return null;
 
     console.log(`[Transit API] Successfully parsed ${rawOptions.length} live flights from SerpAPI.`);
-    return recalculateOptionsWithVttsAndVouchers(rawOptions, hourlyRateUsd, activeVouchers, profile);
+    return recalculateOptions(rawOptions, hourlyRateUsd, profile);
   } catch (err) {
     console.warn('[Transit API] SerpAPI fetch failed or timed out:', err);
     return null;
@@ -565,7 +548,6 @@ function buildFallbackCorridorOptions(
   origin: string,
   destination: string,
   hourlyRateUsd: number,
-  activeVouchers: Voucher[],
   profile: Partial<TravelerProfile> | undefined,
   fromStop?: TripStop,
   toStop?: TripStop
@@ -612,14 +594,12 @@ function buildFallbackCorridorOptions(
       fromCoords,
       toCoords,
       legId,
-      VOUCHERS_CATALOG,
       hourlyRateUsd,
-      activeVouchers,
       profile
     );
   }
 
-  return recalculateOptionsWithVttsAndVouchers(baseOptions, hourlyRateUsd, activeVouchers, profile);
+  return recalculateOptions(baseOptions, hourlyRateUsd, profile);
 }
 
 /**
@@ -642,7 +622,6 @@ export async function queryTransitWithCache(
     date,
     mode = 'all',
     hourlyRateUsd = 15,
-    activeVouchers = [],
     travelerProfile,
     passengers,
     fromStop,
@@ -697,8 +676,7 @@ export async function queryTransitWithCache(
           origin,
           destination,
           hourlyRateUsd,
-          activeVouchers,
-          travelerProfile,
+              travelerProfile,
           fromStop,
           toStop
         )
@@ -721,8 +699,7 @@ export async function queryTransitWithCache(
         destination,
         date,
         hourlyRateUsd,
-        activeVouchers,
-        travelerProfile,
+          travelerProfile,
         fromStop,
         toStop,
         returnDate
@@ -737,7 +714,7 @@ export async function queryTransitWithCache(
   //     (no SerpApi credits involved). Cached 12 h; routes it has no data for keep the sample flights.
   let recentFares = false;
   if (!useRealData() && (mode === 'all' || mode === 'flight') && travelpayoutsToken()) {
-    const tpKey = `${cacheKey}:tp`;
+    const tpKey = `${cacheKey}:tp2`;
     const hit = await getCachedTransit(tpKey);
     let tp: TransitOption[] | null = hit && hit.options.length > 0 ? hit.options : null;
     if (!tp) {
@@ -748,8 +725,7 @@ export async function queryTransitWithCache(
         returnDate,
         legId: `leg-${origin.toLowerCase()}-${destination.toLowerCase()}`,
         hourlyRateUsd,
-        activeVouchers,
-        profile: travelerProfile,
+          profile: travelerProfile,
       });
       if (tp && tp.length > 0) await setCachedTransit(tpKey, tp);
     }
@@ -766,18 +742,17 @@ export async function queryTransitWithCache(
     assembled = [...(hasLiveFlights ? live! : fallbackFlights), ...fallbackGround];
   } else {
     const derive = (opts: TransitOption[]) =>
-      deriveReturnOptions(opts, returnDate, hourlyRateUsd, activeVouchers, travelerProfile);
+      deriveReturnOptions(opts, returnDate, hourlyRateUsd, travelerProfile);
     assembled = [
       ...(hasLiveFlights ? live! : derive(fallbackFlights)),
       ...derive(fallbackGround),
     ];
   }
 
-  // Re-score in case the hourly rate or vouchers changed since a cached search was made
-  let finalOptions = recalculateOptionsWithVttsAndVouchers(
+  // Re-score in case the hourly rate changed since a cached search was made
+  let finalOptions = recalculateOptions(
     assembled,
     hourlyRateUsd,
-    activeVouchers,
     travelerProfile
   );
   if (mode !== 'all') {

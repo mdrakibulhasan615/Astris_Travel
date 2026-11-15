@@ -33,7 +33,6 @@ import type {
   TransitOption,
   TripLeg,
   TripStop,
-  Voucher,
 } from '../../shared/types.ts';
 
 export interface TicketChange {
@@ -51,7 +50,6 @@ interface LegTransitPanelProps {
   coveredByLeg?: TripLeg;
   onChangeTicket: (legId: string, change: TicketChange) => void;
   modeFilter: ModeFilter;
-  vouchers: Voucher[];
   isActive: boolean;
   onActivateLeg: (legId: string) => void;
   onHoverLeg: (legId: string | null) => void;
@@ -182,7 +180,7 @@ function BookLink({
   const text =
     label ??
     (isLive
-      ? `Book ${kind}on ${merchant} · ${fmt(option.discountedPriceUsd)}`
+      ? `Book ${kind}on ${merchant} · ${fmt(option.basePriceUsd)}`
       : `Find ${kind}on ${merchant}`);
   return (
     <a
@@ -418,7 +416,6 @@ export function LegTransitPanel({
   coveredByLeg,
   onChangeTicket,
   modeFilter,
-  vouchers,
   isActive,
   onActivateLeg,
   onHoverLeg,
@@ -444,11 +441,6 @@ export function LegTransitPanel({
   const selectedOption =
     leg.transitOptions.find((o) => o.id === leg.selectedOptionId) ??
     leg.transitOptions[0];
-
-  const getVoucherCode = (voucherId?: string | null) => {
-    if (!voucherId) return null;
-    return vouchers.find((v) => v.id === voucherId)?.code ?? null;
-  };
 
   return (
     <div
@@ -537,7 +529,7 @@ export function LegTransitPanel({
                   </span>
                   <span aria-hidden="true">·</span>
                   <span className="font-mono font-semibold text-[#111827]">
-                    {fmt(selectedOption.discountedPriceUsd)}
+                    {fmt(selectedOption.basePriceUsd)}
                   </span>
                   <SmartScoreBadge score={selectedOption.smartScore} size="sm" />
                 </div>
@@ -585,7 +577,6 @@ export function LegTransitPanel({
             ) : (
               filteredOptions.map((option, idx) => {
                 const isSelected = option.id === selectedOption?.id;
-                const voucherCode = getVoucherCode(option.appliedVoucherId);
                 const { smartScoreBreakdown: b } = option;
                 const hasLongLayover = option.layoverHours > 4;
                 const hasNormalLayover = option.layoverHours >= 2 && option.layoverHours <= 4;
@@ -598,7 +589,6 @@ export function LegTransitPanel({
                       option={option}
                       rank={idx}
                       isSelected={isSelected}
-                      voucherCode={voucherCode}
                       departureDate={leg.departureDate}
                       onSelect={() => {
                         onActivateLeg(leg.id);
@@ -622,7 +612,6 @@ export function LegTransitPanel({
                       option={option}
                       rank={idx}
                       isSelected={isSelected}
-                      voucherCode={voucherCode}
                       departureDate={leg.departureDate}
                       fromCode={leg.fromCode}
                       toCode={leg.toCode}
@@ -781,13 +770,8 @@ export function LegTransitPanel({
 
                       <div className="text-right shrink-0 space-y-0.5">
                         <div className="flex items-center justify-end gap-1.5">
-                          {b.discountAppliedUsd > 0 && (
-                            <span className="font-mono text-[11px] text-[#4B5563] line-through tabular-nums">
-                              {fmt(option.basePriceUsd)}
-                            </span>
-                          )}
                           <span className="font-display text-sm font-bold text-[#111827] tabular-nums">
-                            {fmt(option.discountedPriceUsd)}
+                            {fmt(option.basePriceUsd)}
                           </span>
                         </div>
 
@@ -798,12 +782,6 @@ export function LegTransitPanel({
                         <div>
                           <SmartScoreBadge score={option.smartScore} />
                         </div>
-
-                        {voucherCode && b.discountAppliedUsd > 0 && (
-                          <div className="text-[11px] font-medium text-[#16A34A] font-mono tabular-nums">
-                            -{fmt(b.discountAppliedUsd)} · {voucherCode}
-                          </div>
-                        )}
 
                         {isSelected && (
                           <div className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#E56B1A]">
