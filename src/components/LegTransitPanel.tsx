@@ -21,6 +21,8 @@ import { formatDuration } from '../../shared/smartScore.ts';
 import { PROVIDER_NAMES } from '../../shared/affiliate.ts';
 import { BoardingPass, TagPill } from './BoardingPass.tsx';
 import { GroundTicket } from './GroundTicket.tsx';
+import { GroundSchedulePanel } from './GroundSchedulePanel.tsx';
+import type { OverlayLine } from '../../shared/groundSchedule.ts';
 import { SmartScoreBadge } from './SmartScoreBadge.tsx';
 import type {
   BaggageInfo,
@@ -30,6 +32,7 @@ import type {
   TransitMode,
   TransitOption,
   TripLeg,
+  TripStop,
   Voucher,
 } from '../../shared/types.ts';
 
@@ -53,6 +56,12 @@ interface LegTransitPanelProps {
   onActivateLeg: (legId: string) => void;
   onHoverLeg: (legId: string | null) => void;
   onSelectOption: (legId: string, optionId: string) => void;
+  /** The leg's end stops (coordinates, city, country) and party size, for the schedules panel. */
+  fromStop?: TripStop;
+  toStop?: TripStop;
+  travellers?: number;
+  /** Receives the transit route to draw on the map for this leg (null clears it). */
+  onTransitOverlay?: (legId: string, lines: OverlayLine[] | null) => void;
 }
 
 function ModeIcon({ mode, className }: { mode: TransitMode; className?: string }) {
@@ -414,9 +423,18 @@ export function LegTransitPanel({
   onActivateLeg,
   onHoverLeg,
   onSelectOption,
+  fromStop,
+  toStop,
+  travellers = 1,
+  onTransitOverlay,
 }: LegTransitPanelProps) {
   const [expanded, setExpanded] = useState(leg.id === 'leg-ist-lon' || leg.id === 'leg-lon-par');
   const { fmt } = useCurrency();
+
+  // Schedules suit legs a train or coach can plausibly cover: regional and intercity, not intercontinental
+  const showSchedules =
+    leg.transitOptions.length > 0 &&
+    (leg.distanceKm <= 1800 || leg.transitOptions.some((o) => o.mode === 'bus' || o.mode === 'train'));
 
   const filteredOptions =
     modeFilter === 'all'
@@ -806,6 +824,16 @@ export function LegTransitPanel({
                   </div>
                 );
               })
+            )}
+            {/* Real transit directions and the 12Go timetable, for short and regional legs */}
+            {fromStop && toStop && onTransitOverlay && !coveredByLeg && showSchedules && (
+              <GroundSchedulePanel
+                leg={leg}
+                fromStop={fromStop}
+                toStop={toStop}
+                travellers={travellers}
+                onOverlay={onTransitOverlay}
+              />
             )}
           </div>
         )}

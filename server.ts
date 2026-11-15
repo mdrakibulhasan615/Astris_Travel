@@ -29,6 +29,9 @@ import {
   sanitizeHourlyRate,
 } from './shared/smartScore.ts';
 import { getPublicAffiliateConfig } from './shared/affiliate.ts';
+import { fetchGoogleTransitRoutes, googleMapsKey } from './server/googleRoutesService.ts';
+import { fetchTwelveGoTimetable, twelveGoCountry } from './server/twelveGoService.ts';
+import type { GroundSchedules } from './shared/groundSchedule.ts';
 import {
   finalizeLegs,
   isIsoDate,
@@ -373,6 +376,46 @@ export function createApp() {
       provider: 'Upstash Redis',
       fallbackMode: !connected,
     });
+  });
+
+  // Ground schedules for one leg: real transit directions (Google Routes, needs a key) and the 12Go
+  // regional timetable. Both are cached for 7 days; each part is empty when its source has nothing.
+  app.get('/api/ground/schedules', async (req, res) => {
+    try {
+      const num = (v: unknown) => (v !== undefined && v !== '' && Number.isFinite(Number(v)) ? Number(v) : NaN);
+      const fromLat = num(req.query.fromLat);
+      const fromLng = num(req.query.fromLng);
+      const toLat = num(req.query.toLat);
+      const toLng = num(req.query.toLng);
+      const validPoint = (lat: number, lng: number) => Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
+      if (![fromLat, fromLng, toLat, toLng].every(Number.isFinite) || !validPoint(fromLat, fromLng) || !validPoint(toLat, toLng)) {
+        return res.status(400).json({ error: 'fromLat, fromLng, toLat and toLng are required coordinates.' });
+      }
+      const text = (v: unknown) => String(v ?? '').trim().slice(0, 80);
+      const date = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.date ?? '')) ? String(req.query.date) : undefined;
+      const people = Math.min(9, Math.max(1, Math.floor(num(req.query.people)) || 1));
+      const fromCity = text(req.query.fromCity);
+      const toCity = text(req.query.toCity);
+      const fromCc = twelveGoCountry(text(req.query.fromCountry));
+      const toCc = twelveGoCountry(text(req.query.toCountry));
+
+      const [google, twelveGo] = await Promise.all([
+        googleMapsKey()
+          ? fetchGoogleTransitRoutes({ from: { lat: fromLat, lng: fromLng }, to: { lat: toLat, lng: toLng }, date })
+          : Promise.resolve(null),
+        fromCc && toCc && fromCity && toCity
+          ? fetchTwelveGoTimetable({ country: fromCc, from: fromCity, to: toCity, date, people })
+          : Promise.resolve(null),
+      ]);
+      const body: GroundSchedules = {
+        google: { enabled: Boolean(googleMapsKey()), routes: google ?? [] },
+        twelveGo: { supported: Boolean(fromCc && toCc), routes: twelveGo ?? [] },
+      };
+      res.json(body);
+    } catch (err: any) {
+      console.error('[Ground Schedules API] Error:', err);
+      res.status(500).json({ error: 'Could not load schedules', details: err?.message });
+    }
   });
 
   // Dedicated Transit Query Endpoint with Upstash Redis Caching & Live Fallback

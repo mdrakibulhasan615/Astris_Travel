@@ -499,3 +499,24 @@ outline and shadow are chained `drop-shadow()` filters on the wrapper (`.ticket-
 (a filter on the same element as the mask would run before it and be cut away). A selected ticket
 (`data-selected`) gets an orange outline, lifts 4 px, slides right by 8.6 % of its own width and gets a larger soft black shadow (drawn beneath neighbouring tickets, so it never overlaps them). `useTicketMask` measures the
 seam (stub top / fare band) into `--tear-y` and picks `--pitch` so whole scallops fit the bus ticket's height.
+
+## 20. Ground Schedules — transit directions and 12Go timetables
+
+`GET /api/ground/schedules` (coordinates, city and country names, date, party size) returns
+`{ google: { enabled, routes }, twelveGo: { supported, routes } }` (`shared/groundSchedule.ts`). The leg panel
+(`GroundSchedulePanel`, shown for legs under ~1,800 km or with a coach/train option) loads it when the leg is open and
+hides itself when both parts are empty. Both parts are cached 7 days (`server/jsonCache.ts`: Upstash Redis + memory).
+
+- **Google Routes** (`server/googleRoutesService.ts`): `POST …/directions/v2:computeRoutes`, `travelMode: TRANSIT`,
+  alternatives on, allowed modes BUS/TRAIN/SUBWAY/RAIL, key in `GOOGLE_MAPS_API_KEY` (server only), field mask limited
+  to what is parsed. Each route becomes walk and transit steps (line, agency, headsign, stops, local times, fare when
+  Google gives one) with a decoded polyline per step. It is paid per request, so it only runs with a key, only for an
+  opened leg, and the cache key is origin, destination, modes **and date** (timetables differ by day). The chosen
+  route is drawn on the map (`astris-transit-overlay`): trains solid blue, metro/trams dashed blue, buses orange,
+  walking dotted grey; the map fits to it. Tested against documented response shapes only, not a live key.
+- **12Go** (`server/twelveGoService.ts`): fetches the partner timetable page
+  (`/en/timetable/{TH|MY|KH|VN|SG}/{from}/{to}?embedded`), parses routes out of the HTML server-side (markup is never
+  forwarded), and rebuilds every link on `12go.asia` with `z=<partner id>`, `curr`, the date and the party size. The
+  page gives class labels (Express, VIP…), departure times and price/duration ranges but no operator names, so none
+  are shown; flights are skipped (the flight cards cover them). Cached by country/origin/destination; date and party
+  size are applied when serving.

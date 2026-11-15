@@ -18,6 +18,7 @@ import {
   resolveAirport,
 } from '../../shared/airports.ts';
 import { groundGeometry } from '../../shared/groundRouting.ts';
+import type { OverlayLine } from '../../shared/groundSchedule.ts';
 import { formatDuration } from '../../shared/smartScore.ts';
 import { SmartScoreBadge } from './SmartScoreBadge.tsx';
 import type {
@@ -31,6 +32,8 @@ import type {
 setWorkerUrl(maplibreWorkerUrl);
 
 interface WorldMapCanvasProps {
+  /** Real transit routes (Google Routes) chosen in a leg's Schedules panel, keyed by leg id. */
+  transitOverlays?: Record<string, OverlayLine[]>;
   stops: TripStop[];
   legs: TripLeg[];
   modeFilter: ModeFilter;
@@ -140,6 +143,7 @@ interface MapCalloutItem {
 }
 
 export function WorldMapCanvas({
+  transitOverlays,
   stops,
   legs,
   modeFilter,
@@ -153,6 +157,39 @@ export function WorldMapCanvas({
   onOpenStays,
 }: WorldMapCanvasProps) {
   const mapRef = useRef<MapRef | null>(null);
+
+  // Real transit routes: one feature per step so each keeps its own colour and dash
+  const transitGeoJson = useMemo<GeoJSON.FeatureCollection>(
+    () => ({
+      type: 'FeatureCollection',
+      features: Object.values(transitOverlays ?? {}).flatMap((lines) =>
+        lines.map(
+          (l): GeoJSON.Feature => ({
+            type: 'Feature',
+            properties: { kind: l.kind, color: l.color },
+            geometry: { type: 'LineString', coordinates: l.coordinates },
+          })
+        )
+      ),
+    }),
+    [transitOverlays]
+  );
+  // Bring a newly chosen transit route into view
+  useEffect(() => {
+    const coords = transitGeoJson.features.flatMap((f) =>
+      f.geometry.type === 'LineString' ? f.geometry.coordinates : []
+    );
+    if (coords.length < 2) return;
+    const lngs = coords.map((c) => c[0]);
+    const lats = coords.map((c) => c[1]);
+    mapRef.current?.fitBounds(
+      [
+        [Math.min(...lngs), Math.min(...lats)],
+        [Math.max(...lngs), Math.max(...lats)],
+      ],
+      { padding: 70, maxZoom: 12, duration: 700 }
+    );
+  }, [transitGeoJson]);
   const [selectedPopupStop, setSelectedPopupStop] = useState<TripStop | null>(null);
   const [useFallbackStyle, setUseFallbackStyle] = useState(false);
 
@@ -593,6 +630,39 @@ export function WorldMapCanvas({
               'line-dasharray': [1.6, 1.6],
             }}
             layout={{ 'line-cap': 'butt', 'line-join': 'round' }}
+          />
+        </Source>
+
+        {/* 2c. Real transit route chosen in a leg's Schedules panel (Google Routes):
+            trains solid blue, metro and trams dashed blue, buses orange, walking dotted grey. */}
+        <Source id="astris-transit-overlay" type="geojson" data={transitGeoJson}>
+          <Layer
+            id="astris-transit-casing"
+            type="line"
+            filter={['!=', ['get', 'kind'], 'walk']}
+            paint={{ 'line-color': '#FFFFFF', 'line-width': 7, 'line-opacity': 0.95 }}
+            layout={{ 'line-cap': 'round', 'line-join': 'round' }}
+          />
+          <Layer
+            id="astris-transit-solid"
+            type="line"
+            filter={['in', ['get', 'kind'], ['literal', ['rail', 'bus']]]}
+            paint={{ 'line-color': ['get', 'color'], 'line-width': 4.5 }}
+            layout={{ 'line-cap': 'round', 'line-join': 'round' }}
+          />
+          <Layer
+            id="astris-transit-dashed"
+            type="line"
+            filter={['==', ['get', 'kind'], 'subway']}
+            paint={{ 'line-color': ['get', 'color'], 'line-width': 4.5, 'line-dasharray': [2, 1.4] }}
+            layout={{ 'line-cap': 'butt', 'line-join': 'round' }}
+          />
+          <Layer
+            id="astris-transit-walk"
+            type="line"
+            filter={['==', ['get', 'kind'], 'walk']}
+            paint={{ 'line-color': ['get', 'color'], 'line-width': 2.5, 'line-dasharray': [0.4, 1.6] }}
+            layout={{ 'line-cap': 'round', 'line-join': 'round' }}
           />
         </Source>
 
