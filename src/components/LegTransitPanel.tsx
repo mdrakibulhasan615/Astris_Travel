@@ -102,6 +102,16 @@ function SourceChip({ source }: { source: TransitOption['dataSource'] }) {
       </span>
     );
   }
+  if (source === 'cached') {
+    return (
+      <span
+        title="A real fare another traveller found on Aviasales in the last 48 hours. It may have changed; check the price when you book."
+        className="rounded-md bg-[#EFF6FF] px-1.5 py-0.5 text-[10px] font-medium text-[#1D4ED8]"
+      >
+        Recent fare
+      </span>
+    );
+  }
   return (
     <span
       title={

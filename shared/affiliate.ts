@@ -419,6 +419,7 @@ export function buildBookingLink(option: LinkableOption, ctx: BookingContext): B
 // ── Flight offers (comparison panel) ──────────────────────────────────────────────────────────
 
 const OFFER_NAMES: Record<OfferProviderId, string> = {
+  aviasales: 'Aviasales',
   tripcom: 'Trip.com',
   kiwi: 'Kiwi.com',
   skyscanner: 'Skyscanner',
@@ -426,7 +427,8 @@ const OFFER_NAMES: Record<OfferProviderId, string> = {
 };
 
 /** How much above the primary fare each other merchant is shown, as a [min, max] fraction. */
-const OFFER_MARKUP: Record<Exclude<OfferProviderId, 'tripcom'>, [number, number]> = {
+const OFFER_MARKUP: Record<Exclude<OfferProviderId, 'aviasales'>, [number, number]> = {
+  tripcom: [0.008, 0.02],
   kiwi: [0.012, 0.035],
   skyscanner: [0.025, 0.05],
   'google-flights': [0.035, 0.065],
@@ -447,21 +449,46 @@ function unitHash(seed: string): number {
  * also guarantees the cheapest offer is the fare shown on the ticket. Sorted cheapest first.
  */
 export function buildFlightOffers(
-  option: LinkableOption & { id: string; basePriceUsd: number; dataSource?: string },
+  option: LinkableOption & { id: string; basePriceUsd: number; dataSource?: string; sourceFareUrl?: string },
   ctx: BookingContext,
   primary: BookingLink
 ): AffiliateOffer[] {
-  const live = option.dataSource === 'live';
-  const offers: AffiliateOffer[] = [
-    {
+  // Where the real fare was found: Aviasales for a cached fare, otherwise the Trip.com link we sell it through
+  const fromAviasales = Boolean(option.sourceFareUrl);
+  const offers: AffiliateOffer[] = [];
+  if (fromAviasales) {
+    offers.push({
+      providerId: 'aviasales',
+      provider: OFFER_NAMES.aviasales,
+      logo: 'aviasales',
+      priceUsd: roundCents(option.basePriceUsd),
+      url: option.sourceFareUrl!,
+      estimated: false,
+    });
+  }
+  const priceOf = (id: Exclude<OfferProviderId, 'aviasales'>) => {
+    const [lo, hi] = OFFER_MARKUP[id];
+    return roundCents(option.basePriceUsd * (1 + lo + (hi - lo) * unitHash(`${option.id}|${id}`)));
+  };
+  if (fromAviasales) {
+    offers.push({
+      providerId: 'tripcom',
+      provider: OFFER_NAMES.tripcom,
+      logo: 'tripcom',
+      priceUsd: priceOf('tripcom'),
+      url: primary.url,
+      estimated: true,
+    });
+  } else {
+    offers.push({
       providerId: 'tripcom',
       provider: OFFER_NAMES.tripcom,
       logo: 'tripcom',
       priceUsd: roundCents(option.basePriceUsd),
       url: primary.url,
-      estimated: !live,
-    },
-  ];
+      estimated: option.dataSource !== 'live',
+    });
+  }
 
   const date = parseIsoDate(option.departureAt) ?? parseIsoDate(ctx.date);
   const { from, to } = ticketAirports(option, ctx);
@@ -483,25 +510,23 @@ export function buildFlightOffers(
       curr: 'USD',
     });
 
-    const urls: Record<Exclude<OfferProviderId, 'tripcom'>, string> = {
+    const urls: Record<'kiwi' | 'skyscanner' | 'google-flights', string> = {
       kiwi: `https://www.kiwi.com/deep?${kiwi.toString()}`,
       skyscanner: `https://www.skyscanner.net/transport/flights/${skyPath}?${sky.toString()}`,
       'google-flights': `https://www.google.com/travel/flights?${gf.toString()}`,
     };
-    for (const id of Object.keys(urls) as Exclude<OfferProviderId, 'tripcom'>[]) {
-      const [lo, hi] = OFFER_MARKUP[id];
-      const markup = lo + (hi - lo) * unitHash(`${option.id}|${id}`);
+    for (const id of Object.keys(urls) as (keyof typeof urls)[]) {
       offers.push({
         providerId: id,
         provider: OFFER_NAMES[id],
         logo: id,
-        priceUsd: roundCents(option.basePriceUsd * (1 + markup)),
+        priceUsd: priceOf(id),
         url: urls[id],
         estimated: true,
       });
     }
   }
-  return offers.sort((a, b) => a.priceUsd - b.priceUsd);
+  return offers.sort((x, y) => x.priceUsd - y.priceUsd);
 }
 
 const roundCents = (n: number) => Math.round(n * 100) / 100;

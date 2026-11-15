@@ -132,7 +132,7 @@ export interface TransitSegment {
 export type BookingProvider = 'tripcom' | 'flixbus' | '12go' | 'booking' | 'agoda';
 
 /** Merchants shown side by side in a flight's "Proceed to booking" comparison panel. */
-export type OfferProviderId = 'tripcom' | 'kiwi' | 'skyscanner' | 'google-flights';
+export type OfferProviderId = 'aviasales' | 'tripcom' | 'kiwi' | 'skyscanner' | 'google-flights';
 
 /**
  * One merchant's offer for a flight ticket. The price is per person in USD (the app converts it for
@@ -237,10 +237,13 @@ export interface TransitOption {
   layovers?: Layover[];
   airlineLogo?: string;
   /**
-   * Where this option's data came from. Only `live` is a real, current fare; `curated` and
-   * `synthesized` are sample/estimated data and the UI labels them as such.
+   * Where this option's data came from. `live` is a real, current fare; `cached` is a real fare
+   * another traveller found on Aviasales in the last ~48 hours (free Data API, may have moved);
+   * `curated` and `synthesized` are sample/estimated data. The UI labels each.
    */
-  dataSource?: 'live' | 'curated' | 'synthesized';
+  dataSource?: 'live' | 'cached' | 'curated' | 'synthesized';
+  /** `cached` fares: the Aviasales results page for this exact fare (partner marker included when configured). */
+  sourceFareUrl?: string;
   /** Every flight number on the itinerary, in order (live data), e.g. ["PC 123", "PC 456"]. */
   flightNumbers?: string[];
   /** Distinct operating airlines in order of first appearance (live data). */

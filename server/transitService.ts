@@ -35,6 +35,7 @@ import type {
 } from '../shared/types.ts';
 import { getAirportByIata } from './airportService.ts';
 import { resolveFlixbusRoute } from './flixbusService.ts';
+import { fetchTravelpayoutsFlights, travelpayoutsToken } from './travelpayoutsService.ts';
 
 // Give the shared airport-anchoring logic the full global dataset (6,300+ airports) server-side.
 registerAirportResolver((code) => {
@@ -217,7 +218,7 @@ export interface TransitQueryParams {
 
 export interface TransitQueryResult {
   cacheKey: string;
-  source: 'redis_cache' | 'memory_cache' | 'live_api' | 'fallback_corridor';
+  source: 'redis_cache' | 'memory_cache' | 'live_api' | 'recent_fares' | 'fallback_corridor';
   cached: boolean;
   ttlSeconds: number;
   options: TransitOption[];
@@ -730,6 +731,32 @@ export async function queryTransitWithCache(
       if (live && live.length > 0) await setCachedTransit(cacheKey, live);
     }
   }
+
+  // 1b. Sample mode: real recent fares from the free Aviasales Data API instead of invented ones
+  //     (no SerpApi credits involved). Cached 12 h; routes it has no data for keep the sample flights.
+  let recentFares = false;
+  if (!useRealData() && (mode === 'all' || mode === 'flight') && travelpayoutsToken()) {
+    const tpKey = `${cacheKey}:tp`;
+    const hit = await getCachedTransit(tpKey);
+    let tp: TransitOption[] | null = hit && hit.options.length > 0 ? hit.options : null;
+    if (!tp) {
+      tp = await fetchTravelpayoutsFlights({
+        origin,
+        destination,
+        date,
+        returnDate,
+        legId: `leg-${origin.toLowerCase()}-${destination.toLowerCase()}`,
+        hourlyRateUsd,
+        activeVouchers,
+        profile: travelerProfile,
+      });
+      if (tp && tp.length > 0) await setCachedTransit(tpKey, tp);
+    }
+    if (tp && tp.length > 0) {
+      live = tp;
+      recentFares = true;
+    }
+  }
   const hasLiveFlights = Boolean(live && live.length > 0);
 
   // 2./3. Assemble the list for this ticket type
@@ -759,7 +786,9 @@ export async function queryTransitWithCache(
 
   const source: TransitQueryResult['source'] = !hasLiveFlights
     ? 'fallback_corridor'
-    : cacheLayer === 'memory'
+    : recentFares
+      ? 'recent_fares'
+      : cacheLayer === 'memory'
       ? 'memory_cache'
       : cacheLayer === 'redis'
         ? 'redis_cache'
