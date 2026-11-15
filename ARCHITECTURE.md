@@ -65,7 +65,7 @@ unprefixed keys (including `GEMINI_API_KEY`) are deliberately never exposed to t
 
 | Layer | Provider / Package | Implementation & Role |
 | :--- | :--- | :--- |
-| **Live Flight Discovery** | **SerpApi** (`engine=google_flights`) | `fetchSerpApiFlights` in `server/transitService.ts`. Parses `best_flights`/`other_flights` into `TransitOption`s (price, segments, layovers, emissions). 8s timeout; any failure falls back silently. |
+| **Live Flight Discovery** | **SerpApi** (`engine=google_flights`) | `fetchSerpApiFlights` in `server/transitService.ts`. One-way = `type=2`; return = `type=1` + `return_date` (price is the round-trip total). `type` must always be sent: SerpApi defaults to round-trip and answers HTTP 400 without a return date, which is why live fares never loaded before. Stop codes are expanded to real airports (`LON` → `LHR,LGW,STN,LTN,LCY,SEN`); metro codes return nothing. Parses `best_flights`/`other_flights` into `TransitOption`s (price, hops, layovers, emissions). 8s timeout; any failure falls back silently. |
 | **Fallback corridors** | `CURATED_CORRIDOR_OPTIONS` + `synthesizeCorridorOptions` | Hand-authored options for the default trip's corridors; every other pair is synthesized (flight / 1-stop / rail / coach) from great-circle distance. |
 | **Global Airport Data** | **`airports`** (npm) | `server/airportService.ts`: autocomplete (`searchAirports`) and IATA → exact tarmac lat/lng (`getAirportByIata`). Registered into `shared/airports.ts` at startup and used for every flight segment (§7). |
 | **Vouchers** | `VOUCHERS_CATALOG` (`shared/mockDataset.ts`) + `calculateVoucherDiscount` / `isVoucherCurrentlyValid` (`shared/smartScore.ts`) | Percentage or fixed discounts, `maxDiscountUsd` cap, `minSpendUsd`, mode and carrier restrictions, `validFrom`/`expiresAt`/`isActive`. Validated by `POST /api/vouchers/validate`. There is **no `voucherService.ts`**. |
@@ -123,9 +123,9 @@ Imports use explicit `.ts`/`.tsx` extensions (`allowImportingTsExtensions`).
 | `GET /api/destinations`, `GET /api/airports/search?q=&limit=` | Airport hubs / autocomplete |
 | `GET /api/vouchers`, `POST /api/vouchers/validate` | Catalog; validate a code against current legs |
 | `GET /api/affiliate/config` | Validated partner ids for the browser's link builders (public by nature: every link carries them) |
-| `GET\|POST /api/transit/query` | Single-corridor query through the Redis wrapper (`X-Cache-*` headers) |
+| `GET\|POST /api/transit/query` | Single-corridor query through the Redis wrapper (`X-Cache-*` headers); optional `returnDate` for return fares |
 | `GET /api/transit/cache/status` | Redis health |
-| `POST /api/legs/recompute` | Re-query every leg after stop/VTTS/voucher change (concurrent, with per-leg fallback) |
+| `POST /api/legs/recompute` | Re-query every leg after stop/VTTS/voucher/ticket-type change (concurrent, with per-leg fallback). Accepts `legPrefs` (`{ legId: { type: 'one-way' \| 'return', returnDate? } }`); returns legs with both fare structures settled (§11) |
 | `POST /api/optimize-route` | Two-stage route optimizer (distance permutations → Smart Score top 5) |
 
 `hourlyRate`/`hourlyTimeValue`, `travelerProfile`, and `travelers` are sanitized server-side
@@ -281,8 +281,20 @@ It is not a routing engine: lines follow corridors between junction cities, not 
 - **Dev logging:** server prints `[Flight Data] <label> <leg> selected=… src=… | carrier flight | dep → arr
   | $price`; the browser logs `[Flights] … → state` tables and, after every state change, checks the ticket
   fields against the last API response (`src/flightDebug.ts`) and logs an error on any difference.
-- **Known limitation:** when SerpApi returns results, the leg's options are flights only; curated ground
-  alternatives (train/bus) for that corridor are not merged in.
+- **Live flights + ground together:** a leg's list is the live flights plus the ground options for that
+  corridor. There is no live availability API for trains, coaches or ferries, so those stay
+  curated/estimated (**Sample** / **Estimate** chips) with a direct merchant link each; only flights carry
+  **Live fare**. Ground options are rebuilt on every request and never cached.
+- **Live carrier details:** live options carry `hops[]` (flight number, airline, logo, aircraft, local
+  departure/arrival, duration) and `layovers[]` (airport, minutes, overnight). Cards render them per hop
+  with the date, the exact fare and the merchant link.
+- **Prices are per traveller.** Search results and cards are per person; the party size goes into the
+  booking link (`quantity`/`adult`/`people`), where the merchant totals it.
+- **Cache keys:** `transit:cache:{from}:{to}:{date}:{mode}` for one-way and `…:rt:{returnDate}` for a return
+  search, 12 h TTL, live results only (Upstash Redis with an in-process L1). Return fares are only fetched
+  when a leg is paired or the traveller chose Return, so the extra provider calls stay bounded.
+- **No flash of sample data:** when a leg's fare search is unchanged (same date, route and travellers: its
+  `fareKey`) an edit keeps the live fares already on screen while the server refreshes.
 
 ## 9. Reliability Conventions
 - Async Express handlers wrap their bodies in `try/catch` (Express 4 does not catch rejected promises).
@@ -317,3 +329,42 @@ It is not a routing engine: lines follow corridors between junction cities, not 
   `comfortMultiplier` (dorm 0.7 … 5★ 0) is the stay-side counterpart of the sleeper's 0.4× in-vehicle
   multiplier. A low *r* ranks hostels first; raising the pacing slider moves the ranking up-market.
   Hostel prices are per bed (× adults); other categories per room (`ceil(adults / 2)` rooms).
+
+## 11. Ticket Types & Fare Comparison — `shared/fares.ts`
+
+- **Per-leg selector.** Every leg has **One-way / Return** (`TripLeg.ticketType`). A traveller's choice is
+  stored in `Trip.legPrefs[legId]` (`{ type, returnDate? }`) and always wins; without one the choice is
+  automatic.
+- **Both structures are kept.** `oneWayOptions` and `returnOptions` live side by side on the leg;
+  `transitOptions` is the list for the current type (so cards, map and totals read one field).
+  `finalizeLegs` settles the type and is the only place that swaps the list.
+- **Return pricing.** A live return option's `basePriceUsd` is the real round-trip total
+  (`ticketType: 'return'`, `returnDate`). Ground, and flights when no live return fare exists, use
+  `deriveReturnOptions`: the one-way price twice, flagged **Estimate** (never a quoted return fare).
+  Return options are scored on both journeys (`journeys: 2` multiplies the time and comfort terms in the
+  Smart Score; price is paid once).
+- **Pairing.** `pairStops` pairs leg *i* (A → B) with the nearest later leg *j* that comes back (B → A, by
+  metro code or within 30 km). A return ticket on *i* **covers** *j* (`coveredByLegId`): its card says so,
+  has no Book button, and adds nothing to the trip totals (`legTotals`).
+- **Return date.** The traveller's date, else the paired leg's departure date, else the day they leave the
+  destination; never before the outbound date.
+- **Comparison (`compareFares`).** For a paired leg it prices *cheapest one-way here + cheapest one-way on
+  the paired leg* against *cheapest return fare*, flights only when all three lists have live flights
+  (`basis: 'live'`), otherwise `basis: 'estimate'`. Within $0.50 is a tie (one-way wins: more flexible).
+  - **Live:** the cheaper structure is selected automatically ("Selected automatically") and the card shows
+    both totals and the saving. If the traveller picked the other one, it offers "Switch to … · save $N".
+  - **Estimate:** shown as informational only; estimates never switch a ticket. "Pick the cheapest for me"
+    clears the traveller's choice.
+- **Links.** Flights: Trip.com `triptype=rt&rdate=…` (normalised by Trip.com to its return search). Ground:
+  merchants sell each direction, so a return option has two buttons, outbound and way back
+  (`returnBookingUrl`, the same search reversed on the return date).
+- **Optimizer.** Route optimization scores candidates with the same totals (`legTotals`), so a return
+  ticket is counted once, and drops duplicate orderings that recurring stops would otherwise produce.
+  It still ranks with estimated corridors; *Apply* takes only the stop order and re-queries live fares.
+
+## 12. Vercel
+
+`vercel.json` serves the Vite build from `dist` and rewrites `/api/*` to the single function
+`api/index.ts` (`createApp()` from `server.ts`, `maxDuration` 30). Everything above runs inside that one
+Express app: SerpApi + Upstash calls happen per request, the in-process cache is per instance (Upstash is
+the shared one), and nothing needs a long-running process.

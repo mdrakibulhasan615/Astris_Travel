@@ -39,17 +39,16 @@ import {
   VOUCHERS_CATALOG,
   createDefaultTrip,
 } from '../shared/mockDataset.ts';
-import {
-  buildLegsFromStops,
-  recalculateOptionsWithVttsAndVouchers,
-  round2,
-} from '../shared/smartScore.ts';
+import { buildLegsFromStops, rescoreLegs, round2 } from '../shared/smartScore.ts';
+import { legTotals } from '../shared/fares.ts';
 import { configureAffiliate, type AffiliateConfig } from '../shared/affiliate.ts';
 import { registerAirports, type AirportPoint } from '../shared/airports.ts';
 import { buildStaySearches } from '../shared/stays.ts';
 import type {
   DestinationHub,
+  LegTicketPref,
   ModeFilter,
+  TicketType,
   RouteOptimizationResult,
   Trip,
   TripLeg,
@@ -201,7 +200,8 @@ export default function App() {
       nextStops: TripStop[],
       nextHourlyRate = trip.hourlyTimeValue,
       nextVoucherCodes = trip.appliedVoucherCodes,
-      nextTravelers = trip.travelers
+      nextTravelers = trip.travelers,
+      nextPrefs: Record<string, LegTicketPref> = trip.legPrefs ?? {}
     ) => {
       const previousSelectedMap: Record<string, string> = {};
       for (const leg of trip.legs) {
@@ -219,7 +219,13 @@ export default function App() {
         nextHourlyRate,
         activeVouchers,
         previousSelectedMap,
-        { profile: trip.travelerProfile, passengers: nextTravelers }
+        {
+          profile: trip.travelerProfile,
+          passengers: nextTravelers,
+          legPrefs: nextPrefs,
+          // Fares for an unchanged search stay on screen while the server refreshes them
+          previousLegs: trip.legs,
+        }
       );
 
       lastApiLegsRef.current = null; // optimistic legs are local sample data, not an API response
@@ -232,6 +238,7 @@ export default function App() {
         hourlyTimeValue: nextHourlyRate,
         appliedVoucherCodes: nextVoucherCodes,
         travelers: nextTravelers,
+        legPrefs: nextPrefs,
       }));
 
       const requestId = ++recomputeRequestIdRef.current;
@@ -246,6 +253,7 @@ export default function App() {
             previousSelectedMap,
             travelerProfile: trip.travelerProfile,
             travelers: nextTravelers,
+            legPrefs: nextPrefs,
           }),
         });
         if (res.ok) {
@@ -266,7 +274,15 @@ export default function App() {
         // Optimistic state already applied
       }
     },
-    [trip.hourlyTimeValue, trip.appliedVoucherCodes, trip.legs, trip.travelerProfile, trip.travelers, vouchers]
+    [
+      trip.hourlyTimeValue,
+      trip.appliedVoucherCodes,
+      trip.legs,
+      trip.legPrefs,
+      trip.travelerProfile,
+      trip.travelers,
+      vouchers,
+    ]
   );
 
   // Instant client-side Smart Score recalculation for VTTS preset / slider changes
@@ -276,20 +292,14 @@ export default function App() {
         const activeVouchers = vouchers.filter((v) =>
           prev.appliedVoucherCodes.includes(v.code)
         );
-        const updatedLegs = prev.legs.map((leg) => {
-          const ranked = recalculateOptionsWithVttsAndVouchers(
-            leg.transitOptions,
-            hourlyRateUsd,
-            activeVouchers,
-            prev.travelerProfile
-          );
-          const keepSelected = ranked.some((o) => o.id === leg.selectedOptionId);
-          return {
-            ...leg,
-            selectedOptionId: keepSelected ? leg.selectedOptionId : ranked[0]?.id ?? '',
-            transitOptions: ranked,
-          };
-        });
+        // Both ticket structures are re-scored: a different time value can change which wins
+        const updatedLegs = rescoreLegs(
+          prev.legs,
+          hourlyRateUsd,
+          activeVouchers,
+          prev.travelerProfile,
+          prev.legPrefs
+        );
         return {
           ...prev,
           vttsTier: tier,
@@ -310,18 +320,13 @@ export default function App() {
           : [...prev.appliedVoucherCodes, code];
         const activeVouchers = vouchers.filter((v) => nextCodes.includes(v.code));
 
-        const updatedLegs = prev.legs.map((leg) => {
-          const ranked = recalculateOptionsWithVttsAndVouchers(
-            leg.transitOptions,
-            prev.hourlyTimeValue,
-            activeVouchers,
-            prev.travelerProfile
-          );
-          return {
-            ...leg,
-            transitOptions: ranked,
-          };
-        });
+        const updatedLegs = rescoreLegs(
+          prev.legs,
+          prev.hourlyTimeValue,
+          activeVouchers,
+          prev.travelerProfile,
+          prev.legPrefs
+        );
 
         return {
           ...prev,
@@ -452,6 +457,36 @@ export default function App() {
     recomputeStopsAndLegs(trip.stops, trip.hourlyTimeValue, trip.appliedVoucherCodes, next);
   };
 
+  /**
+   * One-way vs return for a leg. Choosing marks the type as the traveller's own (the cheaper-fare
+   * automation then leaves it alone); `auto` hands the decision back. Return fares are fetched on
+   * demand, so this goes through the same optimistic-then-server path as any other edit.
+   */
+  const handleChangeLegTicket = (
+    legId: string,
+    change: { type?: TicketType; returnDate?: string; auto?: boolean }
+  ) => {
+    const prefs: Record<string, LegTicketPref> = { ...(trip.legPrefs ?? {}) };
+    if (change.auto) {
+      delete prefs[legId];
+    } else {
+      const leg = trip.legs.find((l) => l.id === legId);
+      const current: LegTicketPref = prefs[legId] ?? { type: leg?.ticketType ?? 'one-way' };
+      prefs[legId] = {
+        ...current,
+        ...(change.type ? { type: change.type } : {}),
+        ...(change.returnDate ? { returnDate: change.returnDate } : {}),
+      };
+    }
+    recomputeStopsAndLegs(
+      trip.stops,
+      trip.hourlyTimeValue,
+      trip.appliedVoucherCodes,
+      trip.travelers,
+      prefs
+    );
+  };
+
   const handleOpenStays = (stopId: string) => {
     setActivePanel('stays');
     setLeftView('stays');
@@ -570,15 +605,12 @@ export default function App() {
 
     for (const leg of trip.legs) {
       totalDistanceKm += leg.distanceKm;
-      const selected =
-        leg.transitOptions.find((o) => o.id === leg.selectedOptionId) ??
-        leg.transitOptions[0];
-      if (selected) {
-        totalCostUsd += selected.discountedPriceUsd;
-        totalSavingsUsd += selected.smartScoreBreakdown.discountAppliedUsd;
-        totalHours += selected.inVehicleHours + selected.layoverHours;
-        totalSmartScore += selected.smartScore;
-      }
+      // A return ticket is counted once, on the leg that carries it; the leg it covers adds nothing
+      const t = legTotals(leg);
+      totalCostUsd += t.costUsd;
+      totalSavingsUsd += t.savingsUsd;
+      totalHours += t.hours;
+      totalSmartScore += t.score;
     }
 
     return {
@@ -910,6 +942,9 @@ export default function App() {
                           {nextLeg && (
                             <LegTransitPanel
                               leg={nextLeg}
+                              pairedLeg={trip.legs.find((l) => l.id === nextLeg.pairedLegId)}
+                              coveredByLeg={trip.legs.find((l) => l.id === nextLeg.coveredByLegId)}
+                              onChangeTicket={handleChangeLegTicket}
                               modeFilter={modeFilter}
                               vouchers={vouchers}
                               isActive={

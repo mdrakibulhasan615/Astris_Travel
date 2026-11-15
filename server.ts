@@ -28,7 +28,17 @@ import {
   sanitizeHourlyRate,
 } from './shared/smartScore.ts';
 import { getPublicAffiliateConfig } from './shared/affiliate.ts';
+import {
+  finalizeLegs,
+  isIsoDate,
+  legFareKey,
+  legReturnDate,
+  legTotals,
+  pairStops,
+  wantsReturnFares,
+} from './shared/fares.ts';
 import type {
+  LegTicketPref,
   OptimizationCandidate,
   RouteOptimizationResult,
   TransitMode,
@@ -53,6 +63,21 @@ function sanitizeProfile(raw: unknown): Partial<TravelerProfile> | undefined {
   if (r.timeWeight !== undefined && Number.isFinite(Number(r.timeWeight))) out.timeWeight = Number(r.timeWeight);
   if (r.allowRedEyes !== undefined) out.allowRedEyes = r.allowRedEyes === true || r.allowRedEyes === 'true';
   return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/** Accepts `{ legId: { type: 'one-way' | 'return', returnDate? } }`; anything else is dropped. */
+function sanitizeLegPrefs(raw: unknown): Record<string, LegTicketPref> {
+  const out: Record<string, LegTicketPref> = {};
+  if (!raw || typeof raw !== 'object') return out;
+  for (const [legId, value] of Object.entries(raw as Record<string, unknown>).slice(0, 50)) {
+    const v = value as { type?: unknown; returnDate?: unknown } | null;
+    if (!v || (v.type !== 'one-way' && v.type !== 'return')) continue;
+    out[legId.slice(0, 80)] = {
+      type: v.type,
+      ...(isIsoDate(v.returnDate) ? { returnDate: v.returnDate } : {}),
+    };
+  }
+  return out;
 }
 
 /** Case-insensitive code match against the catalog, excluding expired / inactive vouchers. */
@@ -100,14 +125,11 @@ function summarizeLegs(legs: TripLeg[]) {
 
   for (const leg of legs) {
     totalDistanceKm += leg.distanceKm;
-    const selected =
-      leg.transitOptions.find((o) => o.id === leg.selectedOptionId) ??
-      leg.transitOptions[0];
-    if (selected) {
-      totalCostUsd += selected.discountedPriceUsd;
-      totalHours += selected.inVehicleHours + selected.layoverHours;
-      totalSmartScore += selected.smartScore;
-    }
+    // A return ticket's price and score are counted once, on the leg that carries it
+    const t = legTotals(leg);
+    totalCostUsd += t.costUsd;
+    totalHours += t.hours;
+    totalSmartScore += t.score;
   }
 
   return {
@@ -124,6 +146,8 @@ interface LegBuildOptions {
   profile?: Partial<TravelerProfile>;
   passengers: number;
   previousSelectedMap?: Record<string, string>;
+  /** Ticket types the traveller chose, by leg id. */
+  legPrefs?: Record<string, LegTicketPref>;
 }
 
 /**
@@ -136,62 +160,83 @@ async function buildLegsViaTransitService(
   stops: TripStop[],
   opts: LegBuildOptions
 ): Promise<TripLeg[]> {
-  const { hourlyRate, activeVouchers, profile, passengers, previousSelectedMap } = opts;
+  const { hourlyRate, activeVouchers, profile, passengers, previousSelectedMap, legPrefs } = opts;
   const legIds = buildLegIds(stops);
+  // A later leg that comes back (A to B ... B to A) makes a return ticket worth pricing
+  const pairs = pairStops(stops);
 
   const legPromises = stops.slice(0, -1).map(async (fromStop, i): Promise<TripLeg | undefined> => {
     const toStop = stops[i + 1];
     const legId = legIds[i];
     const distanceKm = haversineDistanceKm(fromStop.lat, fromStop.lng, toStop.lat, toStop.lng);
     const prevSelected = previousSelectedMap?.[legId];
+    const pref = legPrefs?.[legId];
+    const returnDate = legReturnDate(stops, i, pairs, pref);
+    const base = {
+      id: legId,
+      fromStopId: fromStop.id,
+      toStopId: toStop.id,
+      fromCity: fromStop.city,
+      fromCode: fromStop.iataCode,
+      toCity: toStop.city,
+      toCode: toStop.iataCode,
+      distanceKm,
+      departureDate: fromStop.departureDate,
+      returnDate,
+      pairedLegId: pairs[i] !== undefined ? legIds[pairs[i]] : undefined,
+      fareKey: legFareKey(fromStop, toStop, passengers),
+    };
 
     // The same city twice in a row needs no transport (and must not hit the flight API)
     if (isSamePlace(fromStop, toStop)) {
-      return {
-        id: legId,
-        fromStopId: fromStop.id,
-        toStopId: toStop.id,
-        fromCity: fromStop.city,
-        fromCode: fromStop.iataCode,
-        toCity: toStop.city,
-        toCode: toStop.iataCode,
-        distanceKm,
-        selectedOptionId: '',
-        transitOptions: [],
-      };
+      return { ...base, selectedOptionId: '', transitOptions: [], oneWayOptions: [] };
     }
 
     try {
-      const result = await queryTransitWithCache({
-        origin: fromStop.iataCode,
-        destination: toStop.iataCode,
-        date: fromStop.departureDate,
-        mode: 'all',
-        hourlyRateUsd: hourlyRate,
-        activeVouchers,
-        travelerProfile: profile,
-        passengers,
-        fromStop,
-        toStop,
-      });
-      const rankedOptions = result.options.map((o) => ({ ...o, legId }));
+      const query = (ret?: string) =>
+        queryTransitWithCache({
+          origin: fromStop.iataCode,
+          destination: toStop.iataCode,
+          date: fromStop.departureDate,
+          returnDate: ret,
+          mode: 'all',
+          hourlyRateUsd: hourlyRate,
+          activeVouchers,
+          travelerProfile: profile,
+          passengers,
+          fromStop,
+          toStop,
+        });
+      // Return fares are only fetched when they matter (a paired leg, or the traveller chose one):
+      // every extra search is one more provider call against the rate limit.
+      const [oneWayResult, returnResult] = await Promise.all([
+        query(),
+        wantsReturnFares(i, pairs, pref)
+          ? query(returnDate).catch((err) => {
+              console.warn(`[Flight Data] ${legId}: return fare search failed:`, err);
+              return null;
+            })
+          : Promise.resolve(null),
+      ]);
+      const oneWay = oneWayResult.options.map((o) => ({ ...o, legId }));
+      const returnOptions = returnResult?.options.map((o) => ({ ...o, legId }));
       console.log(
-        `[Flight Data] ${legId}: ${rankedOptions.length} options from ${result.source}` +
-          ` (${rankedOptions.filter((o) => o.dataSource === 'live').length} live)`
+        `[Flight Data] ${legId}: ${oneWay.length} options from ${oneWayResult.source}` +
+          ` (${oneWay.filter((o) => o.dataSource === 'live').length} live)` +
+          (returnOptions
+            ? `, ${returnOptions.length} return options (${
+                returnOptions.filter((o) => o.dataSource === 'live').length
+              } live) back ${returnDate}`
+            : '')
       );
       return {
-        id: legId,
-        fromStopId: fromStop.id,
-        toStopId: toStop.id,
-        fromCity: fromStop.city,
-        fromCode: fromStop.iataCode,
-        toCity: toStop.city,
-        toCode: toStop.iataCode,
-        distanceKm,
-        selectedOptionId: rankedOptions.some((o) => o.id === prevSelected)
+        ...base,
+        selectedOptionId: oneWay.some((o) => o.id === prevSelected)
           ? prevSelected!
-          : rankedOptions[0]?.id ?? '',
-        transitOptions: rankedOptions,
+          : (oneWay[0]?.id ?? ''),
+        transitOptions: oneWay,
+        oneWayOptions: oneWay,
+        returnOptions,
       };
     } catch (err) {
       console.warn(
@@ -211,7 +256,7 @@ async function buildLegsViaTransitService(
       // A 2-stop rebuild always yields the base id; restore this leg's (possibly suffixed) id
       return {
         ...fallback,
-        id: legId,
+        ...base,
         selectedOptionId: fallback.transitOptions.some((o) => o.id === prevSelected)
           ? prevSelected!
           : fallback.selectedOptionId,
@@ -219,7 +264,9 @@ async function buildLegsViaTransitService(
     }
   });
 
-  return (await Promise.all(legPromises)).filter((l): l is TripLeg => Boolean(l));
+  const legs = (await Promise.all(legPromises)).filter((l): l is TripLeg => Boolean(l));
+  // Settle each leg's ticket structure now that every leg's fares are known
+  return finalizeLegs(legs, legPrefs);
 }
 
 /** Development log of exactly what the API is about to send, for comparison with the browser log. */
@@ -318,6 +365,7 @@ export function createApp() {
       const origin = String(req.query.origin || '').trim();
       const destination = String(req.query.destination || '').trim();
       const date = String(req.query.date || '').trim() || '2026-11-21';
+      const returnDate = String(req.query.returnDate || '').trim() || undefined;
       const mode = (String(req.query.mode || 'all').trim().toLowerCase()) as 'all' | TransitMode;
       const hourlyRate = sanitizeHourlyRate(req.query.hourlyRate ?? 15);
       const voucherCodesParam = String(req.query.voucherCodes || '').trim();
@@ -336,6 +384,7 @@ export function createApp() {
         origin,
         destination,
         date,
+        returnDate,
         mode,
         hourlyRateUsd: hourlyRate,
         activeVouchers,
@@ -364,6 +413,7 @@ export function createApp() {
         origin = '',
         destination = '',
         date = '2026-11-21',
+        returnDate,
         mode = 'all',
         hourlyRate = 15,
         appliedVoucherCodes = [],
@@ -373,6 +423,7 @@ export function createApp() {
         origin: string;
         destination: string;
         date?: string;
+        returnDate?: string;
         mode?: 'all' | TransitMode;
         hourlyRate?: number;
         appliedVoucherCodes?: string[];
@@ -396,6 +447,7 @@ export function createApp() {
         origin,
         destination,
         date,
+        returnDate,
         mode,
         hourlyRateUsd: sanitizeHourlyRate(hourlyRate),
         activeVouchers,
@@ -424,6 +476,7 @@ export function createApp() {
       previousSelectedMap = {},
       travelerProfile: rawProfile,
       travelers = 1,
+      legPrefs: rawLegPrefs,
     } = req.body as {
       stops: TripStop[];
       hourlyTimeValue: number;
@@ -431,6 +484,7 @@ export function createApp() {
       travelers?: number;
       appliedVoucherCodes: string[];
       previousSelectedMap?: Record<string, string>;
+      legPrefs?: unknown;
     };
 
     if (!Array.isArray(stops)) {
@@ -448,6 +502,7 @@ export function createApp() {
       profile,
       passengers,
       previousSelectedMap,
+      legPrefs: sanitizeLegPrefs(rawLegPrefs),
     });
     logLegs('recompute', legs);
     res.json({ stops: normalizedStops, legs });
@@ -516,6 +571,15 @@ export function createApp() {
           distanceKm: computeTotalDistance(candidateStops),
         };
       })
+      // Recurring stops make different permutations spell the same route: keep one of each
+      .filter(
+        (entry, idx, all) =>
+          all.findIndex(
+            (other) =>
+              other.stops.map((s) => s.iataCode).join('>') ===
+              entry.stops.map((s) => s.iataCode).join('>')
+          ) === idx
+      )
       .sort((a, b) => a.distanceKm - b.distanceKm);
 
     // Stage 2: Query/compute transit options and weighted Smart Score for top 5 geographical candidates

@@ -9,22 +9,37 @@ import {
   Moon,
   Plane,
   Ship,
+  Sparkles,
   TrainFront,
 } from 'lucide-react';
+import { formatShortDate } from '../../shared/dateUtils.ts';
 import { formatDuration } from '../../shared/smartScore.ts';
 import { PROVIDER_NAMES } from '../../shared/affiliate.ts';
 import { SmartScoreBadge } from './SmartScoreBadge.tsx';
 import type {
   ModeFilter,
   ScoreFlag,
+  TicketType,
   TransitMode,
   TransitOption,
   TripLeg,
   Voucher,
 } from '../../shared/types.ts';
 
+export interface TicketChange {
+  type?: TicketType;
+  returnDate?: string;
+  /** Hand the choice back to the cheapest-fare automation. */
+  auto?: boolean;
+}
+
 interface LegTransitPanelProps {
   leg: TripLeg;
+  /** The later leg that comes back; a return ticket on this leg would cover it. */
+  pairedLeg?: TripLeg;
+  /** The leg whose return ticket already covers this one. */
+  coveredByLeg?: TripLeg;
+  onChangeTicket: (legId: string, change: TicketChange) => void;
   modeFilter: ModeFilter;
   vouchers: Voucher[];
   isActive: boolean;
@@ -118,33 +133,224 @@ function FlagChips({ flags }: { flags: ScoreFlag[] }) {
  * Direct link to the merchant's results for this exact option (route, airports, date, travellers,
  * and the airline for real fares). `sponsored` tells search engines it is a paid referral.
  */
-function BookLink({ option }: { option: TransitOption }) {
-  if (!option.bookingUrl) return null;
+function BookLink({
+  option,
+  url = option.bookingUrl,
+  label,
+  secondary = false,
+}: {
+  option: TransitOption;
+  url?: string;
+  label?: string;
+  secondary?: boolean;
+}) {
+  if (!url) return null;
   const merchant = option.bookingProvider ? PROVIDER_NAMES[option.bookingProvider] : 'partner site';
   // Only a live fare has a price worth repeating on the button; estimates are a search, not a quote
   const isLive = option.dataSource === 'live';
+  const kind = option.ticketType === 'return' ? 'return ' : '';
+  const text =
+    label ??
+    (isLive
+      ? `Book ${kind}on ${merchant} · $${option.discountedPriceUsd.toFixed(0)}`
+      : `Find ${kind}on ${merchant}`);
   return (
     <a
-      href={option.bookingUrl}
+      href={url}
       target="_blank"
       rel="sponsored noopener noreferrer"
       onClick={() => {
         // Development aid: the exact URL the browser is about to open
-        if (import.meta.env.DEV) console.debug('[Booking] opening', option.id, option.bookingUrl);
+        if (import.meta.env.DEV) console.debug('[Booking] opening', option.id, url);
       }}
-      className="inline-flex items-center gap-1 rounded-lg bg-[#FF812E] px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-[#E56B1A] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF812E] focus-visible:ring-offset-1"
+      className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11px] font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF812E] focus-visible:ring-offset-1 ${
+        secondary
+          ? 'border border-neutral-200 bg-white text-[#111827] hover:border-[#FFD6BA] hover:bg-[#FFF4ED]'
+          : 'bg-[#FF812E] text-white hover:bg-[#E56B1A]'
+      }`}
       title={`Opens ${merchant} with this route, date and travellers filled in`}
     >
-      {isLive
-        ? `Book on ${merchant} · $${option.discountedPriceUsd.toFixed(0)}`
-        : `Find on ${merchant}`}
+      {text}
       <ExternalLink className="w-3 h-3" aria-hidden="true" />
     </a>
   );
 }
 
+/** Ground return tickets are sold per direction, so they get one button each way. */
+function BookLinks({ option }: { option: TransitOption }) {
+  if (!option.bookingUrl) return null;
+  if (option.ticketType === 'return' && option.returnBookingUrl) {
+    const merchant = option.bookingProvider ? PROVIDER_NAMES[option.bookingProvider] : 'partner site';
+    return (
+      <div className="flex flex-wrap items-center gap-1.5">
+        <BookLink option={option} label={`Outbound on ${merchant}`} />
+        <BookLink
+          option={option}
+          url={option.returnBookingUrl}
+          label={`Way back on ${merchant}`}
+          secondary
+        />
+      </div>
+    );
+  }
+  return <BookLink option={option} />;
+}
+
+const legLabel = (l: TripLeg) => `${l.fromCode} → ${l.toCode}`;
+
+/**
+ * One-way / return selector for the leg, the one-way-vs-return price comparison when the trip
+ * comes back to where this leg started, and the "already covered" notice for the way back.
+ */
+function TicketControls({
+  leg,
+  pairedLeg,
+  coveredByLeg,
+  onChangeTicket,
+}: {
+  leg: TripLeg;
+  pairedLeg?: TripLeg;
+  coveredByLeg?: TripLeg;
+  onChangeTicket: (legId: string, change: TicketChange) => void;
+}) {
+  if (leg.transitOptions.length === 0 && !leg.oneWayOptions?.length) return null;
+
+  if (coveredByLeg) {
+    return (
+      <div className="mx-3.5 mb-2.5 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#FFD6BA] bg-[#FFF4ED] px-3 py-2 text-[11px] text-[#111827]">
+        <span>
+          <span className="font-semibold">Covered by your return ticket</span> on{' '}
+          {legLabel(coveredByLeg)}. Nothing to book for this leg.
+        </span>
+        <button
+          type="button"
+          onClick={() => onChangeTicket(coveredByLeg.id, { type: 'one-way' })}
+          className="rounded-lg border border-neutral-200 bg-white px-2 py-1 font-semibold hover:border-[#FFD6BA] cursor-pointer"
+        >
+          Book one-way tickets instead
+        </button>
+      </div>
+    );
+  }
+
+  const type: TicketType = leg.ticketType ?? 'one-way';
+  const cmp = leg.fareComparison;
+  const isLiveComparison = cmp?.basis === 'live';
+  const chosenIsCheapest = !cmp || cmp.cheaper === 'tie' || cmp.cheaper === type;
+
+  return (
+    <div className="px-3.5 pb-2.5 space-y-2">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+        <div
+          role="radiogroup"
+          aria-label={`Ticket type for ${legLabel(leg)}`}
+          className="inline-flex rounded-lg bg-neutral-100 p-0.5"
+        >
+          {(['one-way', 'return'] as const).map((t) => (
+            <button
+              key={t}
+              type="button"
+              role="radio"
+              aria-checked={type === t}
+              onClick={() => onChangeTicket(leg.id, { type: t })}
+              className={`rounded-md px-2.5 py-1 text-[11px] transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF812E] ${
+                type === t
+                  ? 'bg-white font-bold text-[#111827] shadow-xs'
+                  : 'font-medium text-[#4B5563] hover:text-[#111827]'
+              }`}
+            >
+              {t === 'one-way' ? 'One-way' : 'Return'}
+            </button>
+          ))}
+        </div>
+
+        {type === 'return' &&
+          (pairedLeg ? (
+            <span className="text-[11px] text-[#4B5563] tabular-nums">
+              Back {leg.returnDate ? formatShortDate(leg.returnDate) : ''} · covers{' '}
+              <span className="font-medium text-[#111827]">{legLabel(pairedLeg)}</span>
+            </span>
+          ) : (
+            <label className="inline-flex items-center gap-1.5 text-[11px] text-[#4B5563]">
+              Return on
+              <input
+                type="date"
+                value={leg.returnDate ?? ''}
+                min={leg.departureDate}
+                onChange={(e) => e.target.value && onChangeTicket(leg.id, { returnDate: e.target.value })}
+                className="rounded-md border border-neutral-200 bg-white px-1.5 py-0.5 font-mono text-[11px] text-[#111827] focus:outline-none focus:ring-2 focus:ring-[#FF812E]"
+              />
+            </label>
+          ))}
+
+        {leg.ticketLocked && (
+          <button
+            type="button"
+            onClick={() => onChangeTicket(leg.id, { auto: true })}
+            className="inline-flex items-center gap-1 text-[11px] font-medium text-[#4B5563] hover:text-[#111827] cursor-pointer"
+          >
+            <Sparkles className="h-3 w-3 text-[#FF812E]" aria-hidden="true" />
+            Pick the cheapest for me
+          </button>
+        )}
+      </div>
+
+      {pairedLeg && cmp && (
+        <div
+          className={`flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2 text-[11px] ${
+            isLiveComparison && chosenIsCheapest
+              ? 'border-[#FFD6BA] bg-[#FFF4ED]'
+              : 'border-neutral-200 bg-neutral-50'
+          }`}
+        >
+          {isLiveComparison ? (
+            <>
+              <div className="space-y-0.5">
+                <div className="font-semibold text-[#111827]">
+                  {cmp.cheaper === 'tie'
+                    ? 'Return and two one-ways cost the same'
+                    : cmp.cheaper === 'return'
+                      ? `Return ticket is $${cmp.savingsUsd.toFixed(0)} cheaper`
+                      : `Two one-way tickets are $${cmp.savingsUsd.toFixed(0)} cheaper`}
+                </div>
+                <div className="font-mono text-[#4B5563] tabular-nums">
+                  Return ${cmp.returnTotalUsd.toFixed(0)} · One-way {legLabel(leg)} + {legLabel(pairedLeg)}{' '}
+                  ${cmp.oneWayTotalUsd.toFixed(0)}
+                </div>
+              </div>
+              {chosenIsCheapest ? (
+                <span className="inline-flex items-center gap-1 font-semibold text-[#E56B1A]">
+                  <Check className="h-3 w-3" aria-hidden="true" />
+                  {leg.ticketLocked ? 'Your choice' : 'Selected automatically'}
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => onChangeTicket(leg.id, { type: cmp.cheaper as TicketType })}
+                  className="rounded-lg bg-[#FF812E] px-2.5 py-1 font-semibold text-white hover:bg-[#E56B1A] cursor-pointer"
+                >
+                  Switch to {cmp.cheaper === 'return' ? 'return' : 'one-way'} · save $
+                  {cmp.savingsUsd.toFixed(0)}
+                </button>
+              )}
+            </>
+          ) : (
+            <span className="text-[#4B5563]">
+              Return vs two one-ways ({legLabel(pairedLeg)}): compared once live fares are available.
+              Estimates are not used to pick a ticket.
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function LegTransitPanel({
   leg,
+  pairedLeg,
+  coveredByLeg,
+  onChangeTicket,
   modeFilter,
   vouchers,
   isActive,
@@ -231,6 +437,11 @@ export function LegTransitPanel({
                     <span className="font-mono font-normal text-[#4B5563]">
                       {selectedOption.routeCode}
                     </span>
+                    {leg.ticketType === 'return' && (
+                      <span className="rounded-md border border-[#FFD6BA] bg-[#FFF4ED] px-1.5 py-px text-[10px] font-semibold text-[#E56B1A]">
+                        Return
+                      </span>
+                    )}
                   </>
                 )}
               </div>
@@ -274,9 +485,16 @@ export function LegTransitPanel({
           </div>
         </button>
 
-        {selectedOption?.bookingUrl && !expanded && (
+        <TicketControls
+          leg={leg}
+          pairedLeg={pairedLeg}
+          coveredByLeg={coveredByLeg}
+          onChangeTicket={onChangeTicket}
+        />
+
+        {selectedOption?.bookingUrl && !expanded && !coveredByLeg && (
           <div className="flex justify-end px-3.5 pb-2.5">
-            <BookLink option={selectedOption} />
+            <BookLinks option={selectedOption} />
           </div>
         )}
 
@@ -337,6 +555,11 @@ export function LegTransitPanel({
                               · #1 Rank
                             </span>
                           )}
+                          {option.ticketType === 'return' && option.returnDate && (
+                            <span className="rounded-md border border-[#FFD6BA] bg-[#FFF4ED] px-1.5 py-px text-[10px] font-semibold text-[#E56B1A]">
+                              Return · back {formatShortDate(option.returnDate)}
+                            </span>
+                          )}
                           {option.isOvernightSleeper && (
                             <span className="inline-flex items-center gap-1 text-[11px] font-medium text-[#4B5563]">
                               <Moon className="w-3 h-3 text-[#E56B1A]" />
@@ -346,6 +569,13 @@ export function LegTransitPanel({
                         </div>
 
                         <div className="text-[11px] text-[#111827] font-mono tabular-nums">
+                          {(option.departureAt?.slice(0, 10) || leg.departureDate) && (
+                            <span className="font-sans text-[#4B5563]">
+                              {formatShortDate(
+                                (option.departureAt?.slice(0, 10) || leg.departureDate)!
+                              )}{' '}
+                            </span>
+                          )}
                           {option.departureTime || '—'} → {option.arrivalTime || '—'}{' '}
                           <span className="font-sans text-[#4B5563]">
                             · {option.originStation} → {option.destinationStation}
@@ -375,6 +605,44 @@ export function LegTransitPanel({
                           <span aria-hidden="true">·</span>
                           <span>{option.co2Kg} kg CO₂</span>
                         </div>
+
+                        {option.hops && option.hops.length > 0 && (
+                          <div className="space-y-0.5">
+                            {option.hops.map((hop, hIdx) => (
+                              <div key={`${hop.flightNumber}-${hIdx}`}>
+                                <div className="flex flex-wrap items-center gap-x-1.5 text-[11px] font-mono text-[#4B5563] tabular-nums">
+                                  {hop.airlineLogo && (
+                                    <img
+                                      src={hop.airlineLogo}
+                                      alt=""
+                                      loading="lazy"
+                                      referrerPolicy="no-referrer"
+                                      className="h-3.5 w-3.5 rounded-sm object-contain"
+                                    />
+                                  )}
+                                  <span className="font-semibold text-[#111827]">
+                                    {hop.flightNumber || hop.airline}
+                                  </span>
+                                  <span>
+                                    {hop.fromCode} {hop.departureAt.slice(11, 16)} → {hop.toCode}{' '}
+                                    {hop.arrivalAt.slice(11, 16)}
+                                  </span>
+                                  <span>{formatDuration(hop.durationMinutes / 60)}</span>
+                                  {hop.airplane && (
+                                    <span className="font-sans">· {hop.airplane}</span>
+                                  )}
+                                </div>
+                                {option.layovers?.[hIdx] && (
+                                  <div className="pl-5 text-[11px] text-[#D97706] tabular-nums">
+                                    Layover {formatDuration(option.layovers[hIdx].minutes / 60)} in{' '}
+                                    {option.layovers[hIdx].code}
+                                    {option.layovers[hIdx].overnight ? ' · overnight' : ''}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
 
                         {option.segments && option.segments.length > 0 && (
                           <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] font-mono text-[#4B5563] tabular-nums">
@@ -408,6 +676,10 @@ export function LegTransitPanel({
                           </span>
                         </div>
 
+                        <div className="text-[10px] text-[#4B5563]">
+                          {option.ticketType === 'return' ? 'return total' : 'one-way'} · per person
+                        </div>
+
                         <div>
                           <SmartScoreBadge score={option.smartScore} />
                         </div>
@@ -432,7 +704,7 @@ export function LegTransitPanel({
                       <SourceChip source={option.dataSource} />
                       <FlagChips flags={b.flags} />
                     </div>
-                    <BookLink option={option} />
+                    {!coveredByLeg && <BookLinks option={option} />}
                   </div>
                   </div>
                 );

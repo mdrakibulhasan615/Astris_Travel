@@ -124,6 +124,19 @@ export function toMetroCode(code: string): string {
   return AIRPORT_METRO[upper] ?? upper;
 }
 
+/**
+ * The airports a flight search should cover for a stop code. A metro code (`LON`) is not a place
+ * flight providers can search, so it expands to the city's airports (`LHR,LGW,STN,…`); an airport
+ * the traveller picked specifically (`STN`) stays exactly that airport.
+ */
+export function airportsForCity(code: string): string[] {
+  const upper = (code || '').trim().toUpperCase();
+  if (!IATA_RE.test(upper)) return [];
+  if (AIRPORT_METRO[upper]) return [upper];
+  const members = Object.keys(AIRPORT_METRO).filter((a) => AIRPORT_METRO[a] === upper);
+  return Array.from(new Set([toAirportCode(upper), ...members]));
+}
+
 /** Exact airport coordinates for an airport *or* city code, or null when unknown. */
 export function resolveAirport(code: string): AirportPoint | null {
   if (!code || !IATA_RE.test(code.trim())) return null;

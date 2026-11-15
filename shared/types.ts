@@ -2,6 +2,16 @@ export type TransitMode = 'flight' | 'train' | 'bus' | 'ferry';
 
 export type ModeFilter = 'all' | TransitMode;
 
+/** A leg is booked as a single one-way ticket or as a return ticket (there and back). */
+export type TicketType = 'one-way' | 'return';
+
+/** What the traveller chose for one leg. Absent = automatic (cheapest structure wins). */
+export interface LegTicketPref {
+  type: TicketType;
+  /** Return date `YYYY-MM-DD`; defaults to the matching later leg or the day you leave. */
+  returnDate?: string;
+}
+
 export type VttsTier = 'backpacker' | 'explorer' | 'express' | 'custom';
 
 export interface UserProfile {
@@ -64,6 +74,8 @@ export interface SmartScoreBreakdown {
   transferPenaltyUsd: number;
   /** Friction when consecutive segments use different airports/stations. */
   airportChangePenaltyUsd: number;
+  /** 2 for a return ticket: the time and comfort terms above are counted for both journeys. */
+  journeys?: number;
   priceWeight: number;
   timeWeight: number;
   flags: ScoreFlag[];
@@ -119,6 +131,30 @@ export interface TransitSegment {
 /** Merchants we deep-link to directly (no metasearch hop). */
 export type BookingProvider = 'tripcom' | 'flixbus' | '12go' | 'booking' | 'agoda';
 
+/** One flight on a live itinerary, exactly as the provider reported it. */
+export interface FlightHop {
+  flightNumber: string;
+  airline: string;
+  airlineLogo?: string;
+  airplane?: string;
+  travelClass?: string;
+  fromCode: string;
+  fromName: string;
+  /** `YYYY-MM-DD HH:MM` local time */
+  departureAt: string;
+  toCode: string;
+  toName: string;
+  arrivalAt: string;
+  durationMinutes: number;
+}
+
+export interface Layover {
+  code: string;
+  name: string;
+  minutes: number;
+  overnight?: boolean;
+}
+
 export interface TransitOption {
   id: string;
   legId?: string;
@@ -145,6 +181,19 @@ export interface TransitOption {
   /** Merchant `bookingUrl` lands on. */
   bookingProvider?: BookingProvider;
   /**
+   * `return` options are priced for the whole round trip (`basePriceUsd` is the total) and scored
+   * on both journeys. Absent means one-way.
+   */
+  ticketType?: TicketType;
+  /** Date of the way back, for `return` options. */
+  returnDate?: string;
+  /** Ground return tickets are two searches (merchants sell each direction); this is the way back. */
+  returnBookingUrl?: string;
+  /** Live itineraries: every flight with its number, airline, aircraft and local times. */
+  hops?: FlightHop[];
+  layovers?: Layover[];
+  airlineLogo?: string;
+  /**
    * Where this option's data came from. Only `live` is a real, current fare; `curated` and
    * `synthesized` are sample/estimated data and the UI labels them as such.
    */
@@ -162,6 +211,19 @@ export interface TransitOption {
   segments?: TransitSegment[];
 }
 
+/** One-way tickets vs a return ticket for a pair of legs that go there and back. */
+export interface FareComparison {
+  /** `live`: all three prices are real fares. `estimate`: not decisive, never auto-selected. */
+  basis: 'live' | 'estimate';
+  /** The later leg that comes back (a return ticket covers it). */
+  pairedLegId: string;
+  /** This leg's cheapest one-way plus the paired leg's cheapest one-way. */
+  oneWayTotalUsd: number;
+  returnTotalUsd: number;
+  cheaper: 'one-way' | 'return' | 'tie';
+  savingsUsd: number;
+}
+
 export interface TripLeg {
   id: string;
   fromStopId: string;
@@ -172,7 +234,24 @@ export interface TripLeg {
   toCode: string;
   distanceKm: number;
   selectedOptionId: string;
+  /** The options for the current `ticketType`: what the card lists and the map draws. */
   transitOptions: TransitOption[];
+  /** Departure date of this leg (`YYYY-MM-DD`). */
+  departureDate?: string;
+  /** Both ticket structures, kept side by side so switching is instant and comparable. */
+  oneWayOptions?: TransitOption[];
+  returnOptions?: TransitOption[];
+  ticketType?: TicketType;
+  /** True when the traveller chose the type; false when the cheaper fare was picked for them. */
+  ticketLocked?: boolean;
+  returnDate?: string;
+  /** Later leg that comes back to where this one started (a return here covers it). */
+  pairedLegId?: string;
+  /** This leg is already paid for by the return ticket on another leg. */
+  coveredByLegId?: string;
+  fareComparison?: FareComparison;
+  /** Identity of the fare search (date, route, travellers); equal keys can reuse live fares. */
+  fareKey?: string;
 }
 
 export interface Voucher {
@@ -208,6 +287,8 @@ export interface Trip {
   stops: TripStop[];
   legs: TripLeg[];
   appliedVoucherCodes: string[];
+  /** Ticket choices the traveller made, by leg id. */
+  legPrefs?: Record<string, LegTicketPref>;
 }
 
 export interface OptimizationCandidate {
