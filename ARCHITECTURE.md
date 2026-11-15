@@ -490,3 +490,12 @@ those as `dataSource: 'cached'` ("Recent fare" chip) instead of the sample fligh
   `AFFILIATE_DEFAULTS.travelpayoutsMarker` (`806003`).
 - Both are public ids (every outbound link carries them), so defaults are safe; an environment variable overrides them.
 - Booking.com, Agoda and Trip.com keep their exact-search deep links without affiliate ids until ids are configured.
+
+## 19. Ticket Shapes — `src/index.css`, `src/useTicketMask.ts`
+
+Tickets are drawn as their true shapes, not rectangles with white circles painted on. Notches and scalloped edges
+are real holes cut with CSS `mask-image` on the inner ticket element (`.mask-bp`, `.mask-bus`, `.mask-train`); the
+outline and shadow are chained `drop-shadow()` filters on the wrapper (`.ticket-shape`), so they follow the cut-outs
+(a filter on the same element as the mask would run before it and be cut away). A selected ticket
+(`data-selected`) gets an orange outline, lifts 4 px and gets a larger orange shadow. `useTicketMask` measures the
+seam (stub top / fare band) into `--tear-y` and picks `--pitch` so whole scallops fit the bus ticket's height.

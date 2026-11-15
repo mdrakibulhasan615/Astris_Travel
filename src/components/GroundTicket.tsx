@@ -1,4 +1,5 @@
-import { useMemo, type CSSProperties, type ReactNode } from 'react';
+import { useMemo, useRef, type CSSProperties, type ReactNode } from 'react';
+import { useTicketMask } from '../useTicketMask.ts';
 import { Backpack, Bus, Check, Luggage, TrainFront } from 'lucide-react';
 import { formatDuration } from '../../shared/smartScore.ts';
 import { describeBaggageStub } from '../../shared/ticketDetails.ts';
@@ -82,22 +83,6 @@ function BagLines({ option, className = '', note = true, inline = false }: { opt
 
 // ── Bus ──────────────────────────────────────────────────────────────────────────────────────
 
-/** A column of semicircle cut-outs along a ticket edge (the scalloped border of a paper bus ticket). */
-function Scallops({ side }: { side: 'left' | 'right' }) {
-  return (
-    <div
-      aria-hidden="true"
-      className={`pointer-events-none absolute inset-y-0 flex flex-col justify-around py-1 ${
-        side === 'left' ? '-left-2' : '-right-2'
-      }`}
-    >
-      {Array.from({ length: 7 }, (_, i) => (
-        <span key={i} className="h-4 w-4 rounded-full bg-white" />
-      ))}
-    </div>
-  );
-}
-
 function BusTicket({
   option,
   rank,
@@ -114,10 +99,13 @@ function BusTicket({
   const f = useTicketFacts(option, departureDate);
   const b = option.smartScoreBreakdown;
   const panel = `color-mix(in srgb, ${BUS_ACCENT} 55%, white)`;
+  const cardRef = useRef<HTMLDivElement>(null);
+  useTicketMask(cardRef);
 
   return (
-    <div className="@container">
+    <div className="@container ticket-shape" data-selected={isSelected}>
       <div
+        ref={cardRef}
         data-option-id={option.id}
         data-source={option.dataSource ?? 'unknown'}
         data-route-code={option.routeCode}
@@ -125,12 +113,8 @@ function BusTicket({
         data-ticket="bus"
         onClick={onSelect}
         style={{ background: BUS_ACCENT, color: BUS_INK }}
-        className={`relative cursor-pointer overflow-hidden rounded-2xl px-6 py-0.5 shadow-sm transition-shadow hover:shadow-md ${
-          isSelected ? 'ring-2 ring-[#FF812E]' : 'ring-1 ring-neutral-200'
-        }`}
+        className="mask-bus relative cursor-pointer overflow-hidden rounded-2xl px-6 py-0.5"
       >
-        <Scallops side="left" />
-        <Scallops side="right" />
         {/* Dotted perforation just inside each scalloped edge */}
         <span aria-hidden="true" className="pointer-events-none absolute inset-y-3 left-3.5 border-l-2 border-dotted border-white/80" />
         <span aria-hidden="true" className="pointer-events-none absolute inset-y-3 right-3.5 border-r-2 border-dotted border-white/80" />
@@ -284,19 +268,21 @@ function TrainTicket({
   const b = option.smartScoreBreakdown;
   const watermark = useMemo(() => `${option.carrier.toUpperCase()} · `.repeat(160), [option.carrier]);
   const mono = 'font-mono';
+  const cardRef = useRef<HTMLDivElement>(null);
+  const bandRef = useRef<HTMLDivElement>(null);
+  useTicketMask(cardRef, bandRef);
 
   return (
-    <div className="@container">
+    <div className="@container ticket-shape" data-selected={isSelected}>
       <div
+        ref={cardRef}
         data-option-id={option.id}
         data-source={option.dataSource ?? 'unknown'}
         data-route-code={option.routeCode}
         data-price={option.basePriceUsd}
         data-ticket="train"
         onClick={onSelect}
-        className={`relative cursor-pointer overflow-hidden rounded-2xl bg-[#FBFAF2] shadow-sm transition-shadow hover:shadow-md ${
-          isSelected ? 'ring-2 ring-[#FF812E]' : 'ring-1 ring-neutral-200'
-        }`}
+        className="mask-train relative cursor-pointer overflow-hidden rounded-2xl bg-[#FBFAF2]"
       >
         {/* Header band */}
         <div
@@ -406,14 +392,7 @@ function TrainTicket({
         </div>
 
         {/* Fare band, torn off from the body by a perforation with side notches */}
-        <div className="relative text-white" style={{ background: TRAIN_ACCENT }}>
-          {(['left-0 -translate-x-1/2', 'right-0 translate-x-1/2'] as const).map((side) => (
-            <span
-              key={side}
-              aria-hidden="true"
-              className={`pointer-events-none absolute top-0 h-4 w-4 -translate-y-1/2 rounded-full bg-white ring-1 ring-neutral-200 ${side}`}
-            />
-          ))}
+        <div ref={bandRef} className="relative text-white" style={{ background: TRAIN_ACCENT }}>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-1">
             <span
               aria-hidden="true"
