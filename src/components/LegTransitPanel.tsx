@@ -20,6 +20,7 @@ import { useCurrency } from '../currency.tsx';
 import { formatDuration } from '../../shared/smartScore.ts';
 import { PROVIDER_NAMES } from '../../shared/affiliate.ts';
 import { BoardingPass, TagPill } from './BoardingPass.tsx';
+import { GroundTicket } from './GroundTicket.tsx';
 import { SmartScoreBadge } from './SmartScoreBadge.tsx';
 import type {
   BaggageInfo,
@@ -571,6 +572,36 @@ export function LegTransitPanel({
                       isSelected={isSelected}
                       voucherCode={voucherCode}
                       departureDate={leg.departureDate}
+                      onSelect={() => {
+                        onActivateLeg(leg.id);
+                        onSelectOption(leg.id, option.id);
+                      }}
+                      extras={
+                        <>
+                          <SourceChip source={option.dataSource} />
+                          <FlagChips flags={b.flags} />
+                        </>
+                      }
+                      renderBook={
+                        coveredByLeg
+                          ? undefined
+                          : (accent) => <BookLinks option={option} accent={accent} />
+                      }
+                    />
+                  );
+                }
+
+                if (option.mode === 'bus' || option.mode === 'train') {
+                  return (
+                    <GroundTicket
+                      key={option.id}
+                      option={option}
+                      rank={idx}
+                      isSelected={isSelected}
+                      voucherCode={voucherCode}
+                      departureDate={leg.departureDate}
+                      fromCode={leg.fromCode}
+                      toCode={leg.toCode}
                       onSelect={() => {
                         onActivateLeg(leg.id);
                         onSelectOption(leg.id, option.id);

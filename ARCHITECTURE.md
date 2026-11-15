@@ -413,7 +413,7 @@ the shared one), and nothing needs a long-running process.
   stub (baggage, price in the selected currency, Smart Score, mini barcode, Book button). A faint airplane
   watermark sits behind the route. The old transfer/step summary lines are not rendered.
 - **Responsive by container width, not screen width.** The pass sits inside a Tailwind `@container` and
-  switches layout at `@lg` (512 px of its own width): wider = main body 70 % / stub 30 % with a vertical
+  switches layout at `@[28rem]` (448 px of its own width; the pane card is ~486 px at 100 % zoom on a 150 %-scaled laptop, which the old 512 px threshold missed, so it rendered as a stacked square): wider = main body 2/3 / stub 1/3 with a vertical
   dashed tear line; narrower = stub below with a horizontal tear line and side notches. This matters
   because the itinerary pane is only about 550 px wide on a laptop even though the screen is wide.
 - **Airline colours (`src/utils/airlineColors.ts`).** IATA code → `{ color, text }` for ~60 carriers (name
@@ -425,3 +425,17 @@ the shared one), and nothing needs a long-running process.
   first airline's colour, darkened when it would be too pale on white.
 - **Barcodes are decorative** (seeded from the option id, so each looks different but is stable), not
   scannable and not tied to a booking.
+
+## 15. Bus and Train Tickets — `src/components/GroundTicket.tsx`
+
+Coaches and trains are drawn as tickets too (ferries keep the compact card). Both use the same container-query
+approach (`@[28rem]`) and the same data as flights: tags, baggage line, price/voucher, Smart Score, Book button.
+
+- **Bus (lime `#abed00`).** Scalloped left/right edges with dotted perforations, a darker-lime inner panel with
+  an olive outline, `BUS TICKET` title, route, date/duration/stops/service, a ticket-number line, a vertical
+  barcode on the right and a dashed stub with baggage, fare and an olive Book button. Wide cards put the stub
+  beside the route (landscape); narrow cards stack it below.
+- **Train (purple `#5600D6`).** Rail-ticket style: purple header band (`OPERATOR · TRAIN TICKET`, `OUTWARD`/`RETURN`),
+  cream monospaced body with the operator name faintly repeated behind it, from/to with times, and a purple
+  fare band separated by a perforation with side notches, holding the price and a white Book button.
+- Large codes are the leg's city codes; station names sit underneath. Ticket numbers are decorative.

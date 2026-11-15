@@ -30,7 +30,7 @@ export function TagPill({ tag }: { tag: OptionTag }) {
 
 // ── Barcodes (decorative; seeded from the ticket so each one looks different but stays stable) ──
 
-function seededRandom(seed: string): () => number {
+export function seededRandom(seed: string): () => number {
   let h = 1779033703 ^ seed.length;
   for (let i = 0; i < seed.length; i++) {
     h = Math.imul(h ^ seed.charCodeAt(i), 3432918353);
@@ -45,7 +45,7 @@ function seededRandom(seed: string): () => number {
   };
 }
 
-function Barcode({
+export function Barcode({
   seed,
   vertical = false,
   className = '',
@@ -87,21 +87,21 @@ function Barcode({
 
 // ── Helpers ──────────────────────────────────────────────────────────────────────────────────
 
-const TONE = { good: 'text-[#15803D]', warn: 'text-[#B45309]', muted: 'text-[#4B5563]' } as const;
+export const TONE = { good: 'text-[#15803D]', warn: 'text-[#B45309]', muted: 'text-[#4B5563]' } as const;
 
-function ticketDate(iso: string | undefined): string {
+export function ticketDate(iso: string | undefined): string {
   if (!iso || !/^\d{4}-\d{2}-\d{2}/.test(iso)) return '—';
   return new Date(`${iso.slice(0, 10)}T00:00:00Z`)
     .toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' })
     .toUpperCase();
 }
 
-function splitDayOffset(time: string | undefined): { clock: string; offset: string } {
+export function splitDayOffset(time: string | undefined): { clock: string; offset: string } {
   const m = /^(\d{1,2}:\d{2})(?:\s*\+(\d)d)?/.exec(time ?? '');
   return { clock: m?.[1] ?? '—', offset: m?.[2] ? `+${m[2]}` : '' };
 }
 
-function MicroLabel({ children }: { children: ReactNode }) {
+export function MicroLabel({ children }: { children: ReactNode }) {
   return (
     <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-[#6B7280]">{children}</div>
   );
@@ -185,7 +185,7 @@ export function BoardingPass({
     >
       {/* Header bar: airline colour(s), spanning the main body and the stub */}
       <div
-        className="grid @lg:grid-cols-[minmax(0,7fr)_minmax(0,3fr)]"
+        className="grid @[28rem]:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]"
         style={{ background: palette.background, color: palette.text }}
       >
         <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 px-4 py-2">
@@ -209,7 +209,7 @@ export function BoardingPass({
           </div>
         </div>
         <div
-          className="hidden min-w-0 items-center px-3 py-2 text-[9.5px] font-bold uppercase tracking-[0.1em] @lg:flex"
+          className="hidden min-w-0 items-center px-3 py-2 text-[9.5px] font-bold uppercase tracking-[0.1em] @[28rem]:flex"
           title={`Fare summary · ${travelClass}`}
         >
           <span className="truncate">
@@ -218,7 +218,7 @@ export function BoardingPass({
         </div>
       </div>
 
-      <div className="relative @lg:grid @lg:grid-cols-[minmax(0,7fr)_minmax(0,3fr)]">
+      <div className="relative @[28rem]:grid @[28rem]:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
         {/* Main body */}
         <div className="relative flex min-w-0">
           {/* Decorative barcode along the far-left edge */}
@@ -350,26 +350,26 @@ export function BoardingPass({
         {/* Tear line (vertical on wide screens): the perforation; notches are on the ticket edges */}
         <span
           aria-hidden="true"
-          className="pointer-events-none absolute bottom-0 left-[70%] top-0 hidden border-l-[1.5px] border-dashed border-neutral-300 @lg:block"
+          className="pointer-events-none absolute bottom-0 left-[66%] top-0 hidden border-l-[1.5px] border-dashed border-neutral-300 @[28rem]:block"
         />
 
         {/* Stub */}
-        <div className="relative border-t-[1.5px] border-dashed border-neutral-300 px-4 pb-4 pt-3 @lg:flex @lg:flex-col @lg:gap-3 @lg:border-t-0">
+        <div className="relative border-t-[1.5px] border-dashed border-neutral-300 px-3 pb-4 pt-3 @[28rem]:flex @[28rem]:flex-col @[28rem]:gap-3 @[28rem]:border-t-0">
           {/* Tear line (horizontal on narrow screens) notches */}
           {(['left-0 -translate-x-1/2', 'right-0 translate-x-1/2'] as const).map((side) => (
             <span
               key={side}
               aria-hidden="true"
-              className={`pointer-events-none absolute top-0 h-4 w-4 -translate-y-1/2 rounded-full bg-white ring-1 ring-neutral-200 @lg:hidden ${side}`}
+              className={`pointer-events-none absolute top-0 h-4 w-4 -translate-y-1/2 rounded-full bg-white ring-1 ring-neutral-200 @[28rem]:hidden ${side}`}
             />
           ))}
 
-          <div className="mb-2 flex items-center justify-between @lg:hidden">
+          <div className="mb-2 flex items-center justify-between @[28rem]:hidden">
             <MicroLabel>Fare summary</MicroLabel>
             <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#4B5563]">{travelClass}</span>
           </div>
 
-          <div className="grid grid-cols-2 items-start gap-3 @lg:flex @lg:flex-col @lg:gap-3">
+          <div className="grid grid-cols-2 items-start gap-3 @[28rem]:flex @[28rem]:flex-col @[28rem]:gap-3">
             {/* Baggage */}
             <div className="min-w-0 space-y-1.5">
               <MicroLabel>Baggage</MicroLabel>
@@ -400,7 +400,7 @@ export function BoardingPass({
             </div>
 
             {/* Price */}
-            <div className="text-right @lg:text-left">
+            <div className="text-right @[28rem]:text-left">
               <MicroLabel>{isReturn ? 'Return total' : 'Fare'} · per person</MicroLabel>
               {b.discountAppliedUsd > 0 && (
                 <div className="mt-0.5 font-mono text-[11px] leading-none text-[#4B5563] line-through tabular-nums">
@@ -421,7 +421,7 @@ export function BoardingPass({
             </div>
           </div>
 
-          <div className="mt-3 space-y-2 @lg:mt-auto">
+          <div className="mt-3 space-y-2 @[28rem]:mt-auto">
             <Barcode seed={`${option.id}-stub`} className="h-6 w-full text-[#111827]/80" />
             {renderBook && <div className="space-y-1.5">{renderBook(accentButton)}</div>}
           </div>
@@ -434,11 +434,11 @@ export function BoardingPass({
       {/* Punched semicircles where the tear line meets the top and bottom edges (wide screens) */}
       <span
         aria-hidden="true"
-        className="pointer-events-none absolute left-[70%] top-0 hidden h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white ring-1 ring-neutral-200 @lg:block"
+        className="pointer-events-none absolute left-[66%] top-0 hidden h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white ring-1 ring-neutral-200 @[28rem]:block"
       />
       <span
         aria-hidden="true"
-        className="pointer-events-none absolute bottom-0 left-[70%] hidden h-4 w-4 -translate-x-1/2 translate-y-1/2 rounded-full bg-white ring-1 ring-neutral-200 @lg:block"
+        className="pointer-events-none absolute bottom-0 left-[66%] hidden h-4 w-4 -translate-x-1/2 translate-y-1/2 rounded-full bg-white ring-1 ring-neutral-200 @[28rem]:block"
       />
     </div>
     </div>
