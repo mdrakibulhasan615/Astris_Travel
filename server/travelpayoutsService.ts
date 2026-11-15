@@ -1,4 +1,5 @@
 import { getEnv, warnMissingKey } from './env.ts';
+import { AFFILIATE_DEFAULTS } from '../shared/config.ts';
 import { VOUCHERS_CATALOG } from '../shared/mockDataset.ts';
 import { resolveAirport } from '../shared/airports.ts';
 import { computeSmartScore, haversineDistanceKm, round2 } from '../shared/smartScore.ts';
@@ -31,7 +32,7 @@ const DATE_TOLERANCE_DAYS = 3;
 const MAX_OPTIONS = 6;
 
 export const travelpayoutsToken = (): string | undefined => getEnv('TRAVELPAYOUTS_TOKEN');
-const marker = (): string | undefined => getEnv('TRAVELPAYOUTS_MARKER');
+const marker = (): string | undefined => getEnv('TRAVELPAYOUTS_MARKER') ?? AFFILIATE_DEFAULTS.travelpayoutsMarker;
 
 // ── Reference data (airline names, airport time zones): public files, loaded once ────────────────
 

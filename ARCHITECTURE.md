@@ -481,3 +481,12 @@ those as `dataSource: 'cached'` ("Recent fare" chip) instead of the sample fligh
 - **Rules that follow.** `cached` counts as a real fare for the one-way vs return comparison and for reusing earlier
   results; a return derived from a cached one-way is an estimate. With `USE_REAL_DATA` on, SerpApi is used as before
   and this service is not called. A rejected or missing token degrades to the sample flights.
+
+## 18. Partner Ids — `shared/config.ts`
+
+- **12Go** (coaches, trains, ferries) takes `z=<id>`; the id defaults to `AFFILIATE_DEFAULTS.twelveGoAffiliateId`
+  (`17520220`) when `TWELVEGO_AFFILIATE_ID` is unset.
+- **Aviasales** fare links (recent fares in sample mode) get `marker=` from `TRAVELPAYOUTS_MARKER`, defaulting to
+  `AFFILIATE_DEFAULTS.travelpayoutsMarker` (`806003`).
+- Both are public ids (every outbound link carries them), so defaults are safe; an environment variable overrides them.
+- Booking.com, Agoda and Trip.com keep their exact-search deep links without affiliate ids until ids are configured.

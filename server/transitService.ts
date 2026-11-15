@@ -6,6 +6,7 @@ import {
   DESTINATION_HUBS,
   VOUCHERS_CATALOG,
 } from '../shared/mockDataset.ts';
+import { AFFILIATE_DEFAULTS } from '../shared/config.ts';
 import { attachBookingUrls, configureAffiliate, isFlixCarrier } from '../shared/affiliate.ts';
 import {
   airportsForCity,
@@ -52,7 +53,7 @@ configureAffiliate({
   tripcomSid: getEnv('TRIPCOM_SID'),
   bookingAid: getEnv('BOOKING_AID'),
   agodaCid: getEnv('AGODA_CID'),
-  twelveGoAffiliateId: getEnv('TWELVEGO_AFFILIATE_ID'),
+  twelveGoAffiliateId: getEnv('TWELVEGO_AFFILIATE_ID') ?? AFFILIATE_DEFAULTS.twelveGoAffiliateId,
   trackingTemplates: {
     tripcom: getEnv('TRIPCOM_TRACKING_TEMPLATE'),
     flixbus: getEnv('FLIXBUS_TRACKING_TEMPLATE'),
