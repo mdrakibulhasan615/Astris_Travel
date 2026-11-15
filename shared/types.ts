@@ -131,6 +131,26 @@ export interface TransitSegment {
 /** Merchants we deep-link to directly (no metasearch hop). */
 export type BookingProvider = 'tripcom' | 'flixbus' | '12go' | 'booking' | 'agoda';
 
+/** Merchants shown side by side in a flight's "Proceed to booking" comparison panel. */
+export type OfferProviderId = 'tripcom' | 'kiwi' | 'skyscanner' | 'google-flights';
+
+/**
+ * One merchant's offer for a flight ticket. The price is per person in USD (the app converts it for
+ * display). `estimated` is true when it is not a quote from that merchant: only the primary
+ * merchant's offer carries the live fare, the others are derived from it and confirmed on their site.
+ */
+export interface AffiliateOffer {
+  providerId: OfferProviderId;
+  /** Display name, e.g. `Trip.com`. */
+  provider: string;
+  /** Key of the merchant badge the UI draws (same as `providerId`). */
+  logo: OfferProviderId;
+  priceUsd: number;
+  /** Deep link to that merchant's results for this exact route and date. */
+  url: string;
+  estimated: boolean;
+}
+
 /** Whether a bag comes with the fare. `unknown` = the provider did not say. */
 export type BagStatus = 'included' | 'fee' | 'none' | 'unknown';
 
@@ -207,6 +227,8 @@ export interface TransitOption {
   returnDate?: string;
   /** Ground return tickets are two searches (merchants sell each direction); this is the way back. */
   returnBookingUrl?: string;
+  /** Flights: the merchants that sell this ticket, with their prices and links (see AffiliateOffer). */
+  offers?: AffiliateOffer[];
   baggage?: BaggageInfo;
   /** `Cheapest`, `Cheapest Direct` and `Direct` badges, set when the list is ranked. */
   tags?: OptionTag[];

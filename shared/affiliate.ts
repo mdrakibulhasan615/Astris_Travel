@@ -1,4 +1,4 @@
-import type { BookingProvider, TransitOption } from './types.ts';
+import type { AffiliateOffer, BookingProvider, OfferProviderId, TransitOption } from './types.ts';
 import { toAirportCode, toMetroCode } from './airports.ts';
 import { completeTicketDetails } from './ticketDetails.ts';
 
@@ -416,6 +416,96 @@ export function buildBookingLink(option: LinkableOption, ctx: BookingContext): B
   return link;
 }
 
+// ── Flight offers (comparison panel) ──────────────────────────────────────────────────────────
+
+const OFFER_NAMES: Record<OfferProviderId, string> = {
+  tripcom: 'Trip.com',
+  kiwi: 'Kiwi.com',
+  skyscanner: 'Skyscanner',
+  'google-flights': 'Google Flights',
+};
+
+/** How much above the primary fare each other merchant is shown, as a [min, max] fraction. */
+const OFFER_MARKUP: Record<Exclude<OfferProviderId, 'tripcom'>, [number, number]> = {
+  kiwi: [0.012, 0.035],
+  skyscanner: [0.025, 0.05],
+  'google-flights': [0.035, 0.065],
+};
+
+/** Stable 0..1 value from a string, so an option shows the same offers on every render and reload. */
+function unitHash(seed: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < seed.length; i++) h = Math.imul(h ^ seed.charCodeAt(i), 16777619);
+  return ((h >>> 0) % 10_000) / 10_000;
+}
+
+/**
+ * The merchants that sell a flight, each with a deep link to its own results for this route, date
+ * and passenger count. The ticket's real fare belongs to the primary merchant (`primary`, the one
+ * `bookingUrl` points to); no price API exists for the others, so theirs are derived from it
+ * (always a little higher, fixed per ticket) and flagged `estimated` so the UI can say so. That
+ * also guarantees the cheapest offer is the fare shown on the ticket. Sorted cheapest first.
+ */
+export function buildFlightOffers(
+  option: LinkableOption & { id: string; basePriceUsd: number; dataSource?: string },
+  ctx: BookingContext,
+  primary: BookingLink
+): AffiliateOffer[] {
+  const live = option.dataSource === 'live';
+  const offers: AffiliateOffer[] = [
+    {
+      providerId: 'tripcom',
+      provider: OFFER_NAMES.tripcom,
+      logo: 'tripcom',
+      priceUsd: roundCents(option.basePriceUsd),
+      url: primary.url,
+      estimated: !live,
+    },
+  ];
+
+  const date = parseIsoDate(option.departureAt) ?? parseIsoDate(ctx.date);
+  const { from, to } = ticketAirports(option, ctx);
+  if (date && IATA_RE.test(from) && IATA_RE.test(to) && from !== to) {
+    const back = option.ticketType === 'return' ? parseIsoDate(ctx.returnDate) : null;
+    const isReturn = back !== null && utcDay(back) >= utcDay(date);
+    const pax = clampCount(ctx.passengers, 9);
+    const yymmdd = (d: DateParts) => `${String(d.y).slice(2)}${pad2(d.m)}${pad2(d.d)}`;
+
+    const kiwi = new URLSearchParams({ from, to, departure: isoDate(date) });
+    if (isReturn && back) kiwi.set('return', isoDate(back));
+    kiwi.set('adults', String(pax));
+
+    const sky = new URLSearchParams({ adultsv2: String(pax), cabinclass: 'economy', rtn: isReturn ? '1' : '0' });
+    const skyPath = `${from.toLowerCase()}/${to.toLowerCase()}/${yymmdd(date)}/${isReturn && back ? `${yymmdd(back)}/` : ''}`;
+
+    const gf = new URLSearchParams({
+      q: `Flights from ${from} to ${to} on ${isoDate(date)}${isReturn && back ? ` through ${isoDate(back)}` : ''}`,
+      curr: 'USD',
+    });
+
+    const urls: Record<Exclude<OfferProviderId, 'tripcom'>, string> = {
+      kiwi: `https://www.kiwi.com/deep?${kiwi.toString()}`,
+      skyscanner: `https://www.skyscanner.net/transport/flights/${skyPath}?${sky.toString()}`,
+      'google-flights': `https://www.google.com/travel/flights?${gf.toString()}`,
+    };
+    for (const id of Object.keys(urls) as Exclude<OfferProviderId, 'tripcom'>[]) {
+      const [lo, hi] = OFFER_MARKUP[id];
+      const markup = lo + (hi - lo) * unitHash(`${option.id}|${id}`);
+      offers.push({
+        providerId: id,
+        provider: OFFER_NAMES[id],
+        logo: id,
+        priceUsd: roundCents(option.basePriceUsd * (1 + markup)),
+        url: urls[id],
+        estimated: true,
+      });
+    }
+  }
+  return offers.sort((a, b) => a.priceUsd - b.priceUsd);
+}
+
+const roundCents = (n: number) => Math.round(n * 100) / 100;
+
 /**
  * Returns copies of `options` with `bookingUrl`/`bookingProvider` populated (overwriting stale
  * values so config, date, route and passenger changes always take effect) and their baggage / flight
@@ -430,6 +520,9 @@ export function attachBookingUrls(options: TransitOption[], ctx: BookingContext)
       bookingUrl: link.url,
       bookingProvider: link.provider,
       returnBookingUrl: link.returnUrl,
+      ...(option.mode === 'flight'
+        ? { offers: buildFlightOffers({ ...option, mode: 'flight' }, ctx, link) }
+        : {}),
     };
   });
 }

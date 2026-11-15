@@ -439,3 +439,23 @@ approach (`@[28rem]`) and the same data as flights: tags, baggage line, price/vo
   cream monospaced body with the operator name faintly repeated behind it, from/to with times, and a purple
   fare band separated by a perforation with side notches, holding the price and a white Book button.
 - Large codes are the leg's city codes; station names sit underneath. Ticket numbers are decorative.
+
+## 16. Flight Booking Comparison Panel — `src/components/BookingOffers.tsx`
+
+The stub button on every boarding pass is `PROCEED TO BOOKING` (in the ticket's brand colour). It opens one
+floating panel (a portal on `document.body`, `border-2 border-orange-500 shadow-xl`) listing the merchants that
+sell the flight, cheapest first; the cheapest has the orange `Buy` button, the rest light grey.
+
+- **Data.** `attachBookingUrls` adds `offers: AffiliateOffer[]` to every flight (sample and live alike), built by
+  `buildFlightOffers` in `shared/affiliate.ts`: Trip.com (the ticket's own deep link and real fare), Kiwi.com
+  (`/deep?from&to&departure&return`), Skyscanner (`/transport/flights/{from}/{to}/{yymmdd}/…`) and Google Flights
+  (`?q=…`). There is no price API for the non-primary merchants, so theirs are the fare plus a fixed 1–6.5 %
+  (hashed from the ticket id, so stable) and carry `estimated: true`; the panel says so. This also guarantees the
+  cheapest offer equals the price on the stub. Kiwi and Skyscanner links are unverified against the live sites'
+  current URL schemes, and only Trip.com carries an affiliate id.
+- **Prices** are USD in the data and converted with `useCurrency().fmt`; the voucher discount is subtracted from
+  every row so the stub and the cheapest row always agree.
+- **Behaviour.** One panel at a time (module-level store, so opening another card's panel switches to it); closes
+  on Escape, an outside click, or when the card scrolls out of view; follows the card on scroll/resize. It sits to
+  the right of the card when there is room (≥ 220 px, viewport ≥ 768 px), otherwise it is a centred modal with a
+  backdrop. Ground tickets keep their single Book button.
