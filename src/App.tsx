@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Analytics } from '@vercel/analytics/react';
 import {
   DndContext,
   KeyboardSensor,
@@ -1032,6 +1033,8 @@ export default function App() {
         onToggleVoucher={handleToggleVoucher}
         onValidateCode={handleValidateVoucherCode}
       />
+
+      <Analytics />
     </div>
   );
 }
