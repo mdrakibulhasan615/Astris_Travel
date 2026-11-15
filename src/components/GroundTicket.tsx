@@ -55,18 +55,18 @@ function useTicketFacts(option: TransitOption, departureDate?: string) {
     arr,
     stops,
     number,
-    date: ticketDate(option.departureAt ?? departureDate),
+    date: ticketDate(option.departureAt ?? departureDate, false),
     isReturn: option.ticketType === 'return',
     duration: formatDuration(option.inVehicleHours + option.layoverHours).toUpperCase(),
     bags: option.baggage ? describeBaggageStub(option.baggage) : null,
   };
 }
 
-function BagLines({ option, className = '' }: { option: TransitOption; className?: string }) {
+function BagLines({ option, className = '', note = true, inline = false }: { option: TransitOption; className?: string; note?: boolean; inline?: boolean }) {
   const bags = option.baggage ? describeBaggageStub(option.baggage) : null;
   if (!bags) return null;
   return (
-    <div className={`space-y-0.5 text-[10.5px] font-medium leading-tight ${className}`}>
+    <div className={`text-[10.5px] font-medium leading-tight ${inline ? 'flex flex-wrap gap-x-3 gap-y-0.5' : 'space-y-0.5'} ${className}`}>
       <div className={`flex items-center gap-1.5 ${TONE[bags.cabin.tone]}`}>
         <Backpack className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
         {bags.cabin.text}
@@ -75,7 +75,7 @@ function BagLines({ option, className = '' }: { option: TransitOption; className
         <Luggage className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
         {bags.checked.text}
       </div>
-      {option.baggage?.note && <div className="text-[10px] font-normal text-[#4B5563]">{option.baggage.note}</div>}
+      {note && option.baggage?.note && <div className="text-[10px] font-normal text-[#4B5563]">{option.baggage.note}</div>}
     </div>
   );
 }
@@ -125,7 +125,7 @@ function BusTicket({
         data-ticket="bus"
         onClick={onSelect}
         style={{ background: BUS_ACCENT, color: BUS_INK }}
-        className={`relative cursor-pointer overflow-hidden rounded-2xl px-6 py-2.5 shadow-sm transition-shadow hover:shadow-md ${
+        className={`relative cursor-pointer overflow-hidden rounded-2xl px-6 py-1.5 shadow-sm transition-shadow hover:shadow-md ${
           isSelected ? 'ring-2 ring-[#FF812E]' : 'ring-1 ring-neutral-200'
         }`}
       >
@@ -136,39 +136,40 @@ function BusTicket({
         <span aria-hidden="true" className="pointer-events-none absolute inset-y-3 right-3.5 border-r-2 border-dotted border-white/80" />
 
         <div
-          className="flex gap-3 rounded-xl border-2 p-3"
+          className="flex gap-2.5 rounded-xl border-2 px-2.5 py-1.5"
           style={{ background: panel, borderColor: BUS_EDGE }}
         >
-          <div className="grid min-w-0 flex-1 gap-2.5 @[28rem]:grid-cols-[minmax(0,1fr)_8.5rem] @[28rem]:gap-3">
-            <div className="flex min-w-0 flex-col gap-2.5">
+          <div className="grid min-w-0 flex-1 gap-2 @[28rem]:grid-cols-[minmax(0,1fr)_8.5rem] @[28rem]:gap-2.5">
+            <div className="flex min-w-0 flex-col gap-1">
             {/* Title row */}
             <div className="flex min-w-0 items-center gap-2">
-              <Bus className="h-8 w-8 shrink-0" style={{ color: BUS_EDGE }} fill={BUS_ACCENT} aria-hidden="true" />
+              <Bus className="h-7 w-7 shrink-0" style={{ color: BUS_EDGE }} fill={BUS_ACCENT} aria-hidden="true" />
               <div className="min-w-0">
                 <div className="whitespace-nowrap font-display text-base font-black uppercase leading-none tracking-tight">Bus ticket</div>
                 <div className="mt-0.5 truncate text-[10.5px] font-bold uppercase leading-tight tracking-wide" title={option.carrier}>
                   {option.carrier}
                 </div>
               </div>
+              <div className="ml-auto shrink-0 font-mono text-[10px] font-semibold tracking-[0.12em]">{f.number}</div>
             </div>
 
             {/* Route */}
             <div className="grid grid-cols-[auto_minmax(1.5rem,1fr)_auto] items-center gap-2">
               <div className="min-w-0">
-                <div className="font-display text-2xl font-black leading-none">{fromCode}</div>
-                <div className="mt-1 font-mono text-sm font-bold">{f.dep.clock}</div>
+                <div className="font-display text-xl font-black leading-none">{fromCode}</div>
+                <div className="mt-0.5 font-mono text-sm font-bold">{f.dep.clock}</div>
                 <div className="max-w-[5rem] truncate text-[10px] @md:max-w-[9rem]" title={option.originStation}>
                   {option.originStation}
                 </div>
               </div>
-              <div className="flex items-center self-start pt-2.5" aria-hidden="true">
+              <div className="flex items-center self-start pt-2" aria-hidden="true">
                 <div className="h-0 flex-1 border-t-2 border-dashed" style={{ borderColor: BUS_EDGE }} />
                 <Bus className="mx-1 h-4 w-4 shrink-0" style={{ color: BUS_EDGE }} />
                 <div className="h-0 flex-1 border-t-2 border-dashed" style={{ borderColor: BUS_EDGE }} />
               </div>
               <div className="min-w-0 text-right">
-                <div className="font-display text-2xl font-black leading-none">{toCode}</div>
-                <div className="mt-1 font-mono text-sm font-bold">
+                <div className="font-display text-xl font-black leading-none">{toCode}</div>
+                <div className="mt-0.5 font-mono text-sm font-bold">
                   {f.arr.clock}
                   {f.arr.offset && <sup className="ml-0.5 text-[9px]">{f.arr.offset}</sup>}
                 </div>
@@ -179,7 +180,7 @@ function BusTicket({
             </div>
 
             {/* Details */}
-            <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+            <div className="flex flex-wrap gap-x-3 gap-y-1">
               <div>
                 <MicroLabel>Date</MicroLabel>
                 <div className="font-mono text-xs font-bold">
@@ -199,18 +200,6 @@ function BusTicket({
                   {f.stops}
                 </div>
               </div>
-              {option.routeCode && (
-                <div>
-                  <MicroLabel>Service</MicroLabel>
-                  <div className="font-mono text-xs font-bold">{option.routeCode}</div>
-                </div>
-              )}
-            </div>
-
-            {/* Ticket number under a rule, as on the paper ticket */}
-            <div>
-              <div className="h-0.5 w-full" style={{ background: BUS_EDGE }} />
-              <div className="mt-1 font-mono text-sm font-semibold tracking-[0.2em]">{f.number}</div>
             </div>
 
             {/* Tags */}
@@ -227,10 +216,10 @@ function BusTicket({
 
             {/* Stub: baggage, fare, booking */}
             <div
-              className="flex min-w-0 flex-col gap-2 border-t-2 border-dashed pt-2.5 @[28rem]:border-l-2 @[28rem]:border-t-0 @[28rem]:pl-3 @[28rem]:pt-0"
+              className="flex min-w-0 flex-col gap-1.5 border-t-2 border-dashed pt-2 @[28rem]:border-l-2 @[28rem]:border-t-0 @[28rem]:pl-3 @[28rem]:pt-0"
               style={{ borderColor: BUS_EDGE }}
             >
-              <div className="flex flex-wrap items-center gap-x-2 text-[10px] font-bold uppercase tracking-[0.12em]">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] font-bold uppercase tracking-[0.12em]">
                 {isSelected && (
                   <span className="inline-flex items-center gap-1">
                     <Check className="h-3 w-3" aria-hidden="true" />
@@ -238,15 +227,18 @@ function BusTicket({
                   </span>
                 )}
                 <span>{f.isReturn ? 'Return' : 'One-way'}</span>
+                {extras}
               </div>
-              <BagLines option={option} />
+              <BagLines option={option} note={false} />
               <div className="mt-auto">
                 <MicroLabel>{f.isReturn ? 'Return total' : 'Fare'} · per person</MicroLabel>
-                {b.discountAppliedUsd > 0 && (
-                  <div className="font-mono text-[11px] leading-none line-through tabular-nums">{fmt(option.basePriceUsd)}</div>
-                )}
-                <div className="mt-0.5 whitespace-nowrap font-display text-xl font-extrabold leading-none tabular-nums">
-                  {fmt(option.discountedPriceUsd)}
+                <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span className="whitespace-nowrap font-display text-lg font-extrabold leading-none tabular-nums">
+                    {fmt(option.discountedPriceUsd)}
+                  </span>
+                  {b.discountAppliedUsd > 0 && (
+                    <span className="font-mono text-[11px] leading-none line-through tabular-nums">{fmt(option.basePriceUsd)}</span>
+                  )}
                 </div>
                 {voucherCode && b.discountAppliedUsd > 0 && (
                   <div className="font-mono text-[11px] font-semibold text-[#166534] tabular-nums">
@@ -308,7 +300,7 @@ function TrainTicket({
       >
         {/* Header band */}
         <div
-          className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 px-4 py-2 text-white"
+          className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 px-4 py-1.5 text-white"
           style={{ background: TRAIN_ACCENT }}
         >
           <div className="flex min-w-0 items-center gap-2">
@@ -329,7 +321,7 @@ function TrainTicket({
         </div>
 
         {/* Body: printed like a rail ticket, with the operator name faintly repeated behind */}
-        <div className={`relative px-4 py-3 ${mono} text-[#111827]`}>
+        <div className={`relative px-4 py-2 ${mono} text-[#111827]`}>
           <div
             aria-hidden="true"
             className="pointer-events-none absolute inset-0 overflow-hidden break-all text-[8px] font-bold leading-[1.15] tracking-widest opacity-[0.07]"
@@ -338,14 +330,13 @@ function TrainTicket({
             {watermark}
           </div>
 
-          <div className="relative space-y-2.5">
+          <div className="relative space-y-1.5">
             <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
               <div className="text-[11px] font-semibold">
                 Valid for {f.isReturn ? 'outward and return journeys' : 'one journey'}
-                <div className="mt-0.5 text-[11px] font-semibold tracking-[0.18em] text-[#4B5563]">No. {f.number}</div>
+                <span className="ml-2 tracking-[0.12em] text-[#4B5563]">No. {f.number}</span>
               </div>
               <div className="text-right">
-                <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-[#4B5563]">Date of travel</div>
                 <div className="text-sm font-bold">
                   {f.date}
                   {f.isReturn && option.returnDate && (
@@ -357,9 +348,8 @@ function TrainTicket({
 
             <div className="grid grid-cols-[auto_minmax(1.5rem,1fr)_auto] items-center gap-2">
               <div className="min-w-0">
-                <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-[#4B5563]">From</div>
-                <div className="font-display text-2xl font-black leading-none">{fromCode}</div>
-                <div className="mt-1 text-sm font-bold">{f.dep.clock}</div>
+                                <div className="font-display text-xl font-black leading-none">{fromCode}</div>
+                <div className="text-sm font-bold">{f.dep.clock}</div>
                 <div className="max-w-[5rem] truncate font-sans text-[10px] text-[#4B5563] @md:max-w-[9rem]" title={option.originStation}>
                   {option.originStation}
                 </div>
@@ -370,9 +360,8 @@ function TrainTicket({
                 <div className="h-0 flex-1 border-t-2 border-dashed" style={{ borderColor: TRAIN_ACCENT }} />
               </div>
               <div className="min-w-0 text-right">
-                <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-[#4B5563]">To</div>
-                <div className="font-display text-2xl font-black leading-none">{toCode}</div>
-                <div className="mt-1 text-sm font-bold">
+                                <div className="font-display text-xl font-black leading-none">{toCode}</div>
+                <div className="text-sm font-bold">
                   {f.arr.clock}
                   {f.arr.offset && <sup className="ml-0.5 text-[9px] text-[#B45309]">{f.arr.offset}</sup>}
                 </div>
@@ -382,7 +371,7 @@ function TrainTicket({
               </div>
             </div>
 
-            <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+            <div className="flex flex-wrap gap-x-4 gap-y-1">
               <div>
                 <MicroLabel>Duration</MicroLabel>
                 <div className="text-xs font-bold">{f.duration}</div>
@@ -402,7 +391,7 @@ function TrainTicket({
             </div>
 
             <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-2 font-sans">
-              <BagLines option={option} />
+              <BagLines option={option} note={false} inline />
               <div className="flex flex-wrap items-center gap-1.5">
               {rank === 0 && <span className="text-[10px] font-bold uppercase tracking-wide text-[#E56B1A]">#1 Rank</span>}
               {option.tags?.map((tag) => <TagPill key={tag} tag={tag} />)}
@@ -425,25 +414,27 @@ function TrainTicket({
               className={`pointer-events-none absolute top-0 h-4 w-4 -translate-y-1/2 rounded-full bg-white ring-1 ring-neutral-200 ${side}`}
             />
           ))}
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2">
             <span
               aria-hidden="true"
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white"
               style={{ color: TRAIN_ACCENT }}
             >
-              <TrainFront className="h-5 w-5" />
+              <TrainFront className="h-4 w-4" />
             </span>
             <div className="min-w-0">
               <div className={`${mono} text-[9px] font-semibold uppercase tracking-[0.14em] text-white/80`}>
                 {f.isReturn ? 'Return total' : 'Fare'} · per person
               </div>
-              {b.discountAppliedUsd > 0 && (
-                <div className={`${mono} text-[11px] leading-none text-white/80 line-through tabular-nums`}>
-                  {fmt(option.basePriceUsd)}
-                </div>
-              )}
-              <div className="whitespace-nowrap font-display text-xl font-extrabold leading-tight tabular-nums">
-                {fmt(option.discountedPriceUsd)}
+              <div className="flex items-baseline gap-2">
+                <span className="whitespace-nowrap font-display text-lg font-extrabold leading-tight tabular-nums">
+                  {fmt(option.discountedPriceUsd)}
+                </span>
+                {b.discountAppliedUsd > 0 && (
+                  <span className={`${mono} text-[11px] leading-none text-white/80 line-through tabular-nums`}>
+                    {fmt(option.basePriceUsd)}
+                  </span>
+                )}
               </div>
               {voucherCode && b.discountAppliedUsd > 0 && (
                 <div className={`${mono} text-[11px] font-semibold text-[#BBF7D0] tabular-nums`}>
