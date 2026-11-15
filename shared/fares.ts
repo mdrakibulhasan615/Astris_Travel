@@ -105,7 +105,7 @@ export function wantsReturnFares(
 }
 
 function hasLive(options: TransitOption[] | undefined): boolean {
-  return !!options?.some((o) => o.dataSource === 'live' && o.mode === 'flight');
+  return !!options?.some((o) => (o.dataSource === 'live' || o.dataSource === 'cached') && o.mode === 'flight');
 }
 
 function cheapest(options: TransitOption[] | undefined, flightsOnly: boolean): TransitOption | null {

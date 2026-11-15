@@ -457,7 +457,9 @@ export function deriveReturnOptions(
       ticketType: 'return' as const,
       returnDate,
       basePriceUsd: round2(o.basePriceUsd * 2),
-      dataSource: o.dataSource === 'live' ? ('synthesized' as const) : o.dataSource,
+      dataSource:
+        o.dataSource === 'live' || o.dataSource === 'cached' ? ('synthesized' as const) : o.dataSource,
+      sourceFareUrl: undefined,
       bookingUrl: undefined,
       returnBookingUrl: undefined,
       appliedVoucherId: null,
@@ -851,7 +853,7 @@ export function isSamePlace(
 }
 
 const hasLiveFare = (options: TransitOption[] | undefined): options is TransitOption[] =>
-  !!options?.some((o) => o.dataSource === 'live');
+  !!options?.some((o) => o.dataSource === 'live' || o.dataSource === 'cached');
 
 export interface LegBuildScoring {
   profile?: Partial<TravelerProfile> | null;

@@ -459,3 +459,25 @@ sell the flight, cheapest first; the cheapest has the orange `Buy` button, the r
   on Escape, an outside click, or when the card scrolls out of view; follows the card on scroll/resize. It sits to
   the right of the card when there is room (≥ 220 px, viewport ≥ 768 px), otherwise it is a centred modal with a
   backdrop. Ground tickets keep their single Book button.
+
+## 17. Recent Real Fares in Sample Mode — `server/travelpayoutsService.ts`
+
+With `USE_REAL_DATA` off the flights used to be fully invented. When `TRAVELPAYOUTS_TOKEN` is set, the server asks
+the free Aviasales Data API (`/aviasales/v3/prices_for_dates`, token in the `X-Access-Token` header, prices in USD)
+for the cheapest fare and the cheapest non-stop for the leg's date (round-trip total for return tickets) and shows
+those as `dataSource: 'cached'` ("Recent fare" chip) instead of the sample flights. No SerpApi credit is spent.
+
+- **What the data is.** Fares other travellers found on Aviasales in the last ~48 h: real, but possibly moved, and
+  only for routes someone searched. When there is nothing for the exact date, the nearest cached day within ±3 days
+  is used (the ticket shows its own date); with nothing at all the leg keeps the sample flights. Results are cached
+  12 h (Redis + memory, key `…:tp`).
+- **What is missing, and how it is handled.** The payload has no baggage, layover airports or per-flight list: baggage
+  is the carrier's typical policy (marked "typical"), connections show `n STOP · hours` without a flight list, and
+  the in-flight/layover split behind the Smart Score is estimated from the distance. Arrival times use the
+  destination time zone from Aviasales' public `airports.json` (loaded once per instance, with `airlines.json` for
+  carrier names). Departure times are read as written (local).
+- **Booking panel.** A cached ticket's cheapest row is Aviasales itself (the fare's own results page, with
+  `TRAVELPAYOUTS_MARKER` appended when set); Trip.com and the others are estimates just above it.
+- **Rules that follow.** `cached` counts as a real fare for the one-way vs return comparison and for reusing earlier
+  results; a return derived from a cached one-way is an estimate. With `USE_REAL_DATA` on, SerpApi is used as before
+  and this service is not called. A rejected or missing token degrades to the sample flights.

@@ -83,6 +83,7 @@ export interface EnvKeySpec {
  */
 export const ENV_KEYS: EnvKeySpec[] = [
   { name: 'SERPAPI_KEY', purpose: 'live Google Flights search (SerpApi)', fallback: 'curated/synthesized corridors' },
+  { name: 'TRAVELPAYOUTS_TOKEN', purpose: 'recent real fares in sample mode (Aviasales Data API)', fallback: 'fully sample flights' },
   { name: 'UPSTASH_REDIS_REST_URL', purpose: '12-hour transit cache (Upstash Redis)', fallback: 'uncached queries' },
   { name: 'UPSTASH_REDIS_REST_TOKEN', purpose: '12-hour transit cache (Upstash Redis)', fallback: 'uncached queries' },
   { name: 'TRIPCOM_ALLIANCE_ID', purpose: 'Trip.com attribution on flight links', fallback: 'un-attributed Trip.com links (no commission)' },
@@ -116,7 +117,10 @@ export function logEnvStatus(): void {
   } else {
     console.log(
       '[data] ticket data: SAMPLE. No SerpApi requests are made. ' +
-        'Set USE_REAL_DATA=true (or USE_REAL_TICKET_DATA in shared/config.ts) for live fares.'
+        'Set USE_REAL_DATA=true (or USE_REAL_TICKET_DATA in shared/config.ts) for live fares.' +
+        (getEnv('TRAVELPAYOUTS_TOKEN')
+          ? ' Flights use recent real fares from the Aviasales Data API where it has them.'
+          : '')
     );
   }
   const loaded = loadedFiles.length ? loadedFiles.join(', ') : 'none';

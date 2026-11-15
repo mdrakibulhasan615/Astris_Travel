@@ -33,6 +33,7 @@ const useActiveOption = () => useSyncExternalStore(subscribe, () => activeOption
 // ── Merchant badges (drawn, not fetched: no external images) ───────────────────────────────────
 
 const BADGES: Record<OfferProviderId, { bg: string; glyph: string }> = {
+  aviasales: { bg: '#0A8CFF', glyph: 'A' },
   tripcom: { bg: '#287DFA', glyph: 'T' },
   kiwi: { bg: '#00A991', glyph: 'k' },
   skyscanner: { bg: '#0770E3', glyph: 'S' },
@@ -222,7 +223,9 @@ function OffersPanel({
           <p className="px-2 pb-1 pt-1.5 text-[10px] leading-snug text-slate-500">
             {option.dataSource === 'live'
               ? 'Only the cheapest price is the live fare; other partners are estimates, confirmed on their site.'
-              : 'Sample data: prices are illustrative, confirmed on the partner site.'}
+              : option.dataSource === 'cached'
+                ? 'Aviasales shows a real fare seen in the last 48 hours; it may have changed. Other partners are estimates.'
+                : 'Sample data: prices are illustrative, confirmed on the partner site.'}
           </p>
         )}
       </div>
