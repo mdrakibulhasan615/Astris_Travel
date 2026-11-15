@@ -1,4 +1,5 @@
 import { useMemo, useRef, type CSSProperties, type ReactNode } from 'react';
+import { useTicketMask } from '../useTicketMask.ts';
 import { Backpack, Check, Luggage, Plane } from 'lucide-react';
 import { formatDuration } from '../../shared/smartScore.ts';
 import { describeBaggageStub } from '../../shared/ticketDetails.ts';
@@ -146,6 +147,8 @@ export function BoardingPass({
 }: BoardingPassProps) {
   const { fmt } = useCurrency();
   const cardRef = useRef<HTMLDivElement>(null);
+  const stubRef = useRef<HTMLDivElement>(null);
+  useTicketMask(cardRef, stubRef);
   const airlines = useMemo(() => ticketAirlines(option), [option]);
   const palette = useMemo(() => ticketPalette(airlines), [airlines]);
 
@@ -179,7 +182,7 @@ export function BoardingPass({
   const accentButton: CSSProperties = { background: palette.background, color: palette.text };
 
   return (
-    <div className="@container">
+    <div className="@container ticket-shape" data-selected={isSelected}>
     <div
       ref={cardRef}
       data-option-id={option.id}
@@ -187,9 +190,7 @@ export function BoardingPass({
       data-route-code={option.routeCode}
       data-price={option.basePriceUsd}
       onClick={onSelect}
-      className={`relative cursor-pointer overflow-hidden rounded-2xl bg-white shadow-sm transition-shadow hover:shadow-md ${
-        isSelected ? 'ring-2 ring-[#FF812E]' : 'ring-1 ring-neutral-200'
-      }`}
+      className="mask-bp relative cursor-pointer overflow-hidden rounded-2xl bg-white"
     >
       {/* Header bar: airline colour(s), spanning the main body and the stub */}
       <div
@@ -352,20 +353,11 @@ export function BoardingPass({
         {/* Tear line (vertical on wide screens): the perforation; notches are on the ticket edges */}
         <span
           aria-hidden="true"
-          className="pointer-events-none absolute bottom-0 left-[66%] top-0 hidden border-l-[1.5px] border-dashed border-neutral-300 @[28rem]:block"
+          className="pointer-events-none absolute bottom-0 left-[66.6667%] top-0 hidden border-l-[1.5px] border-dashed border-neutral-300 @[28rem]:block"
         />
 
         {/* Stub */}
-        <div className="relative border-t-[1.5px] border-dashed border-neutral-300 px-3 pb-1 pt-1 @[28rem]:flex @[28rem]:flex-col @[28rem]:gap-1 @[28rem]:border-t-0">
-          {/* Tear line (horizontal on narrow screens) notches */}
-          {(['left-0 -translate-x-1/2', 'right-0 translate-x-1/2'] as const).map((side) => (
-            <span
-              key={side}
-              aria-hidden="true"
-              className={`pointer-events-none absolute top-0 h-4 w-4 -translate-y-1/2 rounded-full bg-white ring-1 ring-neutral-200 @[28rem]:hidden ${side}`}
-            />
-          ))}
-
+        <div ref={stubRef} className="relative border-t-[1.5px] border-dashed border-neutral-300 px-3 pb-1 pt-1 @[28rem]:flex @[28rem]:flex-col @[28rem]:gap-1 @[28rem]:border-t-0">
           <div className="mb-1 flex items-center justify-between @[28rem]:hidden">
             <MicroLabel>Fare summary</MicroLabel>
             <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#4B5563]">{travelClass}</span>
@@ -437,15 +429,6 @@ export function BoardingPass({
       {/* Bottom accent strip */}
       <div className="h-[3px]" style={{ background: palette.background }} />
 
-      {/* Punched semicircles where the tear line meets the top and bottom edges (wide screens) */}
-      <span
-        aria-hidden="true"
-        className="pointer-events-none absolute left-[66%] top-0 hidden h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white ring-1 ring-neutral-200 @[28rem]:block"
-      />
-      <span
-        aria-hidden="true"
-        className="pointer-events-none absolute bottom-0 left-[66%] hidden h-4 w-4 -translate-x-1/2 translate-y-1/2 rounded-full bg-white ring-1 ring-neutral-200 @[28rem]:block"
-      />
     </div>
     </div>
   );

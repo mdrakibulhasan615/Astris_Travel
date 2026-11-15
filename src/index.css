@@ -61,3 +61,69 @@
 .astris-scroll::-webkit-scrollbar-thumb:hover {
   background-color: rgba(107, 114, 128, 0.55);
 }
+
+/* ── Ticket shapes ─────────────────────────────────────────────────────────────────────────────
+ * A ticket's notches and scalloped edges are real holes (mask), and its outline and shadow are
+ * drop-shadows on the wrapper, so both follow the actual shape instead of a rectangle. The mask must
+ * sit on an inner element: a filter on the same element would be applied before the mask. Custom
+ * properties set from JS (src/useTicketMask.ts): --tear-y (seam position), --pitch (scallop spacing). */
+.ticket-shape {
+  --edge: #d1d5db;
+  filter: drop-shadow(1px 0 0 var(--edge)) drop-shadow(-1px 0 0 var(--edge)) drop-shadow(0 1px 0 var(--edge))
+    drop-shadow(0 -1px 0 var(--edge)) drop-shadow(0 1px 2px rgb(0 0 0 / 0.1));
+  transition:
+    transform 180ms ease,
+    filter 180ms ease;
+}
+.ticket-shape:hover {
+  filter: drop-shadow(1px 0 0 var(--edge)) drop-shadow(-1px 0 0 var(--edge)) drop-shadow(0 1px 0 var(--edge))
+    drop-shadow(0 -1px 0 var(--edge)) drop-shadow(0 4px 6px rgb(0 0 0 / 0.14));
+}
+.ticket-shape[data-selected='true'] {
+  --edge: #ff812e;
+  transform: translateY(-4px);
+  filter: drop-shadow(1.5px 0 0 var(--edge)) drop-shadow(-1.5px 0 0 var(--edge))
+    drop-shadow(0 1.5px 0 var(--edge)) drop-shadow(0 -1.5px 0 var(--edge))
+    drop-shadow(0 10px 12px rgb(249 115 22 / 0.3));
+}
+@media (prefers-reduced-motion: reduce) {
+  .ticket-shape {
+    transition: none;
+  }
+}
+
+/* Boarding pass: stacked = notches at the sides of the horizontal tear line; wide = top and bottom of the vertical one */
+.mask-bp {
+  mask-image:
+    radial-gradient(circle 9px at 0 var(--tear-y, 70%), transparent 8.5px, #000 9px),
+    radial-gradient(circle 9px at 100% var(--tear-y, 70%), transparent 8.5px, #000 9px);
+  mask-composite: intersect;
+  -webkit-mask-composite: source-in;
+}
+@container (min-width: 28rem) {
+  .mask-bp {
+    mask-image:
+      radial-gradient(circle 9px at 66.6667% 0, transparent 8.5px, #000 9px),
+      radial-gradient(circle 9px at 66.6667% 100%, transparent 8.5px, #000 9px);
+  }
+}
+
+/* Bus ticket: scalloped left and right edges */
+.mask-bus {
+  mask-image:
+    radial-gradient(circle 8px at 0 50%, transparent 7.5px, #000 8px),
+    radial-gradient(circle 8px at 100% 50%, transparent 7.5px, #000 8px);
+  mask-size: 100% var(--pitch, 34px);
+  mask-repeat: repeat-y;
+  mask-composite: intersect;
+  -webkit-mask-composite: source-in;
+}
+
+/* Train ticket: notches at both ends of the perforation above the fare band */
+.mask-train {
+  mask-image:
+    radial-gradient(circle 9px at 0 var(--tear-y, 80%), transparent 8.5px, #000 9px),
+    radial-gradient(circle 9px at 100% var(--tear-y, 80%), transparent 8.5px, #000 9px);
+  mask-composite: intersect;
+  -webkit-mask-composite: source-in;
+}
