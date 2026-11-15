@@ -16,3 +16,15 @@
  * (Production, and Preview if you want it) that should spend credits.
  */
 export const USE_REAL_TICKET_DATA = false;
+
+/**
+ * Public partner ids used when the matching environment variable is not set. They are not secrets
+ * (every outbound link carries them), and defaulting them means a fresh deployment earns
+ * commission without extra setup. An environment variable always wins.
+ *   twelveGoAffiliateId     12Go `z` parameter (TWELVEGO_AFFILIATE_ID)
+ *   travelpayoutsMarker     Aviasales partner marker on fare links (TRAVELPAYOUTS_MARKER)
+ */
+export const AFFILIATE_DEFAULTS = {
+  twelveGoAffiliateId: '17520220',
+  travelpayoutsMarker: '806003',
+} as const;
