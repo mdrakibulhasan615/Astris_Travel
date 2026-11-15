@@ -197,6 +197,8 @@ export interface BookingContext {
   date?: string;
   /** Travellers (1–9). */
   passengers?: number;
+  /** Way-back date for `return` options, `YYYY-MM-DD`. */
+  returnDate?: string;
   /** FlixBus city ids for both ends, resolved server-side. Absent → FlixBus is not offered. */
   flixbus?: { fromCityId: string; toCityId: string } | null;
 }
@@ -204,6 +206,8 @@ export interface BookingContext {
 export interface BookingLink {
   url: string;
   provider: BookingProvider;
+  /** Ground return tickets: merchants sell each direction, so the way back is its own search. */
+  returnUrl?: string;
 }
 
 type LinkableOption = Pick<TransitOption, 'mode'> &
@@ -217,6 +221,7 @@ type LinkableOption = Pick<TransitOption, 'mode'> &
       | 'segments'
       | 'departureAt'
       | 'dataSource'
+      | 'ticketType'
     >
   >;
 
@@ -273,7 +278,8 @@ function tripcomAttribution(params: URLSearchParams): void {
  * Trip.com one-way flight results, e.g.
  * `…/flights/showfarefirst?dcity=ist&acity=lon&dairport=saw&aairport=stn&ddate=2026-11-26&triptype=ow&class=y&quantity=2&airline=PC`
  * `dcity`/`acity` are metropolitan codes; `dairport`/`aairport` pin the airport when the city has
- * several. Returns null when the codes or the date cannot form a valid search.
+ * several. A return ticket adds `rdate` and `triptype=rt` (Trip.com normalises it to its own return
+ * search). Returns null when the codes or the date cannot form a valid search.
  */
 export function buildTripcomFlightUrl(option: LinkableOption, ctx: BookingContext): string | null {
   // The provider's own departure timestamp is the ticket's date; the leg date is the fallback
@@ -285,11 +291,16 @@ export function buildTripcomFlightUrl(option: LinkableOption, ctx: BookingContex
   const toCity = toMetroCode(to);
   if (fromCity === toCity) return null;
 
+  // A return ticket carries the way-back date; without a usable one it can only be a one-way search
+  const back = option.ticketType === 'return' ? parseIsoDate(ctx.returnDate) : null;
+  const isReturn = back !== null && utcDay(back) >= utcDay(date);
+
   const params = new URLSearchParams({ dcity: fromCity.toLowerCase(), acity: toCity.toLowerCase() });
   if (from !== fromCity) params.set('dairport', from.toLowerCase());
   if (to !== toCity) params.set('aairport', to.toLowerCase());
   params.set('ddate', isoDate(date));
-  params.set('triptype', 'ow');
+  if (isReturn) params.set('rdate', isoDate(back));
+  params.set('triptype', isReturn ? 'rt' : 'ow');
   params.set('class', 'y');
   params.set('quantity', String(clampCount(ctx.passengers, 9)));
   const airline = ticketAirline(option);
@@ -357,6 +368,16 @@ function debugLog(link: BookingLink, ctx: BookingContext, note: string): void {
   );
 }
 
+function groundLink(option: LinkableOption, ctx: BookingContext): BookingLink {
+  const flixUrl =
+    option.mode === 'bus' &&
+    isFlixCarrier({ carrier: option.carrier ?? '', carrierCode: option.carrierCode ?? '' })
+      ? buildFlixbusUrl(ctx)
+      : null;
+  if (flixUrl) return { provider: 'flixbus', url: track('flixbus', flixUrl) };
+  return { provider: '12go', url: track('12go', buildTwelveGoUrl(ctx) ?? twelveGoHome()) };
+}
+
 /**
  * Builds the outbound link for one option. Never throws and never returns an empty URL: when the
  * route or date cannot form a search, the link goes to the merchant's own search page instead.
@@ -370,17 +391,24 @@ export function buildBookingLink(option: LinkableOption, ctx: BookingContext): B
     if (!url) note = ' (invalid route/date: merchant search page)';
     link = { provider: 'tripcom', url: track('tripcom', url ?? tripcomFlightsHome()) };
   } else {
-    const flixUrl =
-      option.mode === 'bus' && isFlixCarrier({ carrier: option.carrier ?? '', carrierCode: option.carrierCode ?? '' })
-        ? buildFlixbusUrl(ctx)
-        : null;
-    if (flixUrl) {
-      link = { provider: 'flixbus', url: track('flixbus', flixUrl) };
-    } else {
-      const url = buildTwelveGoUrl(ctx);
-      if (!url) note = ' (invalid route/date: merchant search page)';
-      link = { provider: '12go', url: track('12go', url ?? twelveGoHome()) };
+    link = groundLink(option, ctx);
+    if (option.ticketType === 'return' && parseIsoDate(ctx.returnDate)) {
+      // The way back is the same search reversed on the return date
+      const back: BookingContext = {
+        ...ctx,
+        fromCode: ctx.toCode,
+        toCode: ctx.fromCode,
+        fromCity: ctx.toCity,
+        toCity: ctx.fromCity,
+        date: ctx.returnDate,
+        returnDate: undefined,
+        flixbus: ctx.flixbus
+          ? { fromCityId: ctx.flixbus.toCityId, toCityId: ctx.flixbus.fromCityId }
+          : null,
+      };
+      link.returnUrl = groundLink(option, back).url;
     }
+    if (link.url.endsWith('/en') || link.url.includes('/en?')) note = ' (invalid route/date: merchant search page)';
   }
 
   debugLog(link, ctx, note);
@@ -394,7 +422,12 @@ export function buildBookingLink(option: LinkableOption, ctx: BookingContext): B
 export function attachBookingUrls(options: TransitOption[], ctx: BookingContext): TransitOption[] {
   return options.map((option) => {
     const link = buildBookingLink(option, ctx);
-    return { ...option, bookingUrl: link.url, bookingProvider: link.provider };
+    return {
+      ...option,
+      bookingUrl: link.url,
+      bookingProvider: link.provider,
+      returnBookingUrl: link.returnUrl,
+    };
   });
 }
 

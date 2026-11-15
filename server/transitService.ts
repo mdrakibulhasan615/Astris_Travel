@@ -8,18 +8,23 @@ import {
 } from '../shared/mockDataset.ts';
 import { attachBookingUrls, configureAffiliate, isFlixCarrier } from '../shared/affiliate.ts';
 import {
+  airportsForCity,
   normalizeOptionGeometry,
   registerAirportResolver,
   resolveAirport,
 } from '../shared/airports.ts';
+import { isIsoDate } from '../shared/fares.ts';
 import {
   computeSmartScore,
+  deriveReturnOptions,
   haversineDistanceKm,
   recalculateOptionsWithVttsAndVouchers,
   round2,
   synthesizeCorridorOptions,
 } from '../shared/smartScore.ts';
 import type {
+  FlightHop,
+  Layover,
   TransitMode,
   TransitOption,
   TransitSegment,
@@ -109,19 +114,22 @@ export async function checkRedisConnection(): Promise<boolean> {
 
 /**
  * Deterministic cache key generator:
- * transit:cache:${origin}:${destination}:${date}:${mode}
+ * transit:cache:${origin}:${destination}:${date}:${mode}[:rt:${returnDate}]
+ * A return search is a different query (and price) from a one-way search, so it has its own key.
  */
 export function buildTransitCacheKey(
   origin: string,
   destination: string,
   date: string,
-  mode: string = 'all'
+  mode: string = 'all',
+  returnDate?: string
 ): string {
   const normOrigin = (origin || 'UNKNOWN').trim().toUpperCase();
   const normDest = (destination || 'UNKNOWN').trim().toUpperCase();
   const normDate = (date || 'ANY').trim();
   const normMode = (mode || 'all').trim().toLowerCase();
-  return `transit:cache:${normOrigin}:${normDest}:${normDate}:${normMode}`;
+  const suffix = returnDate ? `:rt:${returnDate.trim()}` : '';
+  return `transit:cache:${normOrigin}:${normDest}:${normDate}:${normMode}${suffix}`;
 }
 
 // In-process L1 cache so repeated page loads don't burn SerpApi quota when Redis is absent or
@@ -195,6 +203,8 @@ export interface TransitQueryParams {
   origin: string;
   destination: string;
   date: string;
+  /** Way-back date: asks for return fares (priced for the round trip) instead of one-way. */
+  returnDate?: string;
   mode?: 'all' | TransitMode;
   hourlyRateUsd?: number;
   activeVouchers?: Voucher[];
@@ -255,7 +265,8 @@ async function fetchSerpApiFlights(
   activeVouchers: Voucher[],
   profile: Partial<TravelerProfile> | undefined,
   fromStop?: TripStop,
-  toStop?: TripStop
+  toStop?: TripStop,
+  returnDate?: string
 ): Promise<TransitOption[] | null> {
   const apiKey = serpApiKey();
   if (!apiKey) {
@@ -264,22 +275,37 @@ async function fetchSerpApiFlights(
   }
 
   try {
+    // Metro codes (LON, PAR) return nothing from Google Flights, so search the city's airports.
+    const departureIds = airportsForCity(origin).join(',');
+    const arrivalIds = airportsForCity(destination).join(',');
+    if (!departureIds || !arrivalIds) return null;
+
     const url = new URL('https://serpapi.com/search.json');
     url.searchParams.set('engine', 'google_flights');
-    url.searchParams.set('departure_id', origin);
-    url.searchParams.set('arrival_id', destination);
+    url.searchParams.set('departure_id', departureIds);
+    url.searchParams.set('arrival_id', arrivalIds);
     url.searchParams.set('outbound_date', date);
+    // `type` defaults to 1 (round trip), which SerpApi rejects without a return_date (HTTP 400).
+    // Prices are per traveller; they are scaled by the party size in the UI, so one adult is asked.
+    url.searchParams.set('type', returnDate ? '1' : '2');
+    if (returnDate) url.searchParams.set('return_date', returnDate);
     url.searchParams.set('currency', 'USD');
     url.searchParams.set('hl', 'en');
     url.searchParams.set('api_key', apiKey);
 
-    console.log(`[Transit API] Querying SerpAPI Google Flights: ${origin} -> ${destination} on ${date}...`);
+    console.log(
+      `[Transit API] Querying SerpAPI Google Flights: ${departureIds} -> ${arrivalIds} on ${date}` +
+        `${returnDate ? ` (return ${returnDate})` : ' (one-way)'}...`
+    );
     const res = await fetch(url.toString(), {
       signal: AbortSignal.timeout(8000),
     });
 
     if (!res.ok) {
-      console.warn(`[Transit API] SerpAPI returned status ${res.status}: ${res.statusText}`);
+      const detail = (await res.json().catch(() => null)) as { error?: string } | null;
+      console.warn(
+        `[Transit API] SerpAPI returned status ${res.status}: ${detail?.error ?? res.statusText}`
+      );
       if (res.status === 401 || res.status === 403) {
         console.warn('[env] SERPAPI_KEY was rejected by SerpApi (401/403). Check the key in .env.local.');
       }
@@ -412,7 +438,45 @@ async function fetchSerpApiFlights(
         };
       });
 
+      const hops: FlightHop[] = flights.map(
+        (
+          f: {
+            flight_number?: string;
+            airline?: string;
+            airline_logo?: string;
+            airplane?: string;
+            travel_class?: string;
+            duration?: number;
+            departure_airport?: { name?: string; id?: string; time?: string };
+            arrival_airport?: { name?: string; id?: string; time?: string };
+          },
+          hopIdx: number
+        ) => ({
+          flightNumber: (f.flight_number ?? '').trim(),
+          airline: (f.airline ?? '').trim(),
+          airlineLogo: f.airline_logo,
+          airplane: f.airplane,
+          travelClass: f.travel_class,
+          fromCode: segments[hopIdx].fromCode,
+          fromName: f.departure_airport?.name ?? segments[hopIdx].fromName,
+          departureAt: f.departure_airport?.time ?? '',
+          toCode: segments[hopIdx].toCode,
+          toName: f.arrival_airport?.name ?? segments[hopIdx].toName,
+          arrivalAt: f.arrival_airport?.time ?? '',
+          durationMinutes: Number(f.duration) || 0,
+        })
+      );
+      const layoverInfo: Layover[] = layovers.map(
+        (l: { id?: string; name?: string; duration?: number; overnight?: boolean }) => ({
+          code: l.id ?? '',
+          name: l.name ?? l.id ?? '',
+          minutes: Number(l.duration) || 0,
+          overnight: Boolean(l.overnight),
+        })
+      );
+
       const scorable = {
+        ticketType: returnDate ? ('return' as const) : undefined,
         departureTime: depTime,
         arrivalTime: arrTime,
         stopsCount: layovers.length,
@@ -432,7 +496,7 @@ async function fetchSerpApiFlights(
       const destCode = segments[segments.length - 1].toCode;
 
       rawOptions.push({
-        id: `${legId}-serp-${idx + 1}`,
+        id: `${legId}-serp${returnDate ? '-rt' : ''}-${idx + 1}`,
         legId,
         mode: 'flight',
         isOvernightSleeper: false,
@@ -463,6 +527,11 @@ async function fetchSerpApiFlights(
         appliedVoucherId: null,
         segments,
         dataSource: 'live',
+        ticketType: returnDate ? 'return' : undefined,
+        returnDate,
+        airlineLogo: item.airline_logo ?? firstFlt.airline_logo,
+        hops,
+        layovers: layoverInfo,
       });
     });
     if (skipped > 0) {
@@ -545,12 +614,15 @@ function buildFallbackCorridorOptions(
 }
 
 /**
- * Caching Wrapper for Transit Queries:
- * 1. Generates deterministic cache key: transit:cache:${origin}:${destination}:${date}:${mode}
- * 2. Checks Upstash Redis for existing cached response.
- * 3. On cache miss: fetches live API or fallback corridor, computes VTTS Smart Score,
- *    stores in Redis with a 12-hour TTL (EX: 43200), and returns the options.
- * 4. Graceful fallback on connection or API errors.
+ * Transit query pipeline for one corridor, one-way or return:
+ *   1. FLIGHTS: live SerpApi fares (cached 12 h in Redis + memory; only live results are cached).
+ *      No key / no results → curated or estimated flights, labelled as such.
+ *   2. GROUND (train, coach, ferry): there is no live availability API for these, so they are the
+ *      curated/estimated options, labelled Sample/Estimate, with a direct merchant link per option.
+ *      They are rebuilt every time and never cached.
+ *   3. RETURN: live flights are real round-trip fares (priced for both directions). Ground (and flights
+ *      when no live return fare exists) are the one-way price twice, flagged as estimates.
+ * Failures at any step degrade to the next; nothing here throws for a provider error.
  */
 export async function queryTransitWithCache(
   params: TransitQueryParams
@@ -567,9 +639,12 @@ export async function queryTransitWithCache(
     fromStop,
     toStop,
   } = params;
+  // A return date before the outbound date is meaningless; fall back to a one-way search
+  const returnDate =
+    isIsoDate(params.returnDate) && params.returnDate >= date ? params.returnDate : undefined;
 
   // Booking links are (re)built on every response — cached options may pre-date the current
-  // affiliate marker, travel date, or route naming.
+  // affiliate ids, travel date, or route naming.
   const fromCity = resolveCityCoords(origin, fromStop);
   const toCity = resolveCityCoords(destination, toStop);
   const cityPoint = (code: string, c: { lat: number; lng: number; city: string }) => ({
@@ -597,87 +672,95 @@ export async function queryTransitWithCache(
         fromCity: fromCity.city,
         toCity: toCity.city,
         date,
+        returnDate,
         passengers,
         flixbus,
       }
     );
   };
 
-  const cacheKey = buildTransitCacheKey(origin, destination, date, mode);
+  const cacheKey = buildTransitCacheKey(origin, destination, date, mode, returnDate);
 
-  // 1. Check Redis cache
-  const cachedHit = await getCachedTransit(cacheKey);
-  if (cachedHit && cachedHit.options.length > 0) {
-    // Re-score cached options in case hourlyRateUsd or activeVouchers changed
-    const scoredCached = recalculateOptionsWithVttsAndVouchers(
-      cachedHit.options,
-      hourlyRateUsd,
-      activeVouchers,
-      travelerProfile
-    );
-    return {
-      cacheKey,
-      source: cachedHit.layer === 'memory' ? 'memory_cache' : 'redis_cache',
-      cached: true,
-      ttlSeconds: REDIS_CACHE_TTL_SECONDS,
-      options: await withBookingUrls(scoredCached),
-    };
-  }
+  // Curated / estimated options: always rebuilt (cheap), split so live flights can replace flights only
+  const fallback =
+    mode === 'all' || mode === 'flight' || mode === 'train' || mode === 'bus' || mode === 'ferry'
+      ? buildFallbackCorridorOptions(
+          origin,
+          destination,
+          hourlyRateUsd,
+          activeVouchers,
+          travelerProfile,
+          fromStop,
+          toStop
+        )
+      : [];
+  const fallbackFlights = fallback.filter((o) => o.mode === 'flight');
+  const fallbackGround = fallback.filter((o) => o.mode !== 'flight');
 
-  // 2. Cache Miss: Attempt Live Transit API fetch if flight/all mode
-  let liveOptions: TransitOption[] | null = null;
+  // 1. Live flights: cache first, then the provider
+  let live: TransitOption[] | null = null;
+  let cacheLayer: 'memory' | 'redis' | null = null;
   if (mode === 'all' || mode === 'flight') {
-    liveOptions = await fetchSerpApiFlights(
-      origin,
-      destination,
-      date,
-      hourlyRateUsd,
-      activeVouchers,
-      travelerProfile,
-      fromStop,
-      toStop
-    );
-  }
-
-  let finalOptions: TransitOption[];
-  let source: 'live_api' | 'fallback_corridor';
-
-  if (liveOptions && liveOptions.length > 0) {
-    finalOptions = liveOptions;
-    source = 'live_api';
-  } else {
-    // 3. Graceful Fallback: Curated or synthesized multi-modal corridor dataset
-    finalOptions = buildFallbackCorridorOptions(
-      origin,
-      destination,
-      hourlyRateUsd,
-      activeVouchers,
-      travelerProfile,
-      fromStop,
-      toStop
-    );
-    source = 'fallback_corridor';
-  }
-
-  // Filter by requested mode if not 'all'
-  if (mode !== 'all') {
-    const filtered = finalOptions.filter((opt) => opt.mode === mode);
-    if (filtered.length > 0) {
-      finalOptions = filtered;
+    const cachedHit = await getCachedTransit(cacheKey);
+    if (cachedHit && cachedHit.options.length > 0) {
+      live = cachedHit.options;
+      cacheLayer = cachedHit.layer;
+    } else {
+      live = await fetchSerpApiFlights(
+        origin,
+        destination,
+        date,
+        hourlyRateUsd,
+        activeVouchers,
+        travelerProfile,
+        fromStop,
+        toStop,
+        returnDate
+      );
+      // Cache LIVE results only (12-hour TTL). Estimates depend on the caller's stops and are cheap
+      // to rebuild; caching them let stale sample data masquerade as a cache hit and shadow real fares.
+      if (live && live.length > 0) await setCachedTransit(cacheKey, live);
     }
   }
+  const hasLiveFlights = Boolean(live && live.length > 0);
 
-  // 4. Cache LIVE results only (12-hour TTL). Curated/synthesized fallbacks are cheap to rebuild and
-  //    depend on the caller's stops; caching them made stale sample data masquerade as a cache hit
-  //    and shadow real fares once the live API became reachable.
-  if (source === 'live_api') {
-    await setCachedTransit(cacheKey, finalOptions);
+  // 2./3. Assemble the list for this ticket type
+  let assembled: TransitOption[];
+  if (!returnDate) {
+    assembled = [...(hasLiveFlights ? live! : fallbackFlights), ...fallbackGround];
+  } else {
+    const derive = (opts: TransitOption[]) =>
+      deriveReturnOptions(opts, returnDate, hourlyRateUsd, activeVouchers, travelerProfile);
+    assembled = [
+      ...(hasLiveFlights ? live! : derive(fallbackFlights)),
+      ...derive(fallbackGround),
+    ];
   }
+
+  // Re-score in case the hourly rate or vouchers changed since a cached search was made
+  let finalOptions = recalculateOptionsWithVttsAndVouchers(
+    assembled,
+    hourlyRateUsd,
+    activeVouchers,
+    travelerProfile
+  );
+  if (mode !== 'all') {
+    const filtered = finalOptions.filter((opt) => opt.mode === mode);
+    if (filtered.length > 0) finalOptions = filtered;
+  }
+
+  const source: TransitQueryResult['source'] = !hasLiveFlights
+    ? 'fallback_corridor'
+    : cacheLayer === 'memory'
+      ? 'memory_cache'
+      : cacheLayer === 'redis'
+        ? 'redis_cache'
+        : 'live_api';
 
   return {
     cacheKey,
     source,
-    cached: false,
+    cached: cacheLayer !== null,
     ttlSeconds: REDIS_CACHE_TTL_SECONDS,
     options: await withBookingUrls(finalOptions),
   };

@@ -1,4 +1,5 @@
 import type {
+  LegTicketPref,
   ScoreFlag,
   SmartScoreBreakdown,
   TransitMode,
@@ -13,6 +14,13 @@ import type {
 import { attachBookingUrls } from './affiliate.ts';
 import { normalizeOptionGeometry, pickConnectionHub, resolveAirport } from './airports.ts';
 import { planGroundCorridor } from './groundRouting.ts';
+import {
+  finalizeLegs,
+  legFareKey,
+  legReturnDate,
+  pairStops,
+  wantsReturnFares,
+} from './fares.ts';
 
 export const VTTS_PRESETS: VttsPreset[] = [
   {
@@ -272,7 +280,9 @@ export type ScorableOption = Pick<
   | 'carrierCode'
   | 'eligibleVoucherIds'
 > &
-  Partial<Pick<TransitOption, 'departureTime' | 'arrivalTime' | 'stopsCount' | 'segments'>>;
+  Partial<
+    Pick<TransitOption, 'departureTime' | 'arrivalTime' | 'stopsCount' | 'segments' | 'ticketType'>
+  >;
 
 const STOP_FRICTION_HOURS = 0.75; // per connection, +25% for each additional one
 const MIN_STOP_FRICTION_USD = 8; // floor so low-rate backpackers still feel connections
@@ -348,13 +358,17 @@ export function computeSmartScore(
     );
   }
 
-  // 6. Traveler weighting: price-sensitive vs time-sensitive elasticity
+  // 6. Traveler weighting: price-sensitive vs time-sensitive elasticity. A return ticket is paid
+  //    for once but travelled twice, so its time and comfort costs count for both journeys (the way
+  //    back is assumed to look like the way there).
+  const journeys = option.ticketType === 'return' ? 2 : 1;
   const timeCostUsd =
-    inVehiclePenaltyUsd +
-    layoverPenaltyUsd +
-    timeOfDayPenaltyUsd +
-    transferPenaltyUsd +
-    airportChangePenaltyUsd;
+    (inVehiclePenaltyUsd +
+      layoverPenaltyUsd +
+      timeOfDayPenaltyUsd +
+      transferPenaltyUsd +
+      airportChangePenaltyUsd) *
+    journeys;
   const totalSmartScore = round2(
     discountedPriceUsd * profile.priceWeight + timeCostUsd * profile.timeWeight
   );
@@ -374,6 +388,7 @@ export function computeSmartScore(
     timeOfDayPenaltyUsd,
     transferPenaltyUsd,
     airportChangePenaltyUsd,
+    journeys,
     priceWeight: profile.priceWeight,
     timeWeight: profile.timeWeight,
     flags,
@@ -418,6 +433,36 @@ export function recalculateOptionsWithVttsAndVouchers(
       };
     })
     .sort((a, b) => a.smartScore - b.smartScore);
+}
+
+/**
+ * Return-ticket stand-ins for options that have no real return fare (ground transport, or flights
+ * when the live return search was unavailable): the one-way price twice, scored on both journeys.
+ * Flagged as estimates so they are never mistaken for a quoted return fare.
+ */
+export function deriveReturnOptions(
+  options: TransitOption[],
+  returnDate: string,
+  hourlyRateUsd: number,
+  activeVouchers: Voucher[],
+  profile?: Partial<TravelerProfile> | null
+): TransitOption[] {
+  return recalculateOptionsWithVttsAndVouchers(
+    options.map((o) => ({
+      ...o,
+      id: `${o.id}-rt`,
+      ticketType: 'return' as const,
+      returnDate,
+      basePriceUsd: round2(o.basePriceUsd * 2),
+      dataSource: o.dataSource === 'live' ? ('synthesized' as const) : o.dataSource,
+      bookingUrl: undefined,
+      returnBookingUrl: undefined,
+      appliedVoucherId: null,
+    })),
+    hourlyRateUsd,
+    activeVouchers,
+    profile
+  );
 }
 
 export function haversineDistanceKm(
@@ -802,6 +847,22 @@ export function isSamePlace(
   return km <= 2 || (a.iataCode.toUpperCase() === b.iataCode.toUpperCase() && km <= 60);
 }
 
+const hasLiveFare = (options: TransitOption[] | undefined): options is TransitOption[] =>
+  !!options?.some((o) => o.dataSource === 'live');
+
+export interface LegBuildScoring {
+  profile?: Partial<TravelerProfile> | null;
+  passengers?: number;
+  /** Ticket types the traveller chose, by leg id. */
+  legPrefs?: Record<string, LegTicketPref>;
+  /**
+   * Legs currently on screen. A leg whose fare search is unchanged (same date, route and
+   * travellers) keeps its live fares instead of dropping back to sample data while the server
+   * refreshes.
+   */
+  previousLegs?: TripLeg[];
+}
+
 export function buildLegsFromStops(
   stops: TripStop[],
   curatedCorridors: Record<string, TransitOption[]>,
@@ -809,55 +870,87 @@ export function buildLegsFromStops(
   hourlyRateUsd: number,
   activeVouchers: Voucher[],
   previousSelectedMap?: Record<string, string>,
-  scoring: { profile?: Partial<TravelerProfile> | null; passengers?: number } = {}
+  scoring: LegBuildScoring = {}
 ): TripLeg[] {
   const legs: TripLeg[] = [];
   const legIds = buildLegIds(stops);
+  const pairs = pairStops(stops);
   for (let i = 0; i < stops.length - 1; i++) {
     const fromStop = stops[i];
     const toStop = stops[i + 1];
     const corridorKey = `${fromStop.iataCode}-${toStop.iataCode}`;
     const legId = legIds[i];
     const distanceKm = haversineDistanceKm(fromStop.lat, fromStop.lng, toStop.lat, toStop.lng);
+    const pref = scoring.legPrefs?.[legId];
+    const returnDate = legReturnDate(stops, i, pairs, pref);
+    const fareKey = legFareKey(fromStop, toStop, scoring.passengers ?? 1);
+    const previous = scoring.previousLegs?.find((l) => l.id === legId && l.fareKey === fareKey);
+    const bookingContext = {
+      fromCode: fromStop.iataCode,
+      toCode: toStop.iataCode,
+      fromCity: fromStop.city,
+      toCity: toStop.city,
+      date: fromStop.departureDate,
+      passengers: scoring.passengers,
+    };
 
-    const baseOptions = isSamePlace(fromStop, toStop)
-      ? []
-      : curatedCorridors[corridorKey]
-        ? curatedCorridors[corridorKey].map((opt) => ({ ...opt, legId }))
-        : synthesizeCorridorOptions(
-            fromStop,
-            toStop,
-            legId,
-            allVouchers,
-            hourlyRateUsd,
-            activeVouchers,
-            scoring.profile
-          );
-
-    // Invariant: flights are airport-to-airport, bracketed by separate ground connectors
-    const geometryOptions = baseOptions.map((opt) =>
-      normalizeOptionGeometry(opt, fromStop, toStop)
-    );
-
-    const rankedOptions = attachBookingUrls(
-      recalculateOptionsWithVttsAndVouchers(
-        geometryOptions,
+    let oneWay: TransitOption[];
+    if (hasLiveFare(previous?.oneWayOptions)) {
+      oneWay = recalculateOptionsWithVttsAndVouchers(
+        previous!.oneWayOptions!,
         hourlyRateUsd,
         activeVouchers,
         scoring.profile
-      ),
-      {
-        fromCode: fromStop.iataCode,
-        toCode: toStop.iataCode,
-        fromCity: fromStop.city,
-        toCity: toStop.city,
-        date: fromStop.departureDate,
-        passengers: scoring.passengers,
-      }
-    );
+      );
+    } else {
+      const baseOptions = isSamePlace(fromStop, toStop)
+        ? []
+        : curatedCorridors[corridorKey]
+          ? curatedCorridors[corridorKey].map((opt) => ({ ...opt, legId }))
+          : synthesizeCorridorOptions(
+              fromStop,
+              toStop,
+              legId,
+              allVouchers,
+              hourlyRateUsd,
+              activeVouchers,
+              scoring.profile
+            );
+
+      // Invariant: flights are airport-to-airport, bracketed by separate ground connectors
+      const geometryOptions = baseOptions.map((opt) =>
+        normalizeOptionGeometry(opt, fromStop, toStop)
+      );
+      oneWay = attachBookingUrls(
+        recalculateOptionsWithVttsAndVouchers(
+          geometryOptions,
+          hourlyRateUsd,
+          activeVouchers,
+          scoring.profile
+        ),
+        bookingContext
+      );
+    }
+
+    let returnOptions: TransitOption[] | undefined;
+    if (oneWay.length > 0 && wantsReturnFares(i, pairs, pref)) {
+      returnOptions =
+        previous?.returnDate === returnDate && hasLiveFare(previous.returnOptions)
+          ? recalculateOptionsWithVttsAndVouchers(
+              previous.returnOptions,
+              hourlyRateUsd,
+              activeVouchers,
+              scoring.profile
+            )
+          : attachBookingUrls(
+              deriveReturnOptions(oneWay, returnDate, hourlyRateUsd, activeVouchers, scoring.profile),
+              { ...bookingContext, returnDate }
+            );
+    }
 
     const prevSelected = previousSelectedMap?.[legId];
-    const validPrev = rankedOptions.some((o) => o.id === prevSelected);
+    const knownSelection =
+      oneWay.some((o) => o.id === prevSelected) || returnOptions?.some((o) => o.id === prevSelected);
 
     legs.push({
       id: legId,
@@ -868,11 +961,50 @@ export function buildLegsFromStops(
       toCity: toStop.city,
       toCode: toStop.iataCode,
       distanceKm,
-      selectedOptionId: validPrev ? prevSelected! : rankedOptions[0]?.id ?? '',
-      transitOptions: rankedOptions,
+      selectedOptionId: knownSelection ? prevSelected! : (oneWay[0]?.id ?? ''),
+      transitOptions: oneWay,
+      oneWayOptions: oneWay,
+      returnOptions,
+      departureDate: fromStop.departureDate,
+      returnDate,
+      pairedLegId: pairs[i] !== undefined ? legIds[pairs[i]] : undefined,
+      fareKey,
     });
   }
-  return legs;
+  return finalizeLegs(legs, scoring.legPrefs);
+}
+
+/**
+ * Re-scores both ticket structures of every leg (slider, vouchers) and settles the choice again,
+ * since a different time value can change which fares win.
+ */
+export function rescoreLegs(
+  legs: TripLeg[],
+  hourlyRateUsd: number,
+  activeVouchers: Voucher[],
+  profile: Partial<TravelerProfile> | null | undefined,
+  legPrefs?: Record<string, LegTicketPref>
+): TripLeg[] {
+  return finalizeLegs(
+    legs.map((leg) => ({
+      ...leg,
+      oneWayOptions: recalculateOptionsWithVttsAndVouchers(
+        leg.oneWayOptions ?? leg.transitOptions,
+        hourlyRateUsd,
+        activeVouchers,
+        profile
+      ),
+      returnOptions: leg.returnOptions
+        ? recalculateOptionsWithVttsAndVouchers(
+            leg.returnOptions,
+            hourlyRateUsd,
+            activeVouchers,
+            profile
+          )
+        : undefined,
+    })),
+    legPrefs
+  );
 }
 
 export function calculateBestModeFilterMatch(
