@@ -81,7 +81,8 @@
 }
 .ticket-shape[data-selected='true'] {
   --edge: #ff812e;
-  transform: translateY(-4px);
+  /* lifts 4px and slides right by 8.6% of the ticket's own width */
+  transform: translate(8.6%, -4px);
   filter: drop-shadow(1.5px 0 0 var(--edge)) drop-shadow(-1.5px 0 0 var(--edge))
     drop-shadow(0 1.5px 0 var(--edge)) drop-shadow(0 -1.5px 0 var(--edge))
     drop-shadow(0 10px 12px rgb(249 115 22 / 0.3));
