@@ -1,5 +1,6 @@
 import type { BookingProvider, TransitOption } from './types.ts';
 import { toAirportCode, toMetroCode } from './airports.ts';
+import { completeTicketDetails } from './ticketDetails.ts';
 
 /**
  * Direct merchant deep links (ARCHITECTURE.md §6). Every link lands on the site that sells the
@@ -417,13 +418,15 @@ export function buildBookingLink(option: LinkableOption, ctx: BookingContext): B
 
 /**
  * Returns copies of `options` with `bookingUrl`/`bookingProvider` populated (overwriting stale
- * values so config, date, route and passenger changes always take effect). Inputs are not mutated.
+ * values so config, date, route and passenger changes always take effect) and their baggage / flight
+ * breakdown completed. Inputs are not mutated.
  */
 export function attachBookingUrls(options: TransitOption[], ctx: BookingContext): TransitOption[] {
   return options.map((option) => {
     const link = buildBookingLink(option, ctx);
     return {
-      ...option,
+      // Baggage and the flight breakdown, so sample and live options render from one shape
+      ...completeTicketDetails(option, ctx.date),
       bookingUrl: link.url,
       bookingProvider: link.provider,
       returnBookingUrl: link.returnUrl,

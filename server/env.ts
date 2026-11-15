@@ -16,6 +16,7 @@ import dotenv from 'dotenv';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { USE_REAL_TICKET_DATA } from '../shared/config.ts';
 
 const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ENV_FILES = ['.env.local', '.env'];
@@ -36,6 +37,21 @@ for (const name of ENV_FILES) {
   } else {
     loadedFiles.push(name);
   }
+}
+
+/**
+ * Whether tickets come from live SerpApi (true) or the built-in sample data (false). The default is
+ * `USE_REAL_TICKET_DATA` in `shared/config.ts`; the `USE_REAL_DATA` environment variable overrides it
+ * (`true`/`1`/`yes`/`on`, or `false`/`0`/`no`/`off`).
+ */
+export function useRealData(): boolean {
+  const raw = getEnv('USE_REAL_DATA')?.toLowerCase();
+  if (raw) {
+    if (['1', 'true', 'yes', 'on'].includes(raw)) return true;
+    if (['0', 'false', 'no', 'off'].includes(raw)) return false;
+    console.warn(`[env] USE_REAL_DATA="${raw}" is not a boolean; using the default from shared/config.ts.`);
+  }
+  return USE_REAL_TICKET_DATA;
 }
 
 /** Values copied straight from `.env.example` look set but are not real credentials. */
@@ -91,6 +107,18 @@ export function warnMissingKey(name: string, context?: string): void {
 
 /** Call once at startup: reports which env files loaded and which expected keys are absent. */
 export function logEnvStatus(): void {
+  if (useRealData()) {
+    console.log(
+      getEnv('SERPAPI_KEY')
+        ? '[data] ticket data: LIVE (SerpApi). Every uncached fare search spends a credit.'
+        : '[data] ticket data: LIVE requested, but SERPAPI_KEY is missing: using sample data.'
+    );
+  } else {
+    console.log(
+      '[data] ticket data: SAMPLE. No SerpApi requests are made. ' +
+        'Set USE_REAL_DATA=true (or USE_REAL_TICKET_DATA in shared/config.ts) for live fares.'
+    );
+  }
   const loaded = loadedFiles.length ? loadedFiles.join(', ') : 'none';
   const missing = ENV_KEYS.filter((k) => !getEnv(k.name));
 

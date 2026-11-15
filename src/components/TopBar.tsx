@@ -1,4 +1,6 @@
 import { BedDouble, Compass, Plus, Sparkles, Ticket } from 'lucide-react';
+import { CURRENCIES, isCurrencyCode } from '../../shared/currency.ts';
+import { useCurrency } from '../currency.tsx';
 
 interface TopBarProps {
   activePanel: 'timeline' | 'stays' | 'smart-score' | 'vouchers';
@@ -8,6 +10,8 @@ interface TopBarProps {
   onOptimizeRoute: () => void;
   isOptimizing: boolean;
   activeVoucherCount: number;
+  /** Where tickets come from: set in code / environment, shown here for information only. */
+  dataMode?: 'live' | 'mock';
 }
 
 export function TopBar({
@@ -18,7 +22,9 @@ export function TopBar({
   onOptimizeRoute,
   isOptimizing,
   activeVoucherCount,
+  dataMode,
 }: TopBarProps) {
+  const { currency, setCurrency, rates } = useCurrency();
   return (
     <header className="h-16 bg-white border-b border-neutral-200/80 px-5 lg:px-7 flex items-center justify-between gap-8 shrink-0 z-30">
       {/* Zone 1: Single-line Brand Wordmark */}
@@ -99,8 +105,46 @@ export function TopBar({
         </button>
       </nav>
 
-      {/* Zone 3: Single Primary Action */}
+      {/* Zone 3: data mode, currency, single primary action */}
       <div className="flex items-center gap-3 shrink-0">
+        {dataMode && (
+          <span
+            title={
+              dataMode === 'live'
+                ? 'Live Google Flights fares (SerpApi)'
+                : 'Sample tickets: no SerpApi requests are made. Set USE_REAL_DATA=true for live fares.'
+            }
+            className={`hidden lg:inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold whitespace-nowrap ${
+              dataMode === 'live'
+                ? 'border-[#BBF7D0] bg-[#F0FDF4] text-[#15803D]'
+                : 'border-[#FFD6BA] bg-[#FFF4ED] text-[#E56B1A]'
+            }`}
+          >
+            {dataMode === 'live' ? 'Live fares' : 'Sample data'}
+          </span>
+        )}
+
+        <div className="relative">
+          <label htmlFor="currency-select" className="sr-only">
+            Display currency
+          </label>
+          <select
+            id="currency-select"
+            value={currency}
+            onChange={(e) => isCurrencyCode(e.target.value) && setCurrency(e.target.value)}
+            title={`Prices are shown in ${currency}. Exchange rates ${
+              rates.source === 'live' ? '(ECB reference)' : '(approximate)'
+            } as of ${rates.asOf}.`}
+            className="h-9 cursor-pointer rounded-xl border border-neutral-200 bg-white px-2.5 text-sm font-semibold text-[#111827] hover:border-[#FFD6BA] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF812E]"
+          >
+            {CURRENCIES.map((c) => (
+              <option key={c.code} value={c.code}>
+                {c.code} · {c.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
         <button
           type="button"
           onClick={onOptimizeRoute}

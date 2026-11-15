@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { BedDouble, Check, ChevronDown, ChevronUp, ExternalLink } from 'lucide-react';
 import { formatShortDate } from '../../shared/dateUtils.ts';
 import type { StayLink, StayOption, StaySearch } from '../../shared/types.ts';
+import { useCurrency } from '../currency.tsx';
 import { SmartScoreBadge } from './SmartScoreBadge.tsx';
 
 interface StayPanelProps {
@@ -57,6 +58,7 @@ function StayCard({
   isSelected: boolean;
   onSelect: () => void;
 }) {
+  const { fmt } = useCurrency();
   return (
     <div data-stay-id={option.id} data-stay-score={option.smartScore}>
       <button
@@ -81,13 +83,13 @@ function StayCard({
               {option.description} · about {option.commuteMinutesOneWay} min to the centre
             </div>
             <div className="font-mono text-[11px] text-[#4B5563] tabular-nums">
-              ~${option.nightlyPriceUsd}/night × {nights} night{nights === 1 ? '' : 's'}
+              ~{fmt(option.nightlyPriceUsd)}/night × {nights} night{nights === 1 ? '' : 's'}
             </div>
           </div>
 
           <div className="shrink-0 space-y-0.5 text-right">
             <div className="font-display text-sm font-bold text-[#111827] tabular-nums">
-              ~${option.totalPriceUsd.toFixed(0)}
+              ~{fmt(option.totalPriceUsd)}
             </div>
             <div>
               <SmartScoreBadge score={option.smartScore} />
@@ -135,6 +137,7 @@ export function StayPanel({
   inTimeline = false,
   onSelectOption,
 }: StayPanelProps) {
+  const { fmt } = useCurrency();
   const [expanded, setExpanded] = useState(defaultExpanded);
   const selected =
     search.options.find((o) => o.id === selectedOptionId) ?? search.options[0];
@@ -183,7 +186,7 @@ export function StayPanel({
                     <span aria-hidden="true">·</span>
                     <span className="font-medium text-[#111827]">{selected.title}</span>
                     <span className="font-mono font-semibold text-[#111827]">
-                      ~${selected.totalPriceUsd.toFixed(0)}
+                      ~{fmt(selected.totalPriceUsd)}
                     </span>
                     <SmartScoreBadge score={selected.smartScore} size="sm" />
                   </>

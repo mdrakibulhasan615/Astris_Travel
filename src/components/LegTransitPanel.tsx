@@ -6,6 +6,8 @@ import {
   ChevronDown,
   ChevronUp,
   ExternalLink,
+  Backpack,
+  Luggage,
   Moon,
   Plane,
   Ship,
@@ -13,11 +15,15 @@ import {
   TrainFront,
 } from 'lucide-react';
 import { formatShortDate } from '../../shared/dateUtils.ts';
+import { describeBaggage } from '../../shared/ticketDetails.ts';
+import { useCurrency } from '../currency.tsx';
 import { formatDuration } from '../../shared/smartScore.ts';
 import { PROVIDER_NAMES } from '../../shared/affiliate.ts';
 import { SmartScoreBadge } from './SmartScoreBadge.tsx';
 import type {
+  BaggageInfo,
   ModeFilter,
+  OptionTag,
   ScoreFlag,
   TicketType,
   TransitMode,
@@ -144,6 +150,7 @@ function BookLink({
   label?: string;
   secondary?: boolean;
 }) {
+  const { fmt } = useCurrency();
   if (!url) return null;
   const merchant = option.bookingProvider ? PROVIDER_NAMES[option.bookingProvider] : 'partner site';
   // Only a live fare has a price worth repeating on the button; estimates are a search, not a quote
@@ -152,7 +159,7 @@ function BookLink({
   const text =
     label ??
     (isLive
-      ? `Book ${kind}on ${merchant} · $${option.discountedPriceUsd.toFixed(0)}`
+      ? `Book ${kind}on ${merchant} · ${fmt(option.discountedPriceUsd)}`
       : `Find ${kind}on ${merchant}`);
   return (
     <a
@@ -198,6 +205,56 @@ function BookLinks({ option }: { option: TransitOption }) {
 
 const legLabel = (l: TripLeg) => `${l.fromCode} → ${l.toCode}`;
 
+const TAG_LABELS: Record<OptionTag, string> = {
+  cheapest: 'Cheapest',
+  'cheapest-direct': 'Cheapest Direct',
+  direct: 'Direct',
+};
+
+/** `Cheapest` / `Cheapest Direct` / `Direct` badge (ranking tags, see shared/ranking.ts). */
+function TagPill({ tag }: { tag: OptionTag }) {
+  return (
+    <span
+      className={`rounded-full px-2 py-px text-[10px] font-semibold whitespace-nowrap ${
+        tag === 'direct'
+          ? 'bg-neutral-100 text-[#374151]'
+          : 'border border-[#BBF7D0] bg-[#F0FDF4] text-[#15803D]'
+      }`}
+    >
+      {TAG_LABELS[tag]}
+    </span>
+  );
+}
+
+const BAG_TONE = { good: 'text-[#15803D]', warn: 'text-[#B45309]', muted: 'text-[#4B5563]' } as const;
+
+/** Carry-on and checked baggage for the ticket (from the fare data, or the carrier's typical policy). */
+function BaggageLine({ baggage }: { baggage: BaggageInfo }) {
+  const d = describeBaggage(baggage);
+  return (
+    <div
+      className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px]"
+      title={
+        baggage.source === 'typical'
+          ? `Typical economy allowance for this carrier; confirm it for your fare when booking.${
+              baggage.note ? ` ${baggage.note}.` : ''
+            }`
+          : 'Baggage as reported in the fare data'
+      }
+    >
+      <span className={`inline-flex items-center gap-1 ${BAG_TONE[d.cabin.tone]}`}>
+        <Backpack className="h-3 w-3" aria-hidden="true" />
+        {d.cabin.text}
+      </span>
+      <span className={`inline-flex items-center gap-1 ${BAG_TONE[d.checked.tone]}`}>
+        <Luggage className="h-3 w-3" aria-hidden="true" />
+        {d.checked.text}
+      </span>
+      {baggage.source === 'typical' && <span className="text-[10px] text-[#4B5563]">typical</span>}
+    </div>
+  );
+}
+
 /**
  * One-way / return selector for the leg, the one-way-vs-return price comparison when the trip
  * comes back to where this leg started, and the "already covered" notice for the way back.
@@ -213,6 +270,7 @@ function TicketControls({
   coveredByLeg?: TripLeg;
   onChangeTicket: (legId: string, change: TicketChange) => void;
 }) {
+  const { fmt } = useCurrency();
   if (leg.transitOptions.length === 0 && !leg.oneWayOptions?.length) return null;
 
   if (coveredByLeg) {
@@ -310,12 +368,12 @@ function TicketControls({
                   {cmp.cheaper === 'tie'
                     ? 'Return and two one-ways cost the same'
                     : cmp.cheaper === 'return'
-                      ? `Return ticket is $${cmp.savingsUsd.toFixed(0)} cheaper`
-                      : `Two one-way tickets are $${cmp.savingsUsd.toFixed(0)} cheaper`}
+                      ? `Return ticket is ${fmt(cmp.savingsUsd)} cheaper`
+                      : `Two one-way tickets are ${fmt(cmp.savingsUsd)} cheaper`}
                 </div>
                 <div className="font-mono text-[#4B5563] tabular-nums">
-                  Return ${cmp.returnTotalUsd.toFixed(0)} · One-way {legLabel(leg)} + {legLabel(pairedLeg)}{' '}
-                  ${cmp.oneWayTotalUsd.toFixed(0)}
+                  Return {fmt(cmp.returnTotalUsd)} · One-way {legLabel(leg)} + {legLabel(pairedLeg)}{' '}
+                  {fmt(cmp.oneWayTotalUsd)}
                 </div>
               </div>
               {chosenIsCheapest ? (
@@ -329,8 +387,8 @@ function TicketControls({
                   onClick={() => onChangeTicket(leg.id, { type: cmp.cheaper as TicketType })}
                   className="rounded-lg bg-[#FF812E] px-2.5 py-1 font-semibold text-white hover:bg-[#E56B1A] cursor-pointer"
                 >
-                  Switch to {cmp.cheaper === 'return' ? 'return' : 'one-way'} · save $
-                  {cmp.savingsUsd.toFixed(0)}
+                  Switch to {cmp.cheaper === 'return' ? 'return' : 'one-way'} · save{' '}
+                  {fmt(cmp.savingsUsd)}
                 </button>
               )}
             </>
@@ -359,6 +417,7 @@ export function LegTransitPanel({
   onSelectOption,
 }: LegTransitPanelProps) {
   const [expanded, setExpanded] = useState(leg.id === 'leg-ist-lon' || leg.id === 'leg-lon-par');
+  const { fmt } = useCurrency();
 
   const filteredOptions =
     modeFilter === 'all'
@@ -461,7 +520,7 @@ export function LegTransitPanel({
                   </span>
                   <span aria-hidden="true">·</span>
                   <span className="font-mono font-semibold text-[#111827]">
-                    ${selectedOption.discountedPriceUsd.toFixed(0)}
+                    {fmt(selectedOption.discountedPriceUsd)}
                   </span>
                   <SmartScoreBadge score={selectedOption.smartScore} size="sm" />
                 </div>
@@ -555,6 +614,7 @@ export function LegTransitPanel({
                               · #1 Rank
                             </span>
                           )}
+                          {option.tags?.map((tag) => <TagPill key={tag} tag={tag} />)}
                           {option.ticketType === 'return' && option.returnDate && (
                             <span className="rounded-md border border-[#FFD6BA] bg-[#FFF4ED] px-1.5 py-px text-[10px] font-semibold text-[#E56B1A]">
                               Return · back {formatShortDate(option.returnDate)}
@@ -644,35 +704,18 @@ export function LegTransitPanel({
                           </div>
                         )}
 
-                        {option.segments && option.segments.length > 0 && (
-                          <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] font-mono text-[#4B5563] tabular-nums">
-                            {option.segments.map((seg, sIdx) => (
-                              <span key={seg.id} className="inline-flex items-center gap-1">
-                                <ModeIcon
-                                  mode={seg.mode}
-                                  className={`w-3 h-3 ${getModeAccentClass(seg.mode, false)}`}
-                                />
-                                <span>
-                                  {seg.label} ({seg.durationMinutes}m)
-                                </span>
-                                {sIdx < option.segments!.length - 1 && (
-                                  <span className="text-neutral-300">→</span>
-                                )}
-                              </span>
-                            ))}
-                          </div>
-                        )}
+                        {option.baggage && <BaggageLine baggage={option.baggage} />}
                       </div>
 
                       <div className="text-right shrink-0 space-y-0.5">
                         <div className="flex items-center justify-end gap-1.5">
                           {b.discountAppliedUsd > 0 && (
                             <span className="font-mono text-[11px] text-[#4B5563] line-through tabular-nums">
-                              ${option.basePriceUsd}
+                              {fmt(option.basePriceUsd)}
                             </span>
                           )}
                           <span className="font-display text-sm font-bold text-[#111827] tabular-nums">
-                            ${option.discountedPriceUsd.toFixed(0)}
+                            {fmt(option.discountedPriceUsd)}
                           </span>
                         </div>
 
@@ -686,7 +729,7 @@ export function LegTransitPanel({
 
                         {voucherCode && b.discountAppliedUsd > 0 && (
                           <div className="text-[11px] font-medium text-[#16A34A] font-mono tabular-nums">
-                            -${b.discountAppliedUsd.toFixed(0)} · {voucherCode}
+                            -{fmt(b.discountAppliedUsd)} · {voucherCode}
                           </div>
                         )}
 

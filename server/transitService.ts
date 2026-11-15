@@ -1,5 +1,5 @@
 // MUST stay the first import so env is loaded before the Redis/SerpApi clients are configured
-import { getEnv, warnMissingKey } from './env.ts';
+import { getEnv, useRealData, warnMissingKey } from './env.ts';
 import { Redis } from '@upstash/redis';
 import {
   CURATED_CORRIDOR_OPTIONS,
@@ -14,6 +14,7 @@ import {
   resolveAirport,
 } from '../shared/airports.ts';
 import { isIsoDate } from '../shared/fares.ts';
+import { parseBaggage } from '../shared/ticketDetails.ts';
 import {
   computeSmartScore,
   deriveReturnOptions,
@@ -530,6 +531,12 @@ async function fetchSerpApiFlights(
         ticketType: returnDate ? 'return' : undefined,
         returnDate,
         airlineLogo: item.airline_logo ?? firstFlt.airline_logo,
+        // Only what the fare data states; otherwise `completeTicketDetails` adds the carrier's typical policy
+        baggage:
+          parseBaggage([
+            ...(Array.isArray(item.extensions) ? item.extensions : []),
+            ...flights.flatMap((f: { extensions?: string[] }) => f.extensions ?? []),
+          ]) ?? undefined,
         hops,
         layovers: layoverInfo,
       });
@@ -697,10 +704,11 @@ export async function queryTransitWithCache(
   const fallbackFlights = fallback.filter((o) => o.mode === 'flight');
   const fallbackGround = fallback.filter((o) => o.mode !== 'flight');
 
-  // 1. Live flights: cache first, then the provider
+  // 1. Live flights: cache first, then the provider. Skipped entirely in sample-data mode
+  //    (USE_REAL_DATA off): no SerpApi request and no Redis read, so no credits are spent.
   let live: TransitOption[] | null = null;
   let cacheLayer: 'memory' | 'redis' | null = null;
-  if (mode === 'all' || mode === 'flight') {
+  if (useRealData() && (mode === 'all' || mode === 'flight')) {
     const cachedHit = await getCachedTransit(cacheKey);
     if (cachedHit && cachedHit.options.length > 0) {
       live = cachedHit.options;

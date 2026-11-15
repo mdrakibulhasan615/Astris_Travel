@@ -42,6 +42,7 @@ import {
 } from '../shared/mockDataset.ts';
 import { buildLegsFromStops, rescoreLegs, round2 } from '../shared/smartScore.ts';
 import { legTotals } from '../shared/fares.ts';
+import { useCurrency } from './currency.tsx';
 import { configureAffiliate, type AffiliateConfig } from '../shared/affiliate.ts';
 import { registerAirports, type AirportPoint } from '../shared/airports.ts';
 import { buildStaySearches } from '../shared/stays.ts';
@@ -92,6 +93,9 @@ function learnAirports(legs: TripLeg[]): void {
 }
 
 export default function App() {
+  const { fmt } = useCurrency();
+  // Where tickets come from (set in code/env): shown in the header, never switched from the UI
+  const [dataMode, setDataMode] = useState<'live' | 'mock' | undefined>(undefined);
   const [trip, setTrip] = useState<Trip>(() => createDefaultTrip());
   const [destinations, setDestinations] = useState<DestinationHub[]>(DESTINATION_HUBS);
   const [vouchers, setVouchers] = useState<Voucher[]>(VOUCHERS_CATALOG);
@@ -137,6 +141,15 @@ export default function App() {
     let mounted = true;
     async function hydrateFromApi() {
       try {
+        fetch('/api/config')
+          .then((res) => (res.ok ? res.json() : null))
+          .then((config: { dataMode?: 'live' | 'mock' } | null) => {
+            if (mounted && config?.dataMode) setDataMode(config.dataMode);
+          })
+          .catch(() => {
+            // header chip simply stays hidden
+          });
+
         // Partner ids first and on their own: they are instant, the trip may wait on live fares
         fetch('/api/affiliate/config')
           .then((res) => (res.ok ? res.json() : null))
@@ -657,6 +670,7 @@ export default function App() {
         onOptimizeRoute={handleOptimizeRoute}
         isOptimizing={isOptimizing}
         activeVoucherCount={trip.appliedVoucherCodes.length}
+        dataMode={dataMode}
       />
 
       {/* Mobile View Switcher (keeps sticky height well under 15%) */}
@@ -880,7 +894,7 @@ export default function App() {
                   <div className="text-right">
                     <div className="text-[11px] font-medium text-[#4B5563]">Est. stays total</div>
                     <div className="font-display text-lg font-bold text-[#111827] tabular-nums">
-                      ~${staysTotalUsd.toFixed(0)}
+                      ~{fmt(staysTotalUsd)}
                     </div>
                   </div>
                 </div>

@@ -48,7 +48,8 @@ unprefixed keys (including `GEMINI_API_KEY`) are deliberately never exposed to t
 | Variable | Required | Used by | Purpose |
 | :--- | :--- | :--- | :--- |
 | `PORT` | no (3000) | `server.ts` | HTTP port |
-| `SERPAPI_KEY` | no | `server/transitService.ts` | Live Google Flights search (`engine=google_flights`). Absent → curated/synthesized corridors |
+| `USE_REAL_DATA` | no (`false`) | `server/env.ts` `useRealData()` | `true` = live SerpApi fares, `false` = sample data only (no SerpApi or Redis fare requests). Overrides `USE_REAL_TICKET_DATA` in `shared/config.ts`, which is the in-code default (`false`). **Vercel: set it to `true` for the environment that should be live.** |
+| `SERPAPI_KEY` | no | `server/transitService.ts` | Live Google Flights search (`engine=google_flights`); only used when `USE_REAL_DATA` is on. Absent → curated/synthesized corridors |
 | `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` | no | `server/transitService.ts` | 12-hour transit cache |
 | `TRIPCOM_ALLIANCE_ID`, `TRIPCOM_SID` | no | `shared/affiliate.ts` (configured in `transitService.ts`) | Trip.com partner pair, sent as `Allianceid` + `SID` on flight links. Both are needed. Absent → links work but are **not attributed** |
 | `BOOKING_AID` | no | same | Booking.com affiliate id, sent as `aid` on stay links |
@@ -121,6 +122,8 @@ Imports use explicit `.ts`/`.tsx` extensions (`allowImportingTsExtensions`).
 | :--- | :--- |
 | `GET /api/trips/default` | Default trip; legs go through the same live pipeline as `/api/legs/recompute` (9 s budget, then labelled sample data) |
 | `GET /api/destinations`, `GET /api/airports/search?q=&limit=` | Airport hubs / autocomplete |
+| `GET /api/config` | `{ dataMode: 'live' \| 'mock' }`, read-only; drives the header's "Sample data" / "Live fares" chip |
+| `GET /api/rates` | USD-based exchange rates for the currency switcher (Frankfurter / ECB, 12 h in-memory cache, built-in fallback table) |
 | `GET /api/vouchers`, `POST /api/vouchers/validate` | Catalog; validate a code against current legs |
 | `GET /api/affiliate/config` | Validated partner ids for the browser's link builders (public by nature: every link carries them) |
 | `GET\|POST /api/transit/query` | Single-corridor query through the Redis wrapper (`X-Cache-*` headers); optional `returnDate` for return fares |
@@ -368,3 +371,32 @@ It is not a routing engine: lines follow corridors between junction cities, not 
 `api/index.ts` (`createApp()` from `server.ts`, `maxDuration` 30). Everything above runs inside that one
 Express app: SerpApi + Upstash calls happen per request, the in-process cache is per instance (Upstash is
 the shared one), and nothing needs a long-running process.
+
+## 13. Data Mode, Currency, Baggage, Tags & Ranking
+
+- **Sample vs live (`shared/config.ts`, `useRealData()` in `server/env.ts`).** One flag,
+  `USE_REAL_TICKET_DATA = false` in code, overridable per environment with `USE_REAL_DATA`. When off,
+  `queryTransitWithCache` never calls SerpApi **and never reads or writes the Redis fare cache**, so page
+  loads, reloads and edits spend no credits; the app runs entirely on curated/estimated tickets. Server
+  start logs which mode is active. The header shows "Sample data" or "Live fares" (information only; there
+  is no UI switch). Ground transport is curated/estimated in both modes.
+- **Same shape either way.** Sample options carry everything live ones do (price, direct/layover data,
+  baggage, flight-by-flight breakdown) because `completeTicketDetails` (`shared/ticketDetails.ts`, called
+  from `attachBookingUrls`) derives what is missing, never overwriting provider data.
+- **Currency (`shared/currency.ts`, `src/currency.tsx`).** Everything is computed and ranked in USD; the
+  header selector (USD, MYR, EUR, GBP, TRY, JPY, SGD) only changes display through `useCurrency().fmt(usd)`.
+  Switching never re-queries fares and never changes a ranking. Rates come from `/api/rates`; the choice is
+  kept in `localStorage`. Smart Score is a unit-less points figure and is not converted.
+- **Baggage (`BaggageInfo` on `TransitOption.baggage`).** Live fares: `parseBaggage` reads carry-on /
+  checked-bag phrases from the fare's amenity strings. In practice many SerpApi fares state none, so the
+  fallback is the carrier's typical economy policy (`typicalBaggage`: full-service = carry-on + 1 × 23 kg,
+  low-cost = carry-on, checked for a fee, "Saver/Basic/Light" fares = no checked bag, coach 1 × 25 kg,
+  rail/ferry included). Typical values are tagged `source: 'typical'` and shown with a "typical" marker and
+  a tooltip to confirm at booking; they are never presented as a fare rule.
+- **Card layout.** Each card shows the main flight legs (`hops`) with layovers and baggage. The repeated
+  transfer / step summary line below them (`KUL → KUL transfer (49m)`, `MH 160 (475m) → QR 237 …`) is gone.
+- **Ranking and tags (`shared/ranking.ts`).** `recalculateOptionsWithVttsAndVouchers` ends in `rankAndTag`,
+  so every list is ordered: 1) best Smart Score, 2) cheapest direct (if not already 1st), 3) cheapest overall
+  (if not already placed), 4) the rest by Smart Score. Tags: `Direct` (no stops, no layover),
+  `Cheapest Direct` (lowest-priced direct), `Cheapest` (lowest-priced overall); one ticket can carry several.
+  "Price" is the net fare after vouchers; ties go to the better Smart Score.

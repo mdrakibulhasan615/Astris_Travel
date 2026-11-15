@@ -131,6 +131,24 @@ export interface TransitSegment {
 /** Merchants we deep-link to directly (no metasearch hop). */
 export type BookingProvider = 'tripcom' | 'flixbus' | '12go' | 'booking' | 'agoda';
 
+/** Whether a bag comes with the fare. `unknown` = the provider did not say. */
+export type BagStatus = 'included' | 'fee' | 'none' | 'unknown';
+
+/** Baggage allowance for a ticket. */
+export interface BaggageInfo {
+  cabin: BagStatus;
+  checked: BagStatus;
+  cabinKg?: number;
+  checkedPieces?: number;
+  checkedKg?: number;
+  /** `provider`: read from the fare data. `typical`: the carrier's usual economy policy; confirm when booking. */
+  source: 'provider' | 'typical';
+  note?: string;
+}
+
+/** Ranking tags: see `shared/ranking.ts`. */
+export type OptionTag = 'cheapest' | 'cheapest-direct' | 'direct';
+
 /** One flight on a live itinerary, exactly as the provider reported it. */
 export interface FlightHop {
   flightNumber: string;
@@ -189,7 +207,10 @@ export interface TransitOption {
   returnDate?: string;
   /** Ground return tickets are two searches (merchants sell each direction); this is the way back. */
   returnBookingUrl?: string;
-  /** Live itineraries: every flight with its number, airline, aircraft and local times. */
+  baggage?: BaggageInfo;
+  /** `Cheapest`, `Cheapest Direct` and `Direct` badges, set when the list is ranked. */
+  tags?: OptionTag[];
+  /** Every flight with its number, airline, aircraft and local times (live data, or derived for samples). */
   hops?: FlightHop[];
   layovers?: Layover[];
   airlineLogo?: string;
