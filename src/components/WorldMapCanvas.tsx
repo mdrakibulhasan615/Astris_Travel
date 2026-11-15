@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import greatCircle from '@turf/great-circle';
 import { point } from '@turf/helpers';
-import { BedDouble, Bus, LocateFixed, Plane, Ship, Sparkles, TrainFront } from 'lucide-react';
+import { BedDouble, Bus, LocateFixed, Plane, Ship, TrainFront } from 'lucide-react';
 import { setWorkerUrl } from 'maplibre-gl';
 import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 import Map, {
@@ -34,6 +34,8 @@ setWorkerUrl(maplibreWorkerUrl);
 interface WorldMapCanvasProps {
   /** Real transit routes (Google Routes) chosen in a leg's Schedules panel, keyed by leg id. */
   transitOverlays?: Record<string, OverlayLine[]>;
+  /** Bumped by the route bar's Search button: frames the whole route again. */
+  fitRouteTick?: number;
   stops: TripStop[];
   legs: TripLeg[];
   modeFilter: ModeFilter;
@@ -41,7 +43,6 @@ interface WorldMapCanvasProps {
   hoveredLegId: string | null;
   activeLegId: string | null;
   focusTarget: { lat: number; lng: number; zoom?: number; ts: number } | null;
-  onChangeModeFilter: (mode: ModeFilter) => void;
   onHoverStop: (stopId: string | null) => void;
   onSelectLeg: (legId: string) => void;
   /** Open the "Staying in [City]?" card for a stop. */
@@ -144,6 +145,7 @@ interface MapCalloutItem {
 
 export function WorldMapCanvas({
   transitOverlays,
+  fitRouteTick,
   stops,
   legs,
   modeFilter,
@@ -151,7 +153,6 @@ export function WorldMapCanvas({
   hoveredLegId,
   activeLegId,
   focusTarget,
-  onChangeModeFilter,
   onHoverStop,
   onSelectLeg,
   onOpenStays,
@@ -510,16 +511,13 @@ export function WorldMapCanvas({
     });
   }, [focusTarget]);
 
-  const modeCounts = useMemo(() => {
-    const counts = { all: 0, flight: 0, train: 0, bus: 0, ferry: 0 };
-    for (const leg of legs) {
-      for (const opt of leg.transitOptions) {
-        counts.all += 1;
-        counts[opt.mode] += 1;
-      }
-    }
-    return counts;
-  }, [legs]);
+  // Search (route bar) re-frames the route; the first render is handled by the effect above
+  const lastFitTick = useRef(fitRouteTick);
+  useEffect(() => {
+    if (fitRouteTick === lastFitTick.current) return;
+    lastFitTick.current = fitRouteTick;
+    fitAllStops();
+  }, [fitRouteTick, fitAllStops]);
 
   // A place can be in the trip more than once (A → B → A). Its visits share one pin that lists
   // every stop number, instead of stacking pins that hide each other.
@@ -879,52 +877,6 @@ export function WorldMapCanvas({
           </Popup>
         )}
       </Map>
-
-      {/* Glassmorphism Floating Transport Filter Bar */}
-      <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 max-w-[94%] overflow-x-auto">
-        <div
-          role="group"
-          aria-label="Filter map and timeline by transport mode"
-          className="inline-flex items-center gap-1 p-1.5 bg-white/85 backdrop-blur-md border border-white/40 shadow-lg rounded-full"
-        >
-          {(
-            [
-              { id: 'all', label: 'All', icon: Sparkles, count: modeCounts.all, dot: '#111827' },
-              { id: 'flight', label: 'Flights', icon: Plane, count: modeCounts.flight, dot: '#FF812E' },
-              { id: 'train', label: 'Trains', icon: TrainFront, count: modeCounts.train, dot: '#0D9488' },
-              { id: 'bus', label: 'Buses', icon: Bus, count: modeCounts.bus, dot: '#7C3AED' },
-            ] as const
-          ).map((item) => {
-            const Icon = item.icon;
-            const active = modeFilter === item.id;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => onChangeModeFilter(item.id)}
-                className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap shrink-0 transition-all cursor-pointer ${
-                  active
-                    ? 'bg-[#FF812E] text-white shadow-sm'
-                    : 'text-[#4B5563] hover:text-[#111827] hover:bg-white/70'
-                }`}
-              >
-                <Icon
-                  className="w-3.5 h-3.5"
-                  style={{ color: active ? '#FFFFFF' : item.dot }}
-                />
-                <span>{item.label}</span>
-                <span
-                  className={`font-mono text-[11px] tabular-nums ${
-                    active ? 'text-white/90' : 'text-neutral-400'
-                  }`}
-                >
-                  {item.count}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
 
       {/* Bottom Floating Mode Legend + Active Corridor Telemetry + Fit Route */}
       <div className="absolute bottom-4 left-4 right-14 z-20 flex flex-wrap items-end justify-between gap-3 pointer-events-none">

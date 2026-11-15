@@ -60,6 +60,8 @@ import type {
   VttsTier,
 } from '../shared/types.ts';
 import { AddStopModal } from './components/AddStopModal.tsx';
+import { RouteBar, type SegmentChoice } from './components/RouteBar.tsx';
+import { TransportFilter } from './components/TransportFilter.tsx';
 import { LegTransitPanel } from './components/LegTransitPanel.tsx';
 import { MultiDestDatePickerModal } from './components/MultiDestDatePickerModal.tsx';
 import { RouteOptimizerModal } from './components/RouteOptimizerModal.tsx';
@@ -387,12 +389,10 @@ export default function App() {
     [trip.legs]
   );
 
-  const handleDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-    const oldIndex = trip.stops.findIndex((s) => s.id === active.id);
-    const newIndex = trip.stops.findIndex((s) => s.id === over.id);
-    if (oldIndex === -1 || newIndex === -1) return;
+  // Moves a stop (from the list's drag handle or the route bar) and re-dates what follows
+  const reorderStops = (oldIndex: number, newIndex: number) => {
+    const last = trip.stops.length - 1;
+    if (oldIndex === newIndex || oldIndex < 0 || newIndex < 0 || oldIndex > last || newIndex > last) return;
 
     const reordered = arrayMove(trip.stops, oldIndex, newIndex).map((s, idx) => ({
       ...s,
@@ -412,6 +412,15 @@ export default function App() {
     );
     const datedStops = recalculateDatesAfterReorder(reordered, prelimLegs);
     recomputeStopsAndLegs(datedStops);
+  };
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    reorderStops(
+      trip.stops.findIndex((s) => s.id === active.id),
+      trip.stops.findIndex((s) => s.id === over.id)
+    );
   };
 
   const handleAddDestination = (hub: DestinationHub) => {
@@ -511,6 +520,25 @@ export default function App() {
       trip.travelers,
       prefs
     );
+  };
+
+  // The route bar's connectors: one-way, return, or hand the choice back to the cheaper-fare logic
+  const handleChangeSegment = (legId: string, choice: SegmentChoice) => {
+    if (choice === 'auto') handleChangeLegTicket(legId, { auto: true });
+    else handleChangeLegTicket(legId, { type: choice });
+  };
+
+  // Search: ask the server for every leg's flights, trains and buses again, then re-frame the map
+  const [isSearching, setIsSearching] = useState(false);
+  const [fitRouteTick, setFitRouteTick] = useState(0);
+  const handleSearchRoute = async () => {
+    setIsSearching(true);
+    try {
+      await recomputeStopsAndLegs(trip.stops);
+    } finally {
+      setIsSearching(false);
+      setFitRouteTick((n) => n + 1);
+    }
   };
 
   const handleOpenStays = (stopId: string) => {
@@ -862,6 +890,10 @@ export default function App() {
               )}
             </div>
 
+            {leftView === 'route' && !isLoadingInitial && trip.legs.length > 0 && (
+              <TransportFilter legs={trip.legs} value={modeFilter} onChange={setModeFilter} />
+            )}
+
             {isLoadingInitial ? (
               <div className="space-y-3">
                 <div className="h-24 rounded-2xl bg-white border border-neutral-200/80 animate-pulse" />
@@ -1019,7 +1051,7 @@ export default function App() {
               hoveredLegId={hoveredLegId}
               activeLegId={activeLegId}
               focusTarget={focusTarget}
-              onChangeModeFilter={setModeFilter}
+              fitRouteTick={fitRouteTick}
               onHoverStop={setHoveredStopId}
               onSelectLeg={(legId) => {
                 setActiveLegId(legId);
@@ -1027,6 +1059,20 @@ export default function App() {
               onOpenStays={handleOpenStays}
             />
           </ErrorBoundary>
+          <RouteBar
+            stops={trip.stops}
+            legs={trip.legs}
+            destinations={destinations}
+            hoveredStopId={hoveredStopId}
+            isSearching={isSearching}
+            onMoveStop={reorderStops}
+            onRemoveStop={handleRemoveStop}
+            onAddDestination={handleAddDestination}
+            onChangeSegment={handleChangeSegment}
+            onHoverStop={setHoveredStopId}
+            onFocusStop={(s) => setFocusTarget({ lat: s.lat, lng: s.lng, zoom: 5.2, ts: Date.now() })}
+            onSearch={handleSearchRoute}
+          />
         </div>
       </main>
 

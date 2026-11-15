@@ -536,3 +536,24 @@ stay categories below it are unchanged.
   (slider over the results' range), included amenities (only free ones count, as for the badges), property type and
   deals only, with a result count and reset. Choices that no result could satisfy are not offered. The estimated
   categories are a fixed list of six and are not filtered.
+
+## 22. Route Bar — `src/components/RouteBar.tsx`
+
+A floating glass bar at the top of the map replaces the old floating transport-mode chips. It edits the same
+trip state as the itinerary list (`trip.stops`, `trip.legPrefs`), so the two always agree.
+
+- **Stop pills**, in route order and numbered like the map pins: drag one onto another to move it, or use the
+  left/right arrows that slide out on hover or keyboard focus (the × removes a stop while more than two remain).
+  Moves go through the same `reorderStops` as the list's drag handle (dates after the move are recalculated).
+  Hovering a pill highlights the stop in the list and on the map; clicking its name flies the map there.
+- **Connectors** between pills: `→` one-way, `⇄` return (also shown, dimmed, on a leg a return ticket already
+  covers). Clicking opens a menu: One-way, Return, or Best price (auto, which hands the choice back to the
+  cheaper-fare logic of §11). On a covered leg the menu offers "Book one-way tickets instead".
+- **Add a stop…** is an inline typeahead (`/api/airports/search`, falling back to the popular destinations) that
+  appends the stop through `handleAddDestination`.
+- **Transport filter** is not in the bar: it is the chip row above the itinerary (`TransportFilter.tsx`: All / Flights / Trains /
+  Buses with counts), filtering every leg's ticket list and the map lines through the shared `modeFilter`.
+- **Search** re-runs the whole route through `/api/legs/recompute` (flights, trains and buses for every leg) with a
+  spinner, then re-frames the map; the polylines follow the new legs. Edits made in the bar already recompute
+  immediately, so Search is for refreshing, not for applying pending edits.
+- Menus render in portals so the bar's pills never clip them.
