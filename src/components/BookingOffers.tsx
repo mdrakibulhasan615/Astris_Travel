@@ -32,7 +32,11 @@ const useActiveOption = () => useSyncExternalStore(subscribe, () => activeOption
 
 // ── Merchant badges (drawn, not fetched: no external images) ───────────────────────────────────
 
-const BADGES: Record<OfferProviderId, { bg: string; glyph: string }> = {
+const BADGES: Record<string, { bg: string; glyph: string }> = {
+  booking: { bg: '#003B95', glyph: 'B' },
+  agoda: { bg: '#5C2D91', glyph: 'a' },
+  'trip-hotels': { bg: '#287DFA', glyph: 'T' },
+  'google-hotels': { bg: '#4285F4', glyph: 'G' },
   aviasales: { bg: '#0A8CFF', glyph: 'A' },
   tripcom: { bg: '#287DFA', glyph: 'T' },
   kiwi: { bg: '#00A991', glyph: 'k' },
@@ -40,7 +44,7 @@ const BADGES: Record<OfferProviderId, { bg: string; glyph: string }> = {
   'google-flights': { bg: '#EA4335', glyph: 'G' },
 };
 
-function MerchantBadge({ id }: { id: OfferProviderId }) {
+function MerchantBadge({ id }: { id: string }) {
   const b = BADGES[id] ?? { bg: '#6B7280', glyph: '?' };
   return (
     <span
@@ -105,32 +109,35 @@ function place(card: HTMLElement | null, panelHeight: number): Placement | null 
   };
 }
 
+/** One merchant row in the floating panel. A row without a price shows "Check price" instead. */
+export interface OfferRow {
+  key: string;
+  name: string;
+  badge: string;
+  /** Net price in USD (converted for display); omit when the merchant's price is not known. */
+  priceUsd?: number;
+  url: string;
+  title?: string;
+}
+
 function OffersPanel({
-  option,
-  offers,
-  discountUsd,
+  id,
+  label,
+  rows,
+  footnote,
   cardRef,
   onClose,
 }: {
-  option: TransitOption;
-  offers: AffiliateOffer[];
-  discountUsd: number;
+  id: string;
+  label: string;
+  rows: OfferRow[];
+  footnote?: string;
   cardRef: RefObject<HTMLElement | null>;
   onClose: () => void;
 }) {
   const { fmt } = useCurrency();
   const panelRef = useRef<HTMLDivElement>(null);
   const [placement, setPlacement] = useState<Placement | null>(null);
-
-  // Cheapest first; the same voucher discount applies to every merchant, so the order is unchanged
-  const rows = useMemo(
-    () =>
-      [...offers]
-        .sort((a, b) => a.priceUsd - b.priceUsd)
-        .map((o) => ({ ...o, net: Math.max(0, o.priceUsd - discountUsd) })),
-    [offers, discountUsd]
-  );
-  const anyEstimated = rows.some((r) => r.estimated);
 
   const reposition = useCallback(() => {
     const next = place(cardRef.current, panelRef.current?.offsetHeight ?? 260);
@@ -174,8 +181,8 @@ function OffersPanel({
       <div
         ref={panelRef}
         role="dialog"
-        aria-label={`Booking options for ${option.carrier}`}
-        data-offers-panel={option.id}
+        aria-label={label}
+        data-offers-panel={id}
         onClick={(e) => e.stopPropagation()}
         style={placement?.style ?? { position: 'fixed', visibility: 'hidden', width: PANEL_WIDTH }}
         className="z-[61] rounded-2xl border-2 border-orange-500 bg-white p-2 shadow-xl"
@@ -192,42 +199,38 @@ function OffersPanel({
         )}
         <ul className="divide-y divide-slate-100">
           {rows.map((row, i) => (
-            <li key={row.providerId} className="flex items-center justify-between gap-3 px-2 py-2.5">
+            <li key={row.key} className="flex items-center justify-between gap-3 px-2 py-2.5">
               <div className="flex min-w-0 items-center gap-2.5">
-                <MerchantBadge id={row.logo} />
+                <MerchantBadge id={row.badge} />
                 <div className="min-w-0">
                   <div className="whitespace-nowrap font-display text-[15px] font-extrabold leading-tight text-slate-900 tabular-nums">
-                    {fmt(row.net)}
+                    {row.priceUsd === undefined ? (
+                      <span className="text-xs font-semibold text-slate-500">Check price</span>
+                    ) : (
+                      fmt(row.priceUsd)
+                    )}
                   </div>
-                  <div className="truncate text-[11px] text-slate-500">{row.provider}</div>
+                  <div className="truncate text-[11px] text-slate-500">{row.name}</div>
                 </div>
               </div>
               <a
                 href={row.url}
                 target="_blank"
                 rel="sponsored noopener noreferrer"
-                title={`Opens ${row.provider} with this route, date and travellers filled in`}
+                title={row.title ?? `Opens ${row.name}`}
                 className={`inline-flex min-w-[4.5rem] shrink-0 items-center justify-center gap-1 rounded-lg px-3 py-1.5 text-xs font-bold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-1 ${
                   i === 0
                     ? 'bg-orange-500 text-white hover:bg-orange-600'
                     : 'bg-slate-100 text-slate-800 hover:bg-slate-200'
                 }`}
               >
-                Buy
+                {row.priceUsd === undefined ? 'View' : 'Buy'}
                 <ExternalLink className="h-3 w-3" aria-hidden="true" />
               </a>
             </li>
           ))}
         </ul>
-        {anyEstimated && (
-          <p className="px-2 pb-1 pt-1.5 text-[10px] leading-snug text-slate-500">
-            {option.dataSource === 'live'
-              ? 'Only the cheapest price is the live fare; other partners are estimates, confirmed on their site.'
-              : option.dataSource === 'cached'
-                ? 'Aviasales shows a real fare seen in the last 48 hours; it may have changed. Other partners are estimates.'
-                : 'Sample data: prices are illustrative, confirmed on the partner site.'}
-          </p>
-        )}
+        {footnote && <p className="px-2 pb-1 pt-1.5 text-[10px] leading-snug text-slate-500">{footnote}</p>}
       </div>
     </>,
     document.body
@@ -235,9 +238,56 @@ function OffersPanel({
 }
 
 /**
- * The `PROCEED TO BOOKING` button on a boarding pass stub. Opens a floating panel that compares the
- * merchants selling this flight, cheapest first (orange Buy button on the cheapest).
+ * A `PROCEED TO BOOKING` button that opens the floating comparison panel for one card (a flight's
+ * merchants, a hotel's booking sites). One panel is open at a time; Escape, an outside click or
+ * scrolling the card out of view closes it.
  */
+export function OffersButton({
+  id,
+  label,
+  rows,
+  footnote,
+  accent,
+  cardRef,
+}: {
+  id: string;
+  label: string;
+  rows: OfferRow[];
+  footnote?: string;
+  /** The card's brand colours; the default is the app's orange. */
+  accent?: CSSProperties;
+  cardRef: RefObject<HTMLElement | null>;
+}) {
+  const active = useActiveOption();
+  const open = active === id;
+  const close = useCallback(() => setActive(null), []);
+
+  // A card that goes away (list re-ranked, leg collapsed) must not leave its panel behind
+  useEffect(() => () => (activeOptionId === id ? setActive(null) : undefined), [id]);
+
+  if (rows.length === 0) return null;
+  return (
+    <>
+      <button
+        type="button"
+        data-offers-trigger
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        onClick={(e) => {
+          e.stopPropagation();
+          setActive(open ? null : id);
+        }}
+        style={accent ?? { background: '#FF812E', color: '#FFFFFF' }}
+        className="inline-flex w-full items-center justify-center whitespace-nowrap rounded-lg px-1.5 py-1 text-[10px] font-bold uppercase tracking-normal hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF812E] focus-visible:ring-offset-1"
+      >
+        Proceed to booking
+      </button>
+      {open && <OffersPanel id={id} label={label} rows={rows} footnote={footnote} cardRef={cardRef} onClose={close} />}
+    </>
+  );
+}
+
+/** A boarding pass's booking button: the flight's merchants, cheapest first. */
 export function BookingButton({
   option,
   accent,
@@ -250,34 +300,37 @@ export function BookingButton({
   discountUsd: number;
   cardRef: RefObject<HTMLElement | null>;
 }) {
-  const offers = useMemo(() => offersOf(option), [option]);
-  const active = useActiveOption();
-  const open = active === option.id;
-  const close = useCallback(() => setActive(null), []);
-
-  // A card that goes away (list re-ranked, leg collapsed) must not leave its panel behind
-  useEffect(() => () => (activeOptionId === option.id ? setActive(null) : undefined), [option.id]);
-
-  if (offers.length === 0) return null;
+  const rows = useMemo<OfferRow[]>(
+    () =>
+      [...offersOf(option)]
+        .sort((a, b) => a.priceUsd - b.priceUsd)
+        // The same voucher discount applies to every merchant, so the order is unchanged
+        .map((o) => ({
+          key: o.providerId,
+          name: o.provider,
+          badge: o.logo,
+          priceUsd: Math.max(0, o.priceUsd - discountUsd),
+          url: o.url,
+          title: `Opens ${o.provider} with this route, date and travellers filled in`,
+        })),
+    [option, discountUsd]
+  );
+  const anyEstimated = useMemo(() => offersOf(option).some((o) => o.estimated), [option]);
+  const footnote = !anyEstimated
+    ? undefined
+    : option.dataSource === 'live'
+      ? 'Only the cheapest price is the live fare; other partners are estimates, confirmed on their site.'
+      : option.dataSource === 'cached'
+        ? 'Aviasales shows a real fare seen in the last 48 hours; it may have changed. Other partners are estimates.'
+        : 'Sample data: prices are illustrative, confirmed on the partner site.';
   return (
-    <>
-      <button
-        type="button"
-        data-offers-trigger
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        onClick={(e) => {
-          e.stopPropagation();
-          setActive(open ? null : option.id);
-        }}
-        style={accent}
-        className="inline-flex w-full items-center justify-center whitespace-nowrap rounded-lg px-1.5 py-1 text-[10px] font-bold uppercase tracking-normal hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF812E] focus-visible:ring-offset-1"
-      >
-        Proceed to booking
-      </button>
-      {open && (
-        <OffersPanel option={option} offers={offers} discountUsd={discountUsd} cardRef={cardRef} onClose={close} />
-      )}
-    </>
+    <OffersButton
+      id={option.id}
+      label={`Booking options for ${option.carrier}`}
+      rows={rows}
+      footnote={footnote}
+      accent={accent}
+      cardRef={cardRef}
+    />
   );
 }

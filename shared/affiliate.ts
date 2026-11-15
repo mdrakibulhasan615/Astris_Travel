@@ -562,6 +562,8 @@ export interface StayLinkContext {
   checkOut: string;
   adults: number;
   rooms: number;
+  /** A specific property: the search is for it by name instead of for the whole city. */
+  property?: string;
   /** Narrow the results to what the card describes. */
   filter?: {
     starClass?: number;
@@ -590,7 +592,11 @@ export function buildBookingStayUrl(ctx: StayLinkContext): string | null {
   if (!dates || !city) return null;
 
   const params = new URLSearchParams({
-    ss: ctx.country?.trim() ? `${city}, ${ctx.country.trim()}` : city,
+    ss: ctx.property?.trim()
+      ? `${ctx.property.trim()}, ${city}`
+      : ctx.country?.trim()
+        ? `${city}, ${ctx.country.trim()}`
+        : city,
     checkin: isoDate(dates.checkIn),
     checkout: isoDate(dates.checkOut),
     group_adults: String(clampCount(ctx.adults, 30)),
@@ -653,4 +659,52 @@ export function buildAgodaStayUrl(ctx: StayLinkContext): string | null {
   });
   if (activeConfig.agodaCid) params.set('cid', activeConfig.agodaCid);
   return track('agoda', `https://www.agoda.com/search?${params.toString()}`);
+}
+
+/**
+ * Trip.com hotel search: `https://www.trip.com/hotels/list?searchWord=…&checkin=…&checkout=…&adult=2&crn=1`.
+ * The property name goes in `searchWord`; Trip.com resolves it to its own city id. Not checked
+ * against the live site's current parameters, so it lands on Trip.com hotels at worst.
+ */
+export function buildTripcomHotelUrl(ctx: StayLinkContext): string | null {
+  const dates = stayDates(ctx);
+  const city = ctx.city?.trim();
+  if (!dates || !city) return null;
+  const params = new URLSearchParams({
+    searchWord: ctx.property?.trim() ? `${ctx.property.trim()} ${city}` : city,
+    cityName: city,
+    checkin: isoDate(dates.checkIn),
+    checkout: isoDate(dates.checkOut),
+    adult: String(clampCount(ctx.adults, 30)),
+    crn: String(clampCount(ctx.rooms, 30)),
+    children: '0',
+    locale: 'en-US',
+    curr: 'USD',
+  });
+  tripcomAttribution(params);
+  return `https://www.trip.com/hotels/list?${params.toString()}`;
+}
+
+export interface HotelBookingLink {
+  key: string;
+  name: string;
+  /** Badge key the booking panel draws. */
+  badge: string;
+  url: string;
+}
+
+/**
+ * Where to book one hotel: Booking.com (searches the property by name), Trip.com (same) and Agoda
+ * (city search, only for cities with a known id: Agoda takes no free text). Every link carries the
+ * dates and party; partner ids are added when configured.
+ */
+export function buildHotelBookingLinks(ctx: StayLinkContext): HotelBookingLink[] {
+  const links: HotelBookingLink[] = [];
+  const booking = buildBookingStayUrl(ctx);
+  if (booking) links.push({ key: 'booking', name: 'Booking.com', badge: 'booking', url: booking });
+  const trip = buildTripcomHotelUrl(ctx);
+  if (trip) links.push({ key: 'tripcom', name: 'Trip.com', badge: 'trip-hotels', url: trip });
+  const agoda = buildAgodaStayUrl({ ...ctx, property: undefined });
+  if (agoda) links.push({ key: 'agoda', name: 'Agoda', badge: 'agoda', url: agoda });
+  return links;
 }

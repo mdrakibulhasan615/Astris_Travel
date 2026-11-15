@@ -1,13 +1,10 @@
 import { buildAgodaStayUrl, buildBookingStayUrl, PROVIDER_NAMES, type StayLinkContext } from './affiliate.ts';
 import { diffDaysIso } from './dateUtils.ts';
-import { resolveTravelerProfile, round2, sanitizeHourlyRate } from './smartScore.ts';
 import type {
   StayCategory,
   StayLink,
   StayOption,
-  StayScoreBreakdown,
   StaySearch,
-  TravelerProfile,
   TripStop,
 } from './types.ts';
 
@@ -17,19 +14,7 @@ import type {
  * or a quoted rate. Each card links to Booking.com / Agoda with the same city, dates, guests and
  * (on Booking.com) property filter the card describes.
  *
- * Categories are ranked by the same VTTS idea as transport (lower is better, everything in USD):
- *
- *   score = priceWeight × stayPrice
- *         + timeWeight  × ( commute + comfort )
- *
- *   commute = nights × TRIPS_PER_DAY × minutesToCentre × r × adults
- *   comfort = nights × HOURS_AT_PROPERTY × comfortMultiplier × r × adults
- *
- * `comfortMultiplier` is the stay-side counterpart of the in-vehicle multiplier (a sleeper berth
- * counts 0.4× there): the share of the hours spent at the property that a traveller would pay to
- * avoid. A dorm bed costs little cash and a lot of rest; a central 5★ the reverse. So a low hourly
- * rate ranks hostels first and a high one moves the ranking up-market, exactly as the pacing
- * slider already does for flights against coaches.
+ * Stays are not Smart Scored: categories are listed cheapest first, by what the whole stay costs.
  */
 
 interface CategorySpec {
@@ -39,8 +24,8 @@ interface CategorySpec {
   /** USD per night at cost index 1.0, for one room (or one bed, for `perPerson`). */
   baseNightlyUsd: number;
   perPerson?: boolean;
+  /** Typical door-to-centre time, one way: shown on the card as context, not scored. */
   commuteMinutesOneWay: number;
-  comfortMultiplier: number;
   starClass?: number;
   propertyType: NonNullable<StayLinkContext['filter']>['propertyType'];
 }
@@ -53,7 +38,6 @@ const CATEGORIES: CategorySpec[] = [
     baseNightlyUsd: 32,
     perPerson: true,
     commuteMinutesOneWay: 22,
-    comfortMultiplier: 0.7,
     propertyType: 'hostel',
   },
   {
@@ -62,7 +46,6 @@ const CATEGORIES: CategorySpec[] = [
     description: 'Private room, outside the centre',
     baseNightlyUsd: 75,
     commuteMinutesOneWay: 25,
-    comfortMultiplier: 0.35,
     starClass: 2,
     propertyType: 'hotel',
   },
@@ -72,7 +55,6 @@ const CATEGORIES: CategorySpec[] = [
     description: 'Private room near transit',
     baseNightlyUsd: 115,
     commuteMinutesOneWay: 15,
-    comfortMultiplier: 0.2,
     starClass: 3,
     propertyType: 'hotel',
   },
@@ -82,7 +64,6 @@ const CATEGORIES: CategorySpec[] = [
     description: 'Entire place with a kitchen',
     baseNightlyUsd: 130,
     commuteMinutesOneWay: 18,
-    comfortMultiplier: 0.22,
     propertyType: 'apartment',
   },
   {
@@ -91,7 +72,6 @@ const CATEGORIES: CategorySpec[] = [
     description: 'Central, full-service',
     baseNightlyUsd: 170,
     commuteMinutesOneWay: 8,
-    comfortMultiplier: 0.08,
     starClass: 4,
     propertyType: 'hotel',
   },
@@ -101,14 +81,11 @@ const CATEGORIES: CategorySpec[] = [
     description: 'Landmark address in the centre',
     baseNightlyUsd: 340,
     commuteMinutesOneWay: 6,
-    comfortMultiplier: 0,
     starClass: 5,
     propertyType: 'hotel',
   },
 ];
 
-const TRIPS_PER_DAY = 4; // out, back to rest, out again, back
-const HOURS_AT_PROPERTY = 10; // sleep plus downtime, per night
 const ADULTS_PER_ROOM = 2;
 
 /** Rough accommodation price level relative to a mid-priced city (1.0). */
@@ -130,49 +107,6 @@ function costIndex(city: string): number {
   return CITY_COST_INDEX[city.trim().toLowerCase()] ?? 1;
 }
 
-interface ScorableStay {
-  nightlyPriceUsd: number;
-  commuteMinutesOneWay: number;
-  comfortMultiplier: number;
-}
-
-export function computeStaySmartScore(
-  stay: ScorableStay,
-  nights: number,
-  adults: number,
-  rawHourlyRateUsd: number,
-  profileInput?: Partial<TravelerProfile> | null
-): StayScoreBreakdown {
-  const hourlyRateUsd = sanitizeHourlyRate(rawHourlyRateUsd);
-  const profile = resolveTravelerProfile(profileInput);
-  const totalPriceUsd = round2(stay.nightlyPriceUsd * nights);
-
-  const commuteHours = round2((nights * TRIPS_PER_DAY * stay.commuteMinutesOneWay * adults) / 60);
-  const commutePenaltyUsd = round2(commuteHours * hourlyRateUsd);
-  const comfortPenaltyUsd = round2(
-    nights * HOURS_AT_PROPERTY * stay.comfortMultiplier * adults * hourlyRateUsd
-  );
-
-  return {
-    nights,
-    adults,
-    nightlyPriceUsd: stay.nightlyPriceUsd,
-    totalPriceUsd,
-    hourlyRateUsd,
-    commuteMinutesOneWay: stay.commuteMinutesOneWay,
-    commuteHours,
-    commutePenaltyUsd,
-    comfortMultiplier: stay.comfortMultiplier,
-    comfortPenaltyUsd,
-    priceWeight: profile.priceWeight,
-    timeWeight: profile.timeWeight,
-    totalSmartScore: round2(
-      totalPriceUsd * profile.priceWeight +
-        (commutePenaltyUsd + comfortPenaltyUsd) * profile.timeWeight
-    ),
-  };
-}
-
 function partnerLinks(ctx: StayLinkContext): StayLink[] {
   const links: StayLink[] = [];
   const booking = buildBookingStayUrl(ctx);
@@ -183,15 +117,13 @@ function partnerLinks(ctx: StayLinkContext): StayLink[] {
 }
 
 /**
- * Stay search for one stop, ranked by Smart Score. Returns null when the stop has no nights
- * (the origin, or malformed dates).
+ * Stay search for one stop, cheapest first. Returns null when the stop has no nights (the origin,
+ * or malformed dates).
  */
 export function buildStaySearch(
   stop: TripStop,
   stopIndex: number,
-  travelers: number,
-  hourlyRateUsd: number,
-  profile?: Partial<TravelerProfile> | null
+  travelers: number
 ): StaySearch | null {
   const nights = diffDaysIso(stop.arrivalDate, stop.departureDate);
   if (stopIndex === 0 || !Number.isFinite(nights) || nights < 1) return null;
@@ -210,13 +142,7 @@ export function buildStaySearch(
 
   const options: StayOption[] = CATEGORIES.map((spec) => {
     const nightlyPriceUsd = Math.round(spec.baseNightlyUsd * index * (spec.perPerson ? adults : rooms));
-    const breakdown = computeStaySmartScore(
-      { ...spec, nightlyPriceUsd },
-      nights,
-      adults,
-      hourlyRateUsd,
-      profile
-    );
+    const totalPriceUsd = Math.round(nightlyPriceUsd * nights * 100) / 100;
     return {
       id: `${stop.id}-stay-${spec.category}`,
       stopId: stop.id,
@@ -225,17 +151,15 @@ export function buildStaySearch(
       description: spec.description,
       starClass: spec.starClass,
       nightlyPriceUsd,
-      totalPriceUsd: breakdown.totalPriceUsd,
+      totalPriceUsd,
       commuteMinutesOneWay: spec.commuteMinutesOneWay,
-      smartScore: breakdown.totalSmartScore,
-      smartScoreBreakdown: breakdown,
       dataSource: 'synthesized' as const,
       links: partnerLinks({
         ...base,
         filter: { starClass: spec.starClass, propertyType: spec.propertyType },
       }),
     };
-  }).sort((a, b) => a.smartScore - b.smartScore);
+  }).sort((a, b) => a.totalPriceUsd - b.totalPriceUsd);
 
   return {
     stopId: stop.id,
@@ -253,13 +177,8 @@ export function buildStaySearch(
 }
 
 /** One search per stop that has a stay (every stop except the origin). */
-export function buildStaySearches(
-  stops: TripStop[],
-  travelers: number,
-  hourlyRateUsd: number,
-  profile?: Partial<TravelerProfile> | null
-): StaySearch[] {
+export function buildStaySearches(stops: TripStop[], travelers: number): StaySearch[] {
   return stops
-    .map((stop, index) => buildStaySearch(stop, index, travelers, hourlyRateUsd, profile))
+    .map((stop, index) => buildStaySearch(stop, index, travelers))
     .filter((s): s is StaySearch => s !== null);
 }

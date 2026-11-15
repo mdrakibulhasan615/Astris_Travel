@@ -3,7 +3,7 @@ import { BedDouble, Check, ChevronDown, ChevronUp, ExternalLink } from 'lucide-r
 import { formatShortDate } from '../../shared/dateUtils.ts';
 import type { StayLink, StayOption, StaySearch } from '../../shared/types.ts';
 import { useCurrency } from '../currency.tsx';
-import { SmartScoreBadge } from './SmartScoreBadge.tsx';
+import { LiveHotels } from './HotelCards.tsx';
 
 interface StayPanelProps {
   search: StaySearch;
@@ -60,7 +60,7 @@ function StayCard({
 }) {
   const { fmt } = useCurrency();
   return (
-    <div data-stay-id={option.id} data-stay-score={option.smartScore}>
+    <div data-stay-id={option.id}>
       <button
         type="button"
         onClick={onSelect}
@@ -76,7 +76,7 @@ function StayCard({
               <BedDouble className="h-3.5 w-3.5 shrink-0 text-[#FF812E]" />
               <span className="text-xs font-semibold text-[#111827]">{option.title}</span>
               {rank === 0 && (
-                <span className="text-[11px] font-semibold text-[#E56B1A]">· #1 Rank</span>
+                <span className="text-[11px] font-semibold text-[#15803D]">· Cheapest</span>
               )}
             </div>
             <div className="text-[11px] text-[#4B5563]">
@@ -90,9 +90,6 @@ function StayCard({
           <div className="shrink-0 space-y-0.5 text-right">
             <div className="font-display text-sm font-bold text-[#111827] tabular-nums">
               ~{fmt(option.totalPriceUsd)}
-            </div>
-            <div>
-              <SmartScoreBadge score={option.smartScore} />
             </div>
             {isSelected && (
               <div className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#E56B1A]">
@@ -127,8 +124,8 @@ function StayCard({
 }
 
 /**
- * "Staying in [City]?" Ranked places to stay for one stop, each scored with the same VTTS Smart
- * Score as the transport options and linked straight to Booking.com / Agoda.
+ * "Staying in [City]?" Places to stay for one stop, cheapest first (no Smart Score), linked straight
+ * to Booking.com / Agoda, plus live hotels with filters when the server is in live-data mode.
  */
 export function StayPanel({
   search,
@@ -188,7 +185,6 @@ export function StayPanel({
                     <span className="font-mono font-semibold text-[#111827]">
                       ~{fmt(selected.totalPriceUsd)}
                     </span>
-                    <SmartScoreBadge score={selected.smartScore} size="sm" />
                   </>
                 )}
               </div>
@@ -216,6 +212,7 @@ export function StayPanel({
 
         {expanded && (
           <div className="space-y-2 border-t border-neutral-100 px-3.5 pb-3.5 pt-2.5">
+            <LiveHotels search={search} />
             {search.options.map((option, idx) => (
               <StayCard
                 key={option.id}

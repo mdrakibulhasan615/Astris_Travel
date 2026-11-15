@@ -31,6 +31,7 @@ import {
 import { getPublicAffiliateConfig } from './shared/affiliate.ts';
 import { fetchGoogleTransitRoutes, googleMapsKey } from './server/googleRoutesService.ts';
 import { fetchTwelveGoTimetable, twelveGoCountry } from './server/twelveGoService.ts';
+import { fetchHotels, serpApiHotelsKey } from './server/hotelService.ts';
 import type { GroundSchedules } from './shared/groundSchedule.ts';
 import {
   finalizeLegs,
@@ -376,6 +377,29 @@ export function createApp() {
       provider: 'Upstash Redis',
       fallbackMode: !connected,
     });
+  });
+
+  // Live hotels for one stop (Google Hotels via SerpApi). Only in live-data mode: a search costs a
+  // credit, so sample mode answers `enabled: false` without calling out. Cached 24 hours.
+  app.get('/api/hotels/search', async (req, res) => {
+    try {
+      const enabled = useRealData() && Boolean(serpApiHotelsKey());
+      if (!enabled) return res.json({ enabled: false, hotels: [] });
+      const city = String(req.query.city ?? '').trim().slice(0, 80);
+      const country = String(req.query.country ?? '').trim().slice(0, 80);
+      const checkIn = String(req.query.checkIn ?? '');
+      const checkOut = String(req.query.checkOut ?? '');
+      const iso = /^\d{4}-\d{2}-\d{2}$/;
+      if (!city || !iso.test(checkIn) || !iso.test(checkOut) || checkOut <= checkIn) {
+        return res.status(400).json({ error: 'city, checkIn and a later checkOut (YYYY-MM-DD) are required.' });
+      }
+      const adults = Math.min(9, Math.max(1, Math.floor(Number(req.query.adults)) || 2));
+      const result = await fetchHotels({ city, country, checkIn, checkOut, adults });
+      res.json({ enabled: true, hotels: result?.hotels ?? [], cached: result?.cached ?? false });
+    } catch (err: any) {
+      console.error('[Hotels API] Error:', err);
+      res.status(500).json({ error: 'Could not load hotels', details: err?.message });
+    }
   });
 
   // Ground schedules for one leg: real transit directions (Google Routes, needs a key) and the 12Go
