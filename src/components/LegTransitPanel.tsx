@@ -176,7 +176,7 @@ function BookLink({
       }}
       style={secondary ? undefined : accent}
       className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11px] font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF812E] focus-visible:ring-offset-1 ${
-        accent ? 'w-full justify-center py-1.5 hover:brightness-95' : ''
+        accent ? 'w-full justify-center py-1 hover:brightness-95' : ''
       } ${
         secondary
           ? 'border border-neutral-200 bg-white text-[#111827] hover:border-[#FFD6BA] hover:bg-[#FFF4ED]'

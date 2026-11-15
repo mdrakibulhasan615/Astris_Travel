@@ -125,7 +125,7 @@ function BusTicket({
         data-ticket="bus"
         onClick={onSelect}
         style={{ background: BUS_ACCENT, color: BUS_INK }}
-        className={`relative cursor-pointer overflow-hidden rounded-2xl px-6 py-1.5 shadow-sm transition-shadow hover:shadow-md ${
+        className={`relative cursor-pointer overflow-hidden rounded-2xl px-6 py-0.5 shadow-sm transition-shadow hover:shadow-md ${
           isSelected ? 'ring-2 ring-[#FF812E]' : 'ring-1 ring-neutral-200'
         }`}
       >
@@ -136,14 +136,14 @@ function BusTicket({
         <span aria-hidden="true" className="pointer-events-none absolute inset-y-3 right-3.5 border-r-2 border-dotted border-white/80" />
 
         <div
-          className="flex gap-2.5 rounded-xl border-2 px-2.5 py-1.5"
+          className="flex gap-2.5 rounded-xl border-2 px-2.5 py-0.5"
           style={{ background: panel, borderColor: BUS_EDGE }}
         >
           <div className="grid min-w-0 flex-1 gap-2 @[28rem]:grid-cols-[minmax(0,1fr)_8.5rem] @[28rem]:gap-2.5">
-            <div className="flex min-w-0 flex-col gap-1">
+            <div className="flex min-w-0 flex-col gap-0.5">
             {/* Title row */}
             <div className="flex min-w-0 items-center gap-2">
-              <Bus className="h-7 w-7 shrink-0" style={{ color: BUS_EDGE }} fill={BUS_ACCENT} aria-hidden="true" />
+              <Bus className="h-6 w-6 shrink-0" style={{ color: BUS_EDGE }} fill={BUS_ACCENT} aria-hidden="true" />
               <div className="min-w-0">
                 <div className="whitespace-nowrap font-display text-base font-black uppercase leading-none tracking-tight">Bus ticket</div>
                 <div className="mt-0.5 truncate text-[10.5px] font-bold uppercase leading-tight tracking-wide" title={option.carrier}>
@@ -216,7 +216,7 @@ function BusTicket({
 
             {/* Stub: baggage, fare, booking */}
             <div
-              className="flex min-w-0 flex-col gap-1.5 border-t-2 border-dashed pt-2 @[28rem]:border-l-2 @[28rem]:border-t-0 @[28rem]:pl-3 @[28rem]:pt-0"
+              className="flex min-w-0 flex-col gap-0.5 border-t-2 border-dashed pt-1 @[28rem]:border-l-2 @[28rem]:border-t-0 @[28rem]:pl-3 @[28rem]:pt-0"
               style={{ borderColor: BUS_EDGE }}
             >
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] font-bold uppercase tracking-[0.12em]">
@@ -233,7 +233,7 @@ function BusTicket({
               <div className="mt-auto">
                 <MicroLabel>{f.isReturn ? 'Return total' : 'Fare'} · per person</MicroLabel>
                 <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1">
-                  <span className="whitespace-nowrap font-display text-lg font-extrabold leading-none tabular-nums">
+                  <span className="whitespace-nowrap font-display text-base font-extrabold leading-none tabular-nums">
                     {fmt(option.discountedPriceUsd)}
                   </span>
                   {b.discountAppliedUsd > 0 && (
@@ -300,7 +300,7 @@ function TrainTicket({
       >
         {/* Header band */}
         <div
-          className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 px-4 py-1.5 text-white"
+          className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 px-4 py-[3px] text-white"
           style={{ background: TRAIN_ACCENT }}
         >
           <div className="flex min-w-0 items-center gap-2">
@@ -321,7 +321,7 @@ function TrainTicket({
         </div>
 
         {/* Body: printed like a rail ticket, with the operator name faintly repeated behind */}
-        <div className={`relative px-4 py-2 ${mono} text-[#111827]`}>
+        <div className={`relative px-4 py-1 ${mono} text-[#111827]`}>
           <div
             aria-hidden="true"
             className="pointer-events-none absolute inset-0 overflow-hidden break-all text-[8px] font-bold leading-[1.15] tracking-widest opacity-[0.07]"
@@ -330,7 +330,7 @@ function TrainTicket({
             {watermark}
           </div>
 
-          <div className="relative space-y-1.5">
+          <div className="relative space-y-0.5">
             <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
               <div className="text-[11px] font-semibold">
                 Valid for {f.isReturn ? 'outward and return journeys' : 'one journey'}
@@ -414,10 +414,10 @@ function TrainTicket({
               className={`pointer-events-none absolute top-0 h-4 w-4 -translate-y-1/2 rounded-full bg-white ring-1 ring-neutral-200 ${side}`}
             />
           ))}
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-1">
             <span
               aria-hidden="true"
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white"
               style={{ color: TRAIN_ACCENT }}
             >
               <TrainFront className="h-4 w-4" />
