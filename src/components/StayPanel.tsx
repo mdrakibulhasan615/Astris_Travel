@@ -151,7 +151,7 @@ export function StayPanel({
         <div aria-hidden="true" className="absolute bottom-0 left-[15px] top-0 w-0.5 bg-neutral-200" />
       )}
 
-      <div className="rounded-2xl border border-neutral-200/80 bg-white shadow-sm transition-all hover:shadow-md">
+      <div className="rounded-2xl border border-[#FFE3CC] bg-[#FFF6EE] shadow-sm transition-all hover:shadow-md">
         <button
           type="button"
           aria-expanded={expanded}

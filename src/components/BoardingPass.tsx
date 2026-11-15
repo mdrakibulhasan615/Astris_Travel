@@ -89,10 +89,15 @@ export function Barcode({
 
 export const TONE = { good: 'text-[#15803D]', warn: 'text-[#B45309]', muted: 'text-[#4B5563]' } as const;
 
-export function ticketDate(iso: string | undefined): string {
+export function ticketDate(iso: string | undefined, withYear = true): string {
   if (!iso || !/^\d{4}-\d{2}-\d{2}/.test(iso)) return '—';
   return new Date(`${iso.slice(0, 10)}T00:00:00Z`)
-    .toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' })
+    .toLocaleDateString('en-GB', {
+      day: '2-digit',
+      month: 'short',
+      ...(withYear ? { year: 'numeric' as const } : {}),
+      timeZone: 'UTC',
+    })
     .toUpperCase();
 }
 
@@ -155,7 +160,7 @@ export function BoardingPass({
     ? hops.map((h) => h.flightNumber).filter(Boolean).join(' + ')
     : option.routeCode;
   const isReturn = option.ticketType === 'return';
-  const date = ticketDate(option.departureAt ?? departureDate);
+  const date = ticketDate(option.departureAt ?? departureDate, false);
   const dep = splitDayOffset(option.departureTime);
   const arr = splitDayOffset(option.arrivalTime);
   const hubs = (option.layovers?.length ? option.layovers.map((l) => l.code) : [option.layoverHub ?? '']).filter(Boolean);
@@ -164,7 +169,7 @@ export function BoardingPass({
       ? 'DIRECT'
       : `${Math.max(option.stopsCount, 1)} STOP${option.stopsCount > 1 ? 'S' : ''} · ${formatDuration(
           option.layoverHours
-        ).toUpperCase()}${hubs.length ? ` IN ${hubs.join(', ')}` : ''}`;
+        ).toUpperCase()}`;
 
   const bags = option.baggage ? describeBaggageStub(option.baggage) : null;
   const b = option.smartScoreBreakdown;
@@ -188,8 +193,8 @@ export function BoardingPass({
         className="grid @[28rem]:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]"
         style={{ background: palette.background, color: palette.text }}
       >
-        <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 px-4 py-2">
-          <div className="flex min-w-[10rem] flex-1 items-center gap-2">
+        <div className="flex min-w-0 items-center justify-between gap-x-3 px-4 py-1.5">
+          <div className="flex min-w-0 flex-1 items-center gap-2">
             <Plane className="h-4 w-4 shrink-0" aria-hidden="true" />
             <span
               className="text-[12px] font-extrabold uppercase leading-tight tracking-wide"
@@ -222,7 +227,7 @@ export function BoardingPass({
         {/* Main body */}
         <div className="relative flex min-w-0">
           {/* Decorative barcode along the far-left edge */}
-          <div className="w-6 shrink-0 border-r border-neutral-200 bg-neutral-50 p-1.5 text-[#111827]/80 @md:w-7">
+          <div className="w-5 shrink-0 border-r border-neutral-200 bg-neutral-50 p-1 text-[#111827]/80 @md:w-6">
             <Barcode seed={option.id} vertical className="h-full w-full" />
           </div>
 
@@ -230,7 +235,7 @@ export function BoardingPass({
             type="button"
             aria-pressed={isSelected}
             aria-label={`${palette.label || option.carrier} ${flightNumbers}, ${origin} to ${destination}`}
-            className="relative flex min-w-0 flex-1 flex-col gap-3 p-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#FF812E]"
+            className="relative flex min-w-0 flex-1 flex-col gap-2 px-3 py-2.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#FF812E]"
           >
             {/* Faint airplane watermark behind the route */}
             <Plane
@@ -239,11 +244,13 @@ export function BoardingPass({
             />
 
             {/* Metadata row */}
-            <div className="relative flex flex-wrap gap-x-4 gap-y-2">
-              <div>
-                <MicroLabel>Flight</MicroLabel>
-                <div className="font-mono text-xs font-bold text-[#111827]">{flightNumbers || '—'}</div>
-              </div>
+            <div className="relative flex flex-wrap gap-x-4 gap-y-1">
+              {hops.length <= 1 && (
+                <div>
+                  <MicroLabel>Flight</MicroLabel>
+                  <div className="font-mono text-xs font-bold text-[#111827]">{flightNumbers || '—'}</div>
+                </div>
+              )}
               <div>
                 <MicroLabel>Date</MicroLabel>
                 <div className="font-mono text-xs font-bold text-[#111827]">
@@ -275,16 +282,16 @@ export function BoardingPass({
             {/* Route hero */}
             <div className="relative grid grid-cols-[auto_minmax(1.5rem,1fr)_auto] items-center gap-2 @md:gap-3">
               <div className="min-w-0">
-                <div className="font-display text-3xl font-black leading-none tracking-tight text-[#111827]">
+                <div className="font-display text-2xl font-black leading-none tracking-tight text-[#111827]">
                   {origin}
                 </div>
-                <div className="mt-1 font-mono text-sm font-bold text-[#111827]">{dep.clock}</div>
+                <div className="mt-0.5 font-mono text-sm font-bold text-[#111827]">{dep.clock}</div>
                 <div className="max-w-[4.5rem] truncate text-[10px] text-[#4B5563] @md:max-w-[9rem]" title={originName}>
                   {originName}
                 </div>
               </div>
 
-              <div className="relative flex items-center self-start pt-3" aria-hidden="true">
+              <div className="relative flex items-center self-start pt-2" aria-hidden="true">
                 <div className="h-0 flex-1 border-t-2 border-dashed" style={{ borderColor: palette.accent }} />
                 <Plane
                   className="mx-1 h-5 w-5 shrink-0 rotate-45"
@@ -293,17 +300,17 @@ export function BoardingPass({
                 />
                 <div className="h-0 flex-1 border-t-2 border-dashed" style={{ borderColor: palette.accent }} />
                 {hubs.length > 0 && option.stopsCount > 0 && (
-                  <div className="absolute inset-x-0 top-[1.65rem] text-center font-mono text-[9px] font-bold uppercase tracking-wide text-[#4B5563]">
+                  <div className="absolute inset-x-0 top-[1.35rem] text-center font-mono text-[9px] font-bold uppercase tracking-wide text-[#4B5563]">
                     via {hubs.slice(0, 3).join(' · ')}
                   </div>
                 )}
               </div>
 
               <div className="min-w-0 text-right">
-                <div className="font-display text-3xl font-black leading-none tracking-tight text-[#111827]">
+                <div className="font-display text-2xl font-black leading-none tracking-tight text-[#111827]">
                   {destination}
                 </div>
-                <div className="mt-1 font-mono text-sm font-bold text-[#111827]">
+                <div className="mt-0.5 font-mono text-sm font-bold text-[#111827]">
                   {arr.clock}
                   {arr.offset && <sup className="ml-0.5 text-[9px] text-[#B45309]">{arr.offset}</sup>}
                 </div>
@@ -318,26 +325,18 @@ export function BoardingPass({
 
             {/* Flight-by-flight detail, only where there is more than one flight to explain */}
             {hops.length > 1 && (
-              <div className="relative flex flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-[10.5px] text-[#4B5563]">
+              <div className="relative space-y-0.5 font-mono text-[10.5px] text-[#4B5563]">
                 {hops.map((h, i) => (
-                  <span key={`${h.flightNumber}-${i}`} className="inline-flex flex-wrap items-center gap-x-1.5">
-                    <span className="whitespace-nowrap font-bold text-[#111827]">{h.flightNumber}</span>
-                    <span className="whitespace-nowrap">
-                      {h.fromCode} {h.departureAt.slice(11, 16)} → {h.toCode} {h.arrivalAt.slice(11, 16)}
-                    </span>
-                    {option.layovers?.[i] && (
-                      <span className="whitespace-nowrap text-[#B45309]">
-                        · {formatDuration(option.layovers[i].minutes / 60)} layover
-                        {option.layovers[i].overnight ? ' (overnight)' : ''} ·
-                      </span>
-                    )}
-                  </span>
+                  <div key={`${h.flightNumber}-${i}`} className="whitespace-nowrap">
+                    <span className="font-bold text-[#111827]">{h.flightNumber}</span>{' '}
+                    {h.fromCode} {h.departureAt.slice(11, 16)} → {h.toCode} {h.arrivalAt.slice(11, 16)}
+                  </div>
                 ))}
               </div>
             )}
 
             {/* Tags: pinned to the bottom-left corner, beside the barcode edge */}
-            <div className="relative mt-auto flex flex-wrap items-center gap-1.5 pt-1">
+            <div className="relative mt-auto flex flex-wrap items-center gap-1.5">
               {rank === 0 && (
                 <span className="text-[10px] font-bold uppercase tracking-wide text-[#E56B1A]">#1 Rank</span>
               )}
@@ -354,7 +353,7 @@ export function BoardingPass({
         />
 
         {/* Stub */}
-        <div className="relative border-t-[1.5px] border-dashed border-neutral-300 px-3 pb-4 pt-3 @[28rem]:flex @[28rem]:flex-col @[28rem]:gap-3 @[28rem]:border-t-0">
+        <div className="relative border-t-[1.5px] border-dashed border-neutral-300 px-3 pb-2.5 pt-2 @[28rem]:flex @[28rem]:flex-col @[28rem]:gap-1.5 @[28rem]:border-t-0">
           {/* Tear line (horizontal on narrow screens) notches */}
           {(['left-0 -translate-x-1/2', 'right-0 translate-x-1/2'] as const).map((side) => (
             <span
@@ -364,15 +363,15 @@ export function BoardingPass({
             />
           ))}
 
-          <div className="mb-2 flex items-center justify-between @[28rem]:hidden">
+          <div className="mb-1 flex items-center justify-between @[28rem]:hidden">
             <MicroLabel>Fare summary</MicroLabel>
             <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#4B5563]">{travelClass}</span>
           </div>
 
-          <div className="grid grid-cols-2 items-start gap-3 @[28rem]:flex @[28rem]:flex-col @[28rem]:gap-3">
+          <div className="grid grid-cols-2 items-start gap-2 @[28rem]:flex @[28rem]:flex-col @[28rem]:gap-1.5">
             {/* Baggage */}
             <div className="min-w-0 space-y-1.5">
-              <MicroLabel>Baggage</MicroLabel>
+              <div className="@[28rem]:hidden"><MicroLabel>Baggage</MicroLabel></div>
               {bags ? (
                 <div
                   className="space-y-1 text-[10.5px] font-medium leading-tight"
@@ -390,9 +389,6 @@ export function BoardingPass({
                     <Luggage className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                     {bags.checked.text}
                   </div>
-                  {option.baggage?.source === 'typical' && (
-                    <div className="text-[10px] font-normal text-[#4B5563]">typical allowance</div>
-                  )}
                 </div>
               ) : (
                 <div className="text-[11px] text-[#4B5563]">Not stated</div>
@@ -402,27 +398,27 @@ export function BoardingPass({
             {/* Price */}
             <div className="text-right @[28rem]:text-left">
               <MicroLabel>{isReturn ? 'Return total' : 'Fare'} · per person</MicroLabel>
-              {b.discountAppliedUsd > 0 && (
-                <div className="mt-0.5 font-mono text-[11px] leading-none text-[#4B5563] line-through tabular-nums">
-                  {fmt(option.basePriceUsd)}
-                </div>
-              )}
-              <div className="mt-1 whitespace-nowrap font-display text-xl font-extrabold leading-none text-[#111827] tabular-nums">
-                {fmt(option.discountedPriceUsd)}
+              <div className="mt-0.5 flex flex-wrap items-center justify-end gap-x-2 gap-y-1 @[28rem]:justify-start">
+                {b.discountAppliedUsd > 0 && (
+                  <span className="font-mono text-[11px] leading-none text-[#4B5563] line-through tabular-nums">
+                    {fmt(option.basePriceUsd)}
+                  </span>
+                )}
+                <span className="whitespace-nowrap font-display text-lg font-extrabold leading-none text-[#111827] tabular-nums">
+                  {fmt(option.discountedPriceUsd)}
+                </span>
+                <SmartScoreBadge score={option.smartScore} size="sm" />
               </div>
               {voucherCode && b.discountAppliedUsd > 0 && (
                 <div className="mt-0.5 font-mono text-[11px] font-medium text-[#16A34A] tabular-nums">
                   -{fmt(b.discountAppliedUsd)} · {voucherCode}
                 </div>
               )}
-              <div className="mt-1">
-                <SmartScoreBadge score={option.smartScore} size="sm" />
-              </div>
             </div>
           </div>
 
-          <div className="mt-3 space-y-2 @[28rem]:mt-auto">
-            <Barcode seed={`${option.id}-stub`} className="h-6 w-full text-[#111827]/80" />
+          <div className="mt-2 space-y-1.5 @[28rem]:mt-auto">
+            <Barcode seed={`${option.id}-stub`} className="h-3 w-full text-[#111827]/80 @[28rem]:hidden" />
             {renderBook && <div className="space-y-1.5">{renderBook(accentButton)}</div>}
           </div>
         </div>

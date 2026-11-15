@@ -438,8 +438,8 @@ export function LegTransitPanel({
       <div
         className={`rounded-2xl bg-white border transition-all ${
           isActive
-            ? 'border-[#FFD6BA] shadow-md'
-            : 'border-neutral-200/80 shadow-sm hover:shadow-md'
+            ? 'border-[#FFD6BA] shadow-[0_6px_18px_-4px_rgba(249,115,22,0.35)]'
+            : 'border-neutral-200/80 shadow-[0_3px_12px_-4px_rgba(249,115,22,0.25)] hover:shadow-[0_6px_18px_-4px_rgba(249,115,22,0.35)]'
         }`}
       >
         <button
