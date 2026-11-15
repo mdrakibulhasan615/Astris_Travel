@@ -69,6 +69,7 @@ import { TopBar } from './components/TopBar.tsx';
 import { VoucherDrawer } from './components/VoucherDrawer.tsx';
 import { VttsControlPanel } from './components/VttsControlPanel.tsx';
 import { WorldMapCanvas } from './components/WorldMapCanvas.tsx';
+import type { OverlayLine } from '../shared/groundSchedule.ts';
 import { ErrorBoundary } from './components/ErrorBoundary.tsx';
 import { logFlightState, verifyLegsMatchResponse } from './flightDebug.ts';
 
@@ -112,6 +113,17 @@ export default function App() {
   const [modeFilter, setModeFilter] = useState<ModeFilter>('all');
   const [hoveredStopId, setHoveredStopId] = useState<string | null>(null);
   const [hoveredLegId, setHoveredLegId] = useState<string | null>(null);
+  // Transit routes chosen in a leg's Schedules panel, drawn on the map by leg
+  const [transitOverlays, setTransitOverlays] = useState<Record<string, OverlayLine[]>>({});
+  const handleTransitOverlay = useCallback((legId: string, lines: OverlayLine[] | null) => {
+    setTransitOverlays((prev) => {
+      if (!lines && !prev[legId]) return prev;
+      const next = { ...prev };
+      if (lines) next[legId] = lines;
+      else delete next[legId];
+      return next;
+    });
+  }, []);
   const [activeLegId, setActiveLegId] = useState<string | null>(null);
   const [focusTarget, setFocusTarget] = useState<{
     lat: number;
@@ -968,6 +980,10 @@ export default function App() {
                               onActivateLeg={setActiveLegId}
                               onHoverLeg={setHoveredLegId}
                               onSelectOption={handleSelectOption}
+                              fromStop={stop}
+                              toStop={trip.stops.find((s) => s.id === nextLeg.toStopId)}
+                              travellers={trip.travelers}
+                              onTransitOverlay={handleTransitOverlay}
                             />
                           )}
                         </div>
@@ -995,6 +1011,7 @@ export default function App() {
             }
           >
             <WorldMapCanvas
+              transitOverlays={transitOverlays}
               stops={trip.stops}
               legs={trip.legs}
               modeFilter={modeFilter}

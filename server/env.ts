@@ -83,6 +83,7 @@ export interface EnvKeySpec {
  */
 export const ENV_KEYS: EnvKeySpec[] = [
   { name: 'SERPAPI_KEY', purpose: 'live Google Flights search (SerpApi)', fallback: 'curated/synthesized corridors' },
+  { name: 'GOOGLE_MAPS_API_KEY', purpose: 'real transit directions and map lines (Google Routes API)', fallback: 'no transit directions (12Go timetables still work)' },
   { name: 'TRAVELPAYOUTS_TOKEN', purpose: 'recent real fares in sample mode (Aviasales Data API)', fallback: 'fully sample flights' },
   { name: 'UPSTASH_REDIS_REST_URL', purpose: '12-hour transit cache (Upstash Redis)', fallback: 'uncached queries' },
   { name: 'UPSTASH_REDIS_REST_TOKEN', purpose: '12-hour transit cache (Upstash Redis)', fallback: 'uncached queries' },
