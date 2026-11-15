@@ -146,6 +146,38 @@ export function describeBaggage(b: BaggageInfo): {
   return { cabin, checked };
 }
 
+/** Short wording for the boarding-pass stub: `Cabin: 7 kg included`, `Checked: 23 kg included`, `No checked bag`. */
+export function describeBaggageStub(b: BaggageInfo): {
+  cabin: { text: string; tone: 'good' | 'warn' | 'muted' };
+  checked: { text: string; tone: 'good' | 'warn' | 'muted' };
+} {
+  const cabin =
+    b.cabin === 'included'
+      ? { text: b.cabinKg ? `Cabin: ${b.cabinKg} kg included` : 'Cabin: included', tone: 'good' as const }
+      : b.cabin === 'fee'
+        ? { text: 'Cabin: for a fee', tone: 'warn' as const }
+        : b.cabin === 'none'
+          ? { text: 'No cabin bag', tone: 'warn' as const }
+          : { text: 'Cabin: not stated', tone: 'muted' as const };
+  const checked =
+    b.checked === 'included'
+      ? {
+          text:
+            b.checkedPieces && b.checkedPieces > 1 && b.checkedKg
+              ? `Checked: ${b.checkedPieces} × ${b.checkedKg} kg included`
+              : b.checkedKg
+                ? `Checked: ${b.checkedKg} kg included`
+                : 'Checked: included',
+          tone: 'good' as const,
+        }
+      : b.checked === 'fee'
+        ? { text: 'Checked: for a fee', tone: 'warn' as const }
+        : b.checked === 'none'
+          ? { text: 'No checked bag', tone: 'warn' as const }
+          : { text: 'Checked: not stated', tone: 'muted' as const };
+  return { cabin, checked };
+}
+
 // ── Flight-by-flight breakdown ───────────────────────────────────────────────────────────────
 
 const pad2 = (n: number) => String(n).padStart(2, '0');

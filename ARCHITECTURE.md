@@ -400,3 +400,28 @@ the shared one), and nothing needs a long-running process.
   (if not already placed), 4) the rest by Smart Score. Tags: `Direct` (no stops, no layover),
   `Cheapest Direct` (lowest-priced direct), `Cheapest` (lowest-priced overall); one ticket can carry several.
   "Price" is the net fare after vouchers; ties go to the better Smart Score.
+
+## 14. Boarding-Pass Flight Cards — `src/components/BoardingPass.tsx`
+
+- **Where.** `LegTransitPanel` renders every `mode === 'flight'` option as a boarding pass; trains, coaches
+  and ferries keep the compact card (they have no airline brand, flight legs or aircraft).
+- **Anatomy.** Brand-coloured header across the pass (airplane, operating airlines, `ONE-WAY` / `RETURN`,
+  `Selected`; right side `FARE SUMMARY · class`), a decorative barcode edge, a main body (FLIGHT / DATE /
+  DURATION / STOPS row, origin and destination IATA codes joined by a flight path with times, a one-line
+  flight-by-flight detail for multi-flight tickets, and the `Direct` / `Cheapest Direct` / `Cheapest`
+  pills pinned to the bottom-left beside the barcode), a perforated tear line with punched notches, and a
+  stub (baggage, price in the selected currency, Smart Score, mini barcode, Book button). A faint airplane
+  watermark sits behind the route. The old transfer/step summary lines are not rendered.
+- **Responsive by container width, not screen width.** The pass sits inside a Tailwind `@container` and
+  switches layout at `@lg` (512 px of its own width): wider = main body 70 % / stub 30 % with a vertical
+  dashed tear line; narrower = stub below with a horizontal tear line and side notches. This matters
+  because the itinerary pane is only about 550 px wide on a laptop even though the screen is wide.
+- **Airline colours (`src/utils/airlineColors.ts`).** IATA code → `{ color, text }` for ~60 carriers (name
+  lookup as a fallback, `#0284C7` for anything unmapped). `ticketAirlines` lists the operating airlines of a
+  ticket once each in flight order (from the flight-by-flight breakdown). `ticketPalette` gives the header,
+  bottom strip and Book button either that airline's colour or, for several airlines,
+  `linear-gradient(90deg, c1, c2, …)`; the text colour is picked so it is legible over every stop of the
+  gradient (white unless contrast drops below ~3.2, then dark slate). Route-line and plane accents use the
+  first airline's colour, darkened when it would be too pale on white.
+- **Barcodes are decorative** (seeded from the option id, so each looks different but is stable), not
+  scannable and not tied to a booking.
