@@ -1,5 +1,6 @@
 // MUST stay the first import: loads .env.local / .env before any service reads process.env
-import { logEnvStatus } from './server/env.ts';
+import { logEnvStatus, useRealData } from './server/env.ts';
+import { getRates } from './server/ratesService.ts';
 import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -337,6 +338,21 @@ export function createApp() {
 
   app.get('/api/vouchers', (_req, res) => {
     res.json({ vouchers: VOUCHERS_CATALOG });
+  });
+
+  // Whether fares are live or sample data (read-only; the switch lives in code/env, not the UI)
+  app.get('/api/config', (_req, res) => {
+    res.json({ dataMode: useRealData() ? 'live' : 'mock' });
+  });
+
+  // Exchange rates for the currency switcher (12 h cache, fallback table on failure)
+  app.get('/api/rates', async (_req, res) => {
+    try {
+      res.json(await getRates());
+    } catch (err) {
+      console.warn('[Rates API] Error:', err);
+      res.status(500).json({ error: 'Exchange rates unavailable' });
+    }
   });
 
   // Partner ids for the browser's link builders (stays, optimistic transport links). These are

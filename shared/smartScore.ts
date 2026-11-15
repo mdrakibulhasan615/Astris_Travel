@@ -14,6 +14,7 @@ import type {
 import { attachBookingUrls } from './affiliate.ts';
 import { normalizeOptionGeometry, pickConnectionHub, resolveAirport } from './airports.ts';
 import { planGroundCorridor } from './groundRouting.ts';
+import { rankAndTag } from './ranking.ts';
 import {
   finalizeLegs,
   legFareKey,
@@ -420,8 +421,10 @@ export function recalculateOptionsWithVttsAndVouchers(
   activeVouchers: Voucher[],
   profile?: Partial<TravelerProfile> | null
 ): TransitOption[] {
-  return options
-    .map((option) => {
+  // Ranked by the strict order in shared/ranking.ts (best Smart Score, cheapest direct, cheapest,
+  // then by Smart Score), which also sets the Direct / Cheapest / Cheapest Direct tags.
+  return rankAndTag(
+    options.map((option) => {
       const { voucher } = pickBestActiveVoucher(option, activeVouchers);
       const breakdown = computeSmartScore(option, hourlyRateUsd, voucher, profile);
       return {
@@ -432,7 +435,7 @@ export function recalculateOptionsWithVttsAndVouchers(
         appliedVoucherId: voucher ? voucher.id : null,
       };
     })
-    .sort((a, b) => a.smartScore - b.smartScore);
+  );
 }
 
 /**

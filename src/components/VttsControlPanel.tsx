@@ -6,6 +6,7 @@ import {
   VTTS_PRESETS,
 } from '../../shared/smartScore.ts';
 import type { VttsTier } from '../../shared/types.ts';
+import { useCurrency } from '../currency.tsx';
 
 interface VttsControlPanelProps {
   vttsTier: VttsTier;
@@ -30,6 +31,7 @@ export function VttsControlPanel({
   onSelectPreset,
   onChangeCustomRate,
 }: VttsControlPanelProps) {
+  const { fmt } = useCurrency();
   const [showAdvancedSlider, setShowAdvancedSlider] = useState(false);
 
   const currentPercent =
@@ -72,11 +74,11 @@ export function VttsControlPanel({
           <div className="text-[11px] font-medium text-[#4B5563]">Net Fare</div>
           <div className="mt-0.5 flex items-baseline gap-1.5">
             <span className="font-display text-lg font-bold text-[#111827] tabular-nums">
-              ${totalCostUsd.toFixed(0)}
+              {fmt(totalCostUsd)}
             </span>
             {totalSavingsUsd > 0 && (
               <span className="text-[11px] font-medium text-[#16A34A] tabular-nums">
-                -${totalSavingsUsd.toFixed(0)}
+                -{fmt(totalSavingsUsd)}
               </span>
             )}
           </div>

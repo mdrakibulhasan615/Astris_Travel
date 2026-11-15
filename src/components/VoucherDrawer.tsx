@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { Check, Tag, Ticket, X } from 'lucide-react';
 import { calculateVoucherDiscount } from '../../shared/smartScore.ts';
+import { useCurrency } from '../currency.tsx';
 import type { TripLeg, Voucher, VoucherValidationResult } from '../../shared/types.ts';
 
 interface VoucherDrawerProps {
@@ -22,6 +23,7 @@ export function VoucherDrawer({
   onToggleVoucher,
   onValidateCode,
 }: VoucherDrawerProps) {
+  const { fmt } = useCurrency();
   const [inputCode, setInputCode] = useState('');
   const [feedback, setFeedback] = useState<VoucherValidationResult | null>(null);
   const [isValidating, setIsValidating] = useState(false);
@@ -146,7 +148,7 @@ export function VoucherDrawer({
                         </span>
                         {potentialSavings > 0 && (
                           <span className="text-xs font-semibold text-[#16A34A] font-mono tabular-nums">
-                            -${potentialSavings.toFixed(0)}
+                            -{fmt(potentialSavings)}
                           </span>
                         )}
                       </div>
@@ -154,7 +156,7 @@ export function VoucherDrawer({
                         {voucher.title}
                       </div>
                       <div className="text-[11px] text-[#4B5563] font-mono pt-0.5 tabular-nums">
-                        {voucher.applicableModes.join(' / ')} · Min ${voucher.minSpendUsd} · Exp{' '}
+                        {voucher.applicableModes.join(' / ')} · Min {fmt(voucher.minSpendUsd)} · Exp{' '}
                         {voucher.expiresAt}
                       </div>
                     </div>

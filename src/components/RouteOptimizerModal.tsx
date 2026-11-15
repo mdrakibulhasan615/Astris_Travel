@@ -1,5 +1,6 @@
 import { ArrowRight, CheckCircle2, Route, Sparkles, X } from 'lucide-react';
 import type { RouteOptimizationResult } from '../../shared/types.ts';
+import { useCurrency } from '../currency.tsx';
 
 interface RouteOptimizerModalProps {
   isOpen: boolean;
@@ -16,6 +17,7 @@ export function RouteOptimizerModal({
   onClose,
   onApplyOptimized,
 }: RouteOptimizerModalProps) {
+  const { fmt } = useCurrency();
   if (!isOpen) return null;
 
   return (
@@ -96,10 +98,10 @@ export function RouteOptimizerModal({
                 <div className="rounded-xl border border-neutral-200/80 p-3.5">
                   <div className="text-xs text-[#4B5563]">Optimized Transit Fare</div>
                   <div className="mt-1 font-display text-lg font-bold text-[#111827] tabular-nums">
-                    ${result.optimizedCostUsd.toFixed(0)}
+                    {fmt(result.optimizedCostUsd)}
                   </div>
                   <div className="text-xs text-[#4B5563] font-mono tabular-nums">
-                    Current: ${result.originalCostUsd.toFixed(0)}
+                    Current: {fmt(result.originalCostUsd)}
                   </div>
                 </div>
 
@@ -145,7 +147,7 @@ export function RouteOptimizerModal({
                       <div className="flex items-center gap-3 font-mono text-[#4B5563] tabular-nums">
                         <span>{cand.totalDistanceKm.toLocaleString()} km</span>
                         <span>{cand.estimatedTotalHours.toFixed(1)}h</span>
-                        <span>${cand.estimatedTotalCostUsd.toFixed(0)}</span>
+                        <span>{fmt(cand.estimatedTotalCostUsd)}</span>
                         <span className="font-semibold text-[#111827]">
                           Score: {cand.totalSmartScore.toFixed(0)}
                         </span>

@@ -14,7 +14,7 @@ interface SmartScoreBadgeProps {
 export function SmartScoreBadge({ score, size = 'md', className = '' }: SmartScoreBadgeProps) {
   return (
     <span
-      title="VTTS Smart Score: price plus the cost of your time, in USD. Lower is better."
+      title="VTTS Smart Score: price plus the cost of your time and comfort. Lower is better."
       className={`inline-flex items-center gap-1 whitespace-nowrap rounded-lg border border-[#FFD6BA] bg-[#FFF4ED] font-mono font-semibold text-[#E56B1A] tabular-nums ${
         size === 'md' ? 'px-2 py-0.5 text-xs' : 'px-1.5 py-px text-[11px]'
       } ${className}`}
