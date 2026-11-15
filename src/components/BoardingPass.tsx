@@ -119,7 +119,6 @@ interface BoardingPassProps {
   /** Position in the leg's ranking (0 = best Smart Score). */
   rank: number;
   isSelected: boolean;
-  voucherCode?: string | null;
   /** The leg's departure date, used when the ticket does not carry its own. */
   departureDate?: string;
   onSelect: () => void;
@@ -139,7 +138,6 @@ export function BoardingPass({
   option,
   rank,
   isSelected,
-  voucherCode,
   departureDate,
   onSelect,
   extras,
@@ -394,21 +392,11 @@ export function BoardingPass({
             <div className="text-right @[28rem]:text-left">
               <MicroLabel>{isReturn ? 'Return total' : 'Fare'} · per person</MicroLabel>
               <div className="mt-0.5 flex flex-wrap items-center justify-end gap-x-2 gap-y-1 @[28rem]:justify-start">
-                {b.discountAppliedUsd > 0 && (
-                  <span className="font-mono text-[11px] leading-none text-[#4B5563] line-through tabular-nums">
-                    {fmt(option.basePriceUsd)}
-                  </span>
-                )}
                 <span className="whitespace-nowrap font-display text-base font-extrabold leading-none text-[#111827] tabular-nums">
-                  {fmt(option.discountedPriceUsd)}
+                  {fmt(option.basePriceUsd)}
                 </span>
                 <SmartScoreBadge score={option.smartScore} size="sm" />
               </div>
-              {voucherCode && b.discountAppliedUsd > 0 && (
-                <div className="mt-0.5 font-mono text-[11px] font-medium text-[#16A34A] tabular-nums">
-                  -{fmt(b.discountAppliedUsd)} · {voucherCode}
-                </div>
-              )}
             </div>
           </div>
 
@@ -418,7 +406,6 @@ export function BoardingPass({
               <BookingButton
                 option={option}
                 accent={accentButton}
-                discountUsd={b.discountAppliedUsd}
                 cardRef={cardRef}
               />
             )}

@@ -47,7 +47,6 @@ export function logFlightState(label: string, legs: TripLeg[]): void {
       travelH: o?.inVehicleHours,
       layoverH: o?.layoverHours,
       priceUsd: o?.basePriceUsd,
-      netUsd: o?.discountedPriceUsd,
     };
   });
   console.groupCollapsed(`[Flights] ${label}: ${legs.length} legs → state`);

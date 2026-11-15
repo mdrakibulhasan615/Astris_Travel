@@ -12,7 +12,6 @@ interface VttsControlPanelProps {
   vttsTier: VttsTier;
   hourlyTimeValue: number;
   totalCostUsd: number;
-  totalSavingsUsd: number;
   totalHours: number;
   totalSmartScore: number;
   totalDistanceKm: number;
@@ -24,7 +23,6 @@ export function VttsControlPanel({
   vttsTier,
   hourlyTimeValue,
   totalCostUsd,
-  totalSavingsUsd,
   totalHours,
   totalSmartScore,
   totalDistanceKm,
@@ -71,16 +69,11 @@ export function VttsControlPanel({
       {/* Compact tabular KPI strip */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pb-3.5 border-b border-neutral-100">
         <div>
-          <div className="text-[11px] font-medium text-[#4B5563]">Net Fare</div>
+          <div className="text-[11px] font-medium text-[#4B5563]">Total Fare</div>
           <div className="mt-0.5 flex items-baseline gap-1.5">
             <span className="font-display text-lg font-bold text-[#111827] tabular-nums">
               {fmt(totalCostUsd)}
             </span>
-            {totalSavingsUsd > 0 && (
-              <span className="text-[11px] font-medium text-[#16A34A] tabular-nums">
-                -{fmt(totalSavingsUsd)}
-              </span>
-            )}
           </div>
         </div>
 

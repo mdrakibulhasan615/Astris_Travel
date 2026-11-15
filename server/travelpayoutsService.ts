@@ -1,6 +1,5 @@
 import { getEnv, warnMissingKey } from './env.ts';
 import { AFFILIATE_DEFAULTS } from '../shared/config.ts';
-import { VOUCHERS_CATALOG } from '../shared/mockDataset.ts';
 import { resolveAirport } from '../shared/airports.ts';
 import { computeSmartScore, haversineDistanceKm, round2 } from '../shared/smartScore.ts';
 import type {
@@ -9,7 +8,6 @@ import type {
   TransitOption,
   TransitSegment,
   TravelerProfile,
-  Voucher,
 } from '../shared/types.ts';
 
 /**
@@ -147,7 +145,6 @@ export interface TravelpayoutsQuery {
   returnDate?: string;
   legId: string;
   hourlyRateUsd: number;
-  activeVouchers: Voucher[];
   profile?: Partial<TravelerProfile>;
 }
 
@@ -303,13 +300,6 @@ function toOption(
         ]
       : [];
 
-  const eligibleVouchers = VOUCHERS_CATALOG.filter(
-    (v) =>
-      v.applicableModes.includes('flight') &&
-      priceUsd >= v.minSpendUsd &&
-      (!v.applicableCarriers || v.applicableCarriers.length === 0 || v.applicableCarriers.includes(airlineCode))
-  ).map((v) => v.id);
-
   const scorable = {
     ticketType: q.returnDate ? ('return' as const) : undefined,
     departureTime: dep[2],
@@ -322,9 +312,8 @@ function toOption(
     isOvernightSleeper: false,
     mode: 'flight' as TransitMode,
     carrierCode: airlineCode,
-    eligibleVoucherIds: eligibleVouchers,
   };
-  const breakdown = computeSmartScore(scorable, q.hourlyRateUsd, null, q.profile);
+  const breakdown = computeSmartScore(scorable, q.hourlyRateUsd, q.profile);
   const km = haversineDistanceKm(fromAp.lat, fromAp.lng, toAp.lat, toAp.lng);
 
   const sourcePath = t.link ? (t.link.startsWith('/') ? t.link : `/${t.link}`) : null;
@@ -352,13 +341,10 @@ function toOption(
     layoverHours,
     stopsCount: stops,
     basePriceUsd: priceUsd,
-    discountedPriceUsd: breakdown.discountedPriceUsd,
     smartScore: breakdown.totalSmartScore,
     smartScoreBreakdown: breakdown,
     doorToDoorNotes: `${fromAp.code} (${dep[2]}) → ${toAp.code} (${arrTime || '--:--'})`,
     co2Kg: Math.round(km * 0.12),
-    eligibleVoucherIds: eligibleVouchers,
-    appliedVoucherId: null,
     segments,
     dataSource: 'cached',
     sourceFareUrl,

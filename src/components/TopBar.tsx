@@ -1,15 +1,13 @@
-import { BedDouble, Compass, Plus, Sparkles, Ticket } from 'lucide-react';
+import { BedDouble, Compass, Plus, Sparkles } from 'lucide-react';
 import { CURRENCIES, isCurrencyCode } from '../../shared/currency.ts';
 import { useCurrency } from '../currency.tsx';
 
 interface TopBarProps {
-  activePanel: 'timeline' | 'stays' | 'smart-score' | 'vouchers';
-  onSelectPanel: (panel: 'timeline' | 'stays' | 'smart-score' | 'vouchers') => void;
+  activePanel: 'timeline' | 'stays';
+  onSelectPanel: (panel: 'timeline' | 'stays') => void;
   onOpenAddStop: () => void;
-  onOpenVouchers: () => void;
   onOptimizeRoute: () => void;
   isOptimizing: boolean;
-  activeVoucherCount: number;
   /** Where tickets come from: set in code / environment, shown here for information only. */
   dataMode?: 'live' | 'mock';
 }
@@ -18,10 +16,8 @@ export function TopBar({
   activePanel,
   onSelectPanel,
   onOpenAddStop,
-  onOpenVouchers,
   onOptimizeRoute,
   isOptimizing,
-  activeVoucherCount,
   dataMode,
 }: TopBarProps) {
   const { currency, setCurrency, rates } = useCurrency();
@@ -71,29 +67,6 @@ export function TopBar({
         >
           <BedDouble className="w-3.5 h-3.5 text-[#4B5563]" />
           <span>Stays</span>
-        </button>
-        <button
-          type="button"
-          onClick={() => onSelectPanel('smart-score')}
-          className={`py-1.5 border-b-2 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-            activePanel === 'smart-score'
-              ? 'border-[#FF812E] text-[#111827] font-semibold'
-              : 'border-transparent hover:text-[#111827]'
-          }`}
-        >
-          Smart Score
-        </button>
-        <button
-          type="button"
-          onClick={onOpenVouchers}
-          className={`py-1.5 border-b-2 transition-colors whitespace-nowrap shrink-0 cursor-pointer inline-flex items-center gap-1.5 ${
-            activePanel === 'vouchers'
-              ? 'border-[#FF812E] text-[#111827] font-semibold'
-              : 'border-transparent hover:text-[#111827]'
-          }`}
-        >
-          <Ticket className="w-3.5 h-3.5 text-[#4B5563]" />
-          <span>Vouchers ({activeVoucherCount})</span>
         </button>
         <button
           type="button"

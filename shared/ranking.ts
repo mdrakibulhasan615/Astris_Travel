@@ -13,7 +13,7 @@ import type { OptionTag, TransitOption } from './types.ts';
  *   `direct`           no stops and no layover
  *   `cheapest-direct`  the lowest-priced direct ticket
  *   `cheapest`         the lowest-priced ticket of all
- * "Priced" means the net fare, i.e. after any applied voucher.
+ * "Priced" means the fare per person.
  */
 
 export const isDirect = (o: Pick<TransitOption, 'stopsCount' | 'layoverHours'>): boolean =>
@@ -25,8 +25,8 @@ function cheapestOf(options: TransitOption[]): TransitOption | undefined {
   for (const o of options) {
     if (
       !best ||
-      o.discountedPriceUsd < best.discountedPriceUsd ||
-      (o.discountedPriceUsd === best.discountedPriceUsd && o.smartScore < best.smartScore)
+      o.basePriceUsd < best.basePriceUsd ||
+      (o.basePriceUsd === best.basePriceUsd && o.smartScore < best.smartScore)
     ) {
       best = o;
     }

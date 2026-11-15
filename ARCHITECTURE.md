@@ -8,7 +8,7 @@
 **Astris Travel** is a multi-destination travel planning and booking app. Instead of dumping raw
 listings, it ranks multi-modal routes (flight / train / bus / ferry) **and places to stay** with a
 **Smart Score** built on **VTTS (Value of Travel Time Savings)** tuned to the traveler's pacing and
-preferences, applies promo vouchers before ranking, and maps airport-to-airport flights and
+preferences and maps airport-to-airport flights and
 land-following ground corridors. Outbound links go straight to the merchant (Trip.com, FlixBus, 12Go,
 Booking.com, Agoda) with the selected option's parameters filled in.
 
@@ -69,7 +69,6 @@ unprefixed keys (including `GEMINI_API_KEY`) are deliberately never exposed to t
 | **Live Flight Discovery** | **SerpApi** (`engine=google_flights`) | `fetchSerpApiFlights` in `server/transitService.ts`. One-way = `type=2`; return = `type=1` + `return_date` (price is the round-trip total). `type` must always be sent: SerpApi defaults to round-trip and answers HTTP 400 without a return date, which is why live fares never loaded before. Stop codes are expanded to real airports (`LON` → `LHR,LGW,STN,LTN,LCY,SEN`); metro codes return nothing. Parses `best_flights`/`other_flights` into `TransitOption`s (price, hops, layovers, emissions). 8s timeout; any failure falls back silently. |
 | **Fallback corridors** | `CURATED_CORRIDOR_OPTIONS` + `synthesizeCorridorOptions` | Hand-authored options for the default trip's corridors; every other pair is synthesized (flight / 1-stop / rail / coach) from great-circle distance. |
 | **Global Airport Data** | **`airports`** (npm) | `server/airportService.ts`: autocomplete (`searchAirports`) and IATA → exact tarmac lat/lng (`getAirportByIata`). Registered into `shared/airports.ts` at startup and used for every flight segment (§7). |
-| **Vouchers** | `VOUCHERS_CATALOG` (`shared/mockDataset.ts`) + `calculateVoucherDiscount` / `isVoucherCurrentlyValid` (`shared/smartScore.ts`) | Percentage or fixed discounts, `maxDiscountUsd` cap, `minSpendUsd`, mode and carrier restrictions, `validFrom`/`expiresAt`/`isActive`. Validated by `POST /api/vouchers/validate`. There is **no `voucherService.ts`**. |
 | **Affiliate Monetization** | **Trip.com, FlixBus, 12Go, Booking.com, Agoda** (direct) | `shared/affiliate.ts` — see §6. The former Travelpayouts/Aviasales and Rome2Rio links are gone; `TRAVELPAYOUTS_*` variables are no longer read. |
 | **FlixBus city ids** | flixbus.com public city autocomplete | `server/flixbusService.ts`: city name + coordinates → FlixBus UUID, cached 24 h. Undocumented endpoint: every failure means "no FlixBus link". |
 | **Ground corridors** | built-in network (no API) | `shared/groundRouting.ts` — see §7. |
@@ -87,13 +86,13 @@ unprefixed keys (including `GEMINI_API_KEY`) are deliberately never exposed to t
 │   ├── airportService.ts        # `airports` dataset search + IATA lookup
 │   └── flixbusService.ts        # FlixBus city-id lookup (cached) for FlixBus deep links
 ├── shared/                      # Imported by server AND client
-│   ├── smartScore.ts            # VTTS / Smart Score engine, vouchers math, corridor synthesis, leg building
+│   ├── smartScore.ts            # VTTS / Smart Score engine, corridor synthesis, leg building
 │   ├── affiliate.ts             # Direct merchant deep links: Trip.com, FlixBus, 12Go, Booking.com, Agoda
 │   ├── airports.ts              # Airport anchoring: exact airport coords, city↔airport codes, ground connectors
 │   ├── groundRouting.ts         # Land network + Dijkstra + Catmull-Rom smoothing for ground polylines
 │   ├── stays.ts                 # Stay categories per stop (cheapest first), partner links
 │   ├── types.ts                 # TransitOption, SmartScoreBreakdown, TravelerProfile, Trip, ...
-│   ├── mockDataset.ts           # Default trip, destination hubs, vouchers, curated corridors
+│   ├── mockDataset.ts           # Default trip, destination hubs, curated corridors
 │   └── dateUtils.ts             # Stop date recalculation after reorder; origin = departure date only
 ├── src/
 │   ├── main.tsx                 # React root wrapped in <ErrorBoundary>
@@ -106,7 +105,6 @@ unprefixed keys (including `GEMINI_API_KEY`) are deliberately never exposed to t
 │       ├── StayPanel.tsx              # "Staying in [City]?" card: ranked stay categories + Booking.com / Agoda
 │       ├── SmartScoreBadge.tsx        # The Smart Score pill used on every transport card
 │       ├── VttsControlPanel.tsx       # Pacing slider / preset tiers
-│       ├── VoucherDrawer.tsx          # Promo entry + savings preview
 │       ├── AddStopModal.tsx           # Airport autocomplete (`/api/airports/search`)
 │       ├── MultiDestDatePickerModal.tsx
 │       ├── RouteOptimizerModal.tsx    # Two-stage optimizer results
@@ -124,11 +122,10 @@ Imports use explicit `.ts`/`.tsx` extensions (`allowImportingTsExtensions`).
 | `GET /api/destinations`, `GET /api/airports/search?q=&limit=` | Airport hubs / autocomplete |
 | `GET /api/config` | `{ dataMode: 'live' \| 'mock' }`, read-only; drives the header's "Sample data" / "Live fares" chip |
 | `GET /api/rates` | USD-based exchange rates for the currency switcher (Frankfurter / ECB, 12 h in-memory cache, built-in fallback table) |
-| `GET /api/vouchers`, `POST /api/vouchers/validate` | Catalog; validate a code against current legs |
 | `GET /api/affiliate/config` | Validated partner ids for the browser's link builders (public by nature: every link carries them) |
 | `GET\|POST /api/transit/query` | Single-corridor query through the Redis wrapper (`X-Cache-*` headers); optional `returnDate` for return fares |
 | `GET /api/transit/cache/status` | Redis health |
-| `POST /api/legs/recompute` | Re-query every leg after stop/VTTS/voucher/ticket-type change (concurrent, with per-leg fallback). Accepts `legPrefs` (`{ legId: { type: 'one-way' \| 'return', returnDate? } }`); returns legs with both fare structures settled (§11) |
+| `POST /api/legs/recompute` | Re-query every leg after stop/VTTS/ticket-type change (concurrent, with per-leg fallback). Accepts `legPrefs` (`{ legId: { type: 'one-way' \| 'return', returnDate? } }`); returns legs with both fare structures settled (§11) |
 | `POST /api/optimize-route` | Two-stage route optimizer (distance permutations → Smart Score top 5) |
 
 `hourlyRate`/`hourlyTimeValue`, `travelerProfile`, and `travelers` are sanitized server-side
@@ -147,7 +144,7 @@ score = priceWeight × netPrice
 
 | Term | Rule |
 | :--- | :--- |
-| **netPrice** | `basePriceUsd − voucherDiscount` (best active, currently valid voucher; floored at 0) |
+| **price** | `basePriceUsd`, the fare per person (there are no vouchers or discounts) |
 | **Pacing → r** | 0 % → $5/hr, 50 % → $15/hr, 100 % → $35/hr (piecewise linear, `pacingPercentToHourlyRate`). Presets: Backpacker $5, Balanced $15, Express $35 |
 | **inVehicle** | `inVehicleHours × r × modeMultiplier` (overnight sleeper = 0.4, otherwise 1.0) |
 | **layover** | Non-linear, in effective hours × *r* (`layoverEffectiveHours`): **<2 h** 0.25/h; **2–4 h** linear, +1.0/h from a 0.5 h baseline; **>4 h** `2.5 + Δ + 0.5·(e^{0.4Δ} − 1)` where Δ = hours beyond 4 (capped at 12 for the exponent). Continuous at 2 h and 4 h. If a >4 h layover overlaps 23:00–05:00 the option gets the `overnight-layover` flag and +1.5 effective hours. |
@@ -156,10 +153,10 @@ score = priceWeight × netPrice
 | **airportChange** | If consecutive segments' `toCode ≠ next fromCode` (e.g. arrive IST, depart SAW): `max(2.5 × r, $25)`, ×1.5 when the layover is under 4 h; flag `airport-change` |
 | **weights** | `TravelerProfile { priceWeight = 1.5, timeWeight = 1.0, allowRedEyes = false }`, each clamped to [0.1, 5]. `profileFromTimeSensitivity(0..1)` maps a slider to weights (0 → 2.25 / 0.5, 0.5 → defaults, 1 → 0.75 / 1.5). |
 
-`computeSmartScore(option, hourlyRate, voucher?, profile?)` returns a `SmartScoreBreakdown`
+`computeSmartScore(option, hourlyRate, profile?)` returns a `SmartScoreBreakdown`
 containing every term, the weights, and `flags` (rendered as chips in `LegTransitPanel`).
 Each call is O(1) (~1.5 µs); the slider re-scores all options client-side on every tick.
-`recalculateOptionsWithVttsAndVouchers` picks the best voucher per option and sorts ascending.
+`recalculateOptions` scores every option and ranks them (§13).
 
 **Python note:** the former `backend/smart_score.py` (tiered layover multipliers) was removed. Do not
 reintroduce scoring in `backend/`; mirror the output types only (`SmartScoreBreakdown` in `models.py`).
@@ -279,7 +276,7 @@ It is not a routing engine: lines follow corridors between junction cities, not 
   Optimistic client updates (reorder, add stop) are sample data until the server response replaces them;
   the route optimizer ranks with sample corridors, so *Apply* only takes the new stop order and re-queries.
 - **UI binding:** `LegTransitPanel` renders `option.carrier`, `routeCode`, `departureTime`/`arrivalTime`,
-  `inVehicleHours`, `basePriceUsd`/`discountedPriceUsd` directly from the option (no local arrays);
+  `inVehicleHours`, `basePriceUsd` directly from the option (no local arrays);
   cards expose `data-option-id`, `data-route-code`, `data-price`, `data-source` for inspection.
 - **Dev logging:** server prints `[Flight Data] <label> <leg> selected=… src=… | carrier flight | dep → arr
   | $price`; the browser logs `[Flights] … → state` tables and, after every state change, checks the ticket
@@ -386,11 +383,11 @@ the shared one), and nothing needs a long-running process.
   a tooltip to confirm at booking; they are never presented as a fare rule.
 - **Card layout.** Each card shows the main flight legs (`hops`) with layovers and baggage. The repeated
   transfer / step summary line below them (`KUL → KUL transfer (49m)`, `MH 160 (475m) → QR 237 …`) is gone.
-- **Ranking and tags (`shared/ranking.ts`).** `recalculateOptionsWithVttsAndVouchers` ends in `rankAndTag`,
+- **Ranking and tags (`shared/ranking.ts`).** `recalculateOptions` ends in `rankAndTag`,
   so every list is ordered: 1) best Smart Score, 2) cheapest direct (if not already 1st), 3) cheapest overall
   (if not already placed), 4) the rest by Smart Score. Tags: `Direct` (no stops, no layover),
   `Cheapest Direct` (lowest-priced direct), `Cheapest` (lowest-priced overall); one ticket can carry several.
-  "Price" is the net fare after vouchers; ties go to the better Smart Score.
+  "Price" is the fare per person; ties go to the better Smart Score.
 
 ## 14. Boarding-Pass Flight Cards — `src/components/BoardingPass.tsx`
 
@@ -420,7 +417,7 @@ the shared one), and nothing needs a long-running process.
 ## 15. Bus and Train Tickets — `src/components/GroundTicket.tsx`
 
 Coaches and trains are drawn as tickets too (ferries keep the compact card). Both use the same container-query
-approach (`@[28rem]`) and the same data as flights: tags, baggage line, price/voucher, Smart Score, Book button.
+approach (`@[28rem]`) and the same data as flights: tags, baggage line, price, Smart Score, Book button.
 
 - **Bus (lime `#abed00`).** Scalloped left/right edges with dotted perforations, a darker-lime inner panel with
   an olive outline, `BUS TICKET` title, route, date/duration/stops/service, a ticket-number line, a vertical
@@ -444,8 +441,8 @@ sell the flight, cheapest first; the cheapest has the orange `Buy` button, the r
   (hashed from the ticket id, so stable) and carry `estimated: true`; the panel says so. This also guarantees the
   cheapest offer equals the price on the stub. Kiwi and Skyscanner links are unverified against the live sites'
   current URL schemes, and only Trip.com carries an affiliate id.
-- **Prices** are USD in the data and converted with `useCurrency().fmt`; the voucher discount is subtracted from
-  every row so the stub and the cheapest row always agree.
+- **Prices** are USD in the data and converted with `useCurrency().fmt`; the cheapest row always equals the price on
+  the stub.
 - **Behaviour.** One panel at a time (module-level store, so opening another card's panel switches to it); closes
   on Escape, an outside click, or when the card scrolls out of view; follows the card on scroll/resize. It sits to
   the right of the card when there is room (≥ 220 px, viewport ≥ 768 px), otherwise it is a centred modal with a
@@ -461,7 +458,7 @@ those as `dataSource: 'cached'` ("Recent fare" chip) instead of the sample fligh
 - **What the data is.** Fares other travellers found on Aviasales in the last ~48 h: real, but possibly moved, and
   only for routes someone searched. When there is nothing for the exact date, the nearest cached day within ±3 days
   is used (the ticket shows its own date); with nothing at all the leg keeps the sample flights. Results are cached
-  12 h (Redis + memory, key `…:tp`).
+  12 h (Redis + memory, key `…:tp2`).
 - **What is missing, and how it is handled.** The payload has no baggage, layover airports or per-flight list: baggage
   is the carrier's typical policy (marked "typical"), connections show `n STOP · hours` without a flight list, and
   the in-flight/layover split behind the Smart Score is estimated from the distance. Arrival times use the

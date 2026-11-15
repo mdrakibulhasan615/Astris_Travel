@@ -291,29 +291,26 @@ export function OffersButton({
 export function BookingButton({
   option,
   accent,
-  discountUsd,
   cardRef,
 }: {
   option: TransitOption;
   /** The ticket's brand colours (matches the card header). */
   accent: CSSProperties;
-  discountUsd: number;
   cardRef: RefObject<HTMLElement | null>;
 }) {
   const rows = useMemo<OfferRow[]>(
     () =>
       [...offersOf(option)]
         .sort((a, b) => a.priceUsd - b.priceUsd)
-        // The same voucher discount applies to every merchant, so the order is unchanged
         .map((o) => ({
           key: o.providerId,
           name: o.provider,
           badge: o.logo,
-          priceUsd: Math.max(0, o.priceUsd - discountUsd),
+          priceUsd: o.priceUsd,
           url: o.url,
           title: `Opens ${o.provider} with this route, date and travellers filled in`,
         })),
-    [option, discountUsd]
+    [option]
   );
   const anyEstimated = useMemo(() => offersOf(option).some((o) => o.estimated), [option]);
   const footnote = !anyEstimated

@@ -8,7 +8,6 @@ import type {
   TravelerProfile,
   TripLeg,
   TripStop,
-  Voucher,
   VttsPreset,
 } from './types.ts';
 import { attachBookingUrls } from './affiliate.ts';
@@ -91,48 +90,6 @@ export function sanitizeHourlyRate(value: unknown, fallback: number = 15): numbe
   const n = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(n) || n < 0) return fallback;
   return n;
-}
-
-/**
- * A voucher is usable when it is not explicitly deactivated and `now` falls inside
- * [validFrom, expiresAt]. Dates are ISO `YYYY-MM-DD`; expiry is inclusive of that whole day (UTC).
- */
-export function isVoucherCurrentlyValid(voucher: Voucher, now: Date = new Date()): boolean {
-  if (voucher.isActive === false) return false;
-  const today = now.toISOString().slice(0, 10);
-  if (voucher.validFrom && today < voucher.validFrom.slice(0, 10)) return false;
-  if (voucher.expiresAt && today > voucher.expiresAt.slice(0, 10)) return false;
-  return true;
-}
-
-function voucherAppliesToCarrier(voucher: Voucher, carrierCode: string): boolean {
-  return (
-    !voucher.applicableCarriers ||
-    voucher.applicableCarriers.length === 0 ||
-    voucher.applicableCarriers.includes(carrierCode)
-  );
-}
-
-export function calculateVoucherDiscount(
-  option: Pick<TransitOption, 'basePriceUsd' | 'mode' | 'carrierCode' | 'eligibleVoucherIds'>,
-  voucher: Voucher | null | undefined
-): number {
-  if (!voucher) return 0;
-  if (!isVoucherCurrentlyValid(voucher)) return 0;
-  if (!voucher.applicableModes.includes(option.mode)) return 0;
-  if (option.basePriceUsd < voucher.minSpendUsd) return 0;
-  if (!voucherAppliesToCarrier(voucher, option.carrierCode)) return 0;
-
-  let discount =
-    voucher.discountType === 'percentage'
-      ? (option.basePriceUsd * voucher.discountValue) / 100
-      : voucher.discountValue;
-
-  if (voucher.maxDiscountUsd !== undefined) {
-    discount = Math.min(discount, voucher.maxDiscountUsd);
-  }
-
-  return round2(Math.min(discount, option.basePriceUsd));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -279,7 +236,6 @@ export type ScorableOption = Pick<
   | 'isOvernightSleeper'
   | 'mode'
   | 'carrierCode'
-  | 'eligibleVoucherIds'
 > &
   Partial<
     Pick<TransitOption, 'departureTime' | 'arrivalTime' | 'stopsCount' | 'segments' | 'ticketType'>
@@ -296,15 +252,11 @@ const MAX_TIME_OF_DAY_MULTIPLIER = 1.6;
 export function computeSmartScore(
   option: ScorableOption,
   rawHourlyRateUsd: number,
-  bestVoucher?: Voucher | null,
   profileInput?: Partial<TravelerProfile> | null
 ): SmartScoreBreakdown {
   const hourlyRateUsd = sanitizeHourlyRate(rawHourlyRateUsd);
   const profile = resolveTravelerProfile(profileInput);
   const flags: ScoreFlag[] = [];
-
-  const discountAppliedUsd = calculateVoucherDiscount(option, bestVoucher);
-  const discountedPriceUsd = round2(Math.max(0, option.basePriceUsd - discountAppliedUsd));
 
   const layoverHours = Number.isFinite(option.layoverHours) ? Math.max(0, option.layoverHours) : 0;
   const stopsCount = Math.max(0, option.stopsCount ?? 0);
@@ -371,13 +323,11 @@ export function computeSmartScore(
       airportChangePenaltyUsd) *
     journeys;
   const totalSmartScore = round2(
-    discountedPriceUsd * profile.priceWeight + timeCostUsd * profile.timeWeight
+    option.basePriceUsd * profile.priceWeight + timeCostUsd * profile.timeWeight
   );
 
   return {
     basePriceUsd: option.basePriceUsd,
-    discountAppliedUsd,
-    discountedPriceUsd,
     hourlyRateUsd,
     inVehicleHours: option.inVehicleHours,
     modeMultiplier,
@@ -397,42 +347,20 @@ export function computeSmartScore(
   };
 }
 
-export function pickBestActiveVoucher(
-  option: Pick<TransitOption, 'basePriceUsd' | 'mode' | 'carrierCode' | 'eligibleVoucherIds'>,
-  activeVouchers: Voucher[]
-): { voucher: Voucher | null; discountUsd: number } {
-  let bestVoucher: Voucher | null = null;
-  let bestDiscount = 0;
-
-  for (const voucher of activeVouchers) {
-    const discount = calculateVoucherDiscount(option, voucher);
-    if (discount > bestDiscount) {
-      bestDiscount = discount;
-      bestVoucher = voucher;
-    }
-  }
-
-  return { voucher: bestVoucher, discountUsd: bestDiscount };
-}
-
-export function recalculateOptionsWithVttsAndVouchers(
+export function recalculateOptions(
   options: TransitOption[],
   hourlyRateUsd: number,
-  activeVouchers: Voucher[],
   profile?: Partial<TravelerProfile> | null
 ): TransitOption[] {
   // Ranked by the strict order in shared/ranking.ts (best Smart Score, cheapest direct, cheapest,
   // then by Smart Score), which also sets the Direct / Cheapest / Cheapest Direct tags.
   return rankAndTag(
     options.map((option) => {
-      const { voucher } = pickBestActiveVoucher(option, activeVouchers);
-      const breakdown = computeSmartScore(option, hourlyRateUsd, voucher, profile);
+      const breakdown = computeSmartScore(option, hourlyRateUsd, profile);
       return {
         ...option,
-        discountedPriceUsd: breakdown.discountedPriceUsd,
         smartScore: breakdown.totalSmartScore,
         smartScoreBreakdown: breakdown,
-        appliedVoucherId: voucher ? voucher.id : null,
       };
     })
   );
@@ -447,10 +375,9 @@ export function deriveReturnOptions(
   options: TransitOption[],
   returnDate: string,
   hourlyRateUsd: number,
-  activeVouchers: Voucher[],
   profile?: Partial<TravelerProfile> | null
 ): TransitOption[] {
-  return recalculateOptionsWithVttsAndVouchers(
+  return recalculateOptions(
     options.map((o) => ({
       ...o,
       id: `${o.id}-rt`,
@@ -462,10 +389,8 @@ export function deriveReturnOptions(
       sourceFareUrl: undefined,
       bookingUrl: undefined,
       returnBookingUrl: undefined,
-      appliedVoucherId: null,
     })),
     hourlyRateUsd,
-    activeVouchers,
     profile
   );
 }
@@ -495,9 +420,7 @@ export function synthesizeCorridorOptions(
   fromStop: TripStop,
   toStop: TripStop,
   legId: string,
-  allVouchers: Voucher[],
   hourlyRateUsd: number,
-  activeVouchers: Voucher[],
   profile?: Partial<TravelerProfile> | null
 ): TransitOption[] {
   const distanceKm = Math.max(120, haversineDistanceKm(fromStop.lat, fromStop.lng, toStop.lat, toStop.lng));
@@ -581,8 +504,7 @@ export function synthesizeCorridorOptions(
             durationMinutes: 30,
           },
         ],
-      },
-      allVouchers
+      }
     )
   );
 
@@ -647,8 +569,7 @@ export function synthesizeCorridorOptions(
               durationMinutes: Math.round((oneStopHours * 60) / 2),
             },
           ],
-        },
-        allVouchers
+        }
       )
     );
   }
@@ -710,8 +631,7 @@ export function synthesizeCorridorOptions(
               waypoints: groundWaypoints,
             },
           ],
-        },
-        allVouchers
+        }
       )
     );
   }
@@ -758,47 +678,23 @@ export function synthesizeCorridorOptions(
               waypoints: groundWaypoints,
             },
           ],
-        },
-        allVouchers
+        }
       )
     );
   }
 
-  return recalculateOptionsWithVttsAndVouchers(options, hourlyRateUsd, activeVouchers, profile);
+  return recalculateOptions(options, hourlyRateUsd, profile);
 }
 
 function buildRawOption(
-  partial: Omit<
-    TransitOption,
-    'discountedPriceUsd' | 'smartScore' | 'smartScoreBreakdown' | 'eligibleVoucherIds'
-  >,
-  allVouchers: Voucher[]
+  partial: Omit<TransitOption, 'smartScore' | 'smartScoreBreakdown'>
 ): TransitOption {
-  const eligibleVoucherIds = allVouchers
-    .filter(
-      (v) =>
-        v.applicableModes.includes(partial.mode) &&
-        partial.basePriceUsd >= v.minSpendUsd &&
-        voucherAppliesToCarrier(v, partial.carrierCode)
-    )
-    .map((v) => v.id);
-
-  const placeholderBreakdown = computeSmartScore(
-    {
-      ...partial,
-      eligibleVoucherIds,
-    },
-    15,
-    null
-  );
+  const placeholderBreakdown = computeSmartScore(partial, 15);
 
   return {
     ...partial,
-    discountedPriceUsd: partial.basePriceUsd,
     smartScore: placeholderBreakdown.totalSmartScore,
     smartScoreBreakdown: placeholderBreakdown,
-    eligibleVoucherIds,
-    appliedVoucherId: null,
     dataSource: 'synthesized',
   };
 }
@@ -871,9 +767,7 @@ export interface LegBuildScoring {
 export function buildLegsFromStops(
   stops: TripStop[],
   curatedCorridors: Record<string, TransitOption[]>,
-  allVouchers: Voucher[],
   hourlyRateUsd: number,
-  activeVouchers: Voucher[],
   previousSelectedMap?: Record<string, string>,
   scoring: LegBuildScoring = {}
 ): TripLeg[] {
@@ -901,10 +795,9 @@ export function buildLegsFromStops(
 
     let oneWay: TransitOption[];
     if (hasLiveFare(previous?.oneWayOptions)) {
-      oneWay = recalculateOptionsWithVttsAndVouchers(
+      oneWay = recalculateOptions(
         previous!.oneWayOptions!,
         hourlyRateUsd,
-        activeVouchers,
         scoring.profile
       );
     } else {
@@ -916,9 +809,7 @@ export function buildLegsFromStops(
               fromStop,
               toStop,
               legId,
-              allVouchers,
               hourlyRateUsd,
-              activeVouchers,
               scoring.profile
             );
 
@@ -927,10 +818,9 @@ export function buildLegsFromStops(
         normalizeOptionGeometry(opt, fromStop, toStop)
       );
       oneWay = attachBookingUrls(
-        recalculateOptionsWithVttsAndVouchers(
+        recalculateOptions(
           geometryOptions,
           hourlyRateUsd,
-          activeVouchers,
           scoring.profile
         ),
         bookingContext
@@ -941,14 +831,13 @@ export function buildLegsFromStops(
     if (oneWay.length > 0 && wantsReturnFares(i, pairs, pref)) {
       returnOptions =
         previous?.returnDate === returnDate && hasLiveFare(previous.returnOptions)
-          ? recalculateOptionsWithVttsAndVouchers(
+          ? recalculateOptions(
               previous.returnOptions,
               hourlyRateUsd,
-              activeVouchers,
               scoring.profile
             )
           : attachBookingUrls(
-              deriveReturnOptions(oneWay, returnDate, hourlyRateUsd, activeVouchers, scoring.profile),
+              deriveReturnOptions(oneWay, returnDate, hourlyRateUsd, scoring.profile),
               { ...bookingContext, returnDate }
             );
     }
@@ -980,30 +869,27 @@ export function buildLegsFromStops(
 }
 
 /**
- * Re-scores both ticket structures of every leg (slider, vouchers) and settles the choice again,
+ * Re-scores both ticket structures of every leg (slider) and settles the choice again,
  * since a different time value can change which fares win.
  */
 export function rescoreLegs(
   legs: TripLeg[],
   hourlyRateUsd: number,
-  activeVouchers: Voucher[],
   profile: Partial<TravelerProfile> | null | undefined,
   legPrefs?: Record<string, LegTicketPref>
 ): TripLeg[] {
   return finalizeLegs(
     legs.map((leg) => ({
       ...leg,
-      oneWayOptions: recalculateOptionsWithVttsAndVouchers(
+      oneWayOptions: recalculateOptions(
         leg.oneWayOptions ?? leg.transitOptions,
         hourlyRateUsd,
-        activeVouchers,
         profile
       ),
       returnOptions: leg.returnOptions
-        ? recalculateOptionsWithVttsAndVouchers(
+        ? recalculateOptions(
             leg.returnOptions,
             hourlyRateUsd,
-            activeVouchers,
             profile
           )
         : undefined,
