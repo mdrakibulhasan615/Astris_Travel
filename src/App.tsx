@@ -650,11 +650,11 @@ export default function App() {
 
   const totalNights = useMemo(() => totalTripNights(trip.stops), [trip.stops]);
 
-  // Stays for every destination, ranked by the same Smart Score inputs as the transport options.
+  // Stays for every destination, cheapest first (stays are not Smart Scored).
   // `affiliateVersion` is a dependency because the links are rebuilt once partner ids arrive.
   const staySearches = useMemo(
-    () => buildStaySearches(trip.stops, trip.travelers, trip.hourlyTimeValue, trip.travelerProfile),
-    [trip.stops, trip.travelers, trip.hourlyTimeValue, trip.travelerProfile, affiliateVersion]
+    () => buildStaySearches(trip.stops, trip.travelers),
+    [trip.stops, trip.travelers, affiliateVersion]
   );
   const stayByStopId = useMemo(
     () => Object.fromEntries(staySearches.map((s) => [s.stopId, s])),

@@ -91,7 +91,7 @@ unprefixed keys (including `GEMINI_API_KEY`) are deliberately never exposed to t
 │   ├── affiliate.ts             # Direct merchant deep links: Trip.com, FlixBus, 12Go, Booking.com, Agoda
 │   ├── airports.ts              # Airport anchoring: exact airport coords, city↔airport codes, ground connectors
 │   ├── groundRouting.ts         # Land network + Dijkstra + Catmull-Rom smoothing for ground polylines
-│   ├── stays.ts                 # Stay categories per stop, stay Smart Score, partner links
+│   ├── stays.ts                 # Stay categories per stop (cheapest first), partner links
 │   ├── types.ts                 # TransitOption, SmartScoreBreakdown, TravelerProfile, Trip, ...
 │   ├── mockDataset.ts           # Default trip, destination hubs, vouchers, curated corridors
 │   └── dateUtils.ts             # Stop date recalculation after reorder; origin = departure date only
@@ -104,7 +104,7 @@ unprefixed keys (including `GEMINI_API_KEY`) are deliberately never exposed to t
 │       ├── SortableStopCard.tsx       # Draggable stop in the timeline (no night counter on the origin)
 │       ├── LegTransitPanel.tsx        # Ranked options per leg: score, flag chips, merchant button
 │       ├── StayPanel.tsx              # "Staying in [City]?" card: ranked stay categories + Booking.com / Agoda
-│       ├── SmartScoreBadge.tsx        # The Smart Score pill used on every transport and stay card
+│       ├── SmartScoreBadge.tsx        # The Smart Score pill used on every transport card
 │       ├── VttsControlPanel.tsx       # Pacing slider / preset tiers
 │       ├── VoucherDrawer.tsx          # Promo entry + savings preview
 │       ├── AddStopModal.tsx           # Airport autocomplete (`/api/airports/search`)
@@ -321,16 +321,7 @@ It is not a routing engine: lines follow corridors between junction cities, not 
   There is no hotel inventory API, so a card ranks six *categories* (hostel … 5★) with an estimated
   nightly price from a city cost index, labelled **Estimate**; no property names or quoted rates are
   invented. Each category links to Booking.com / Agoda with matching city, dates, guests, rooms and filter.
-- **Stay Smart Score** (`computeStaySmartScore`, lower is better, same weights and hourly rate *r* as §5):
-
-  ```text
-  score = priceWeight × (nightly × nights)
-        + timeWeight  × ( commute + comfort )
-  commute = nights × 4 trips × minutesToCentre/60 × r × adults
-  comfort = nights × 10 h × comfortMultiplier × r × adults
-  ```
-  `comfortMultiplier` (dorm 0.7 … 5★ 0) is the stay-side counterpart of the sleeper's 0.4× in-vehicle
-  multiplier. A low *r* ranks hostels first; raising the pacing slider moves the ranking up-market.
+- **Stay ranking.** Stays are not Smart Scored: categories are listed cheapest first by the stay total (see §21).
   Hostel prices are per bed (× adults); other categories per room (`ceil(adults / 2)` rooms).
 
 ## 11. Ticket Types & Fare Comparison — `shared/fares.ts`
@@ -520,3 +511,28 @@ hides itself when both parts are empty. Both parts are cached 7 days (`server/js
   page gives class labels (Express, VIP…), departure times and price/duration ranges but no operator names, so none
   are shown; flights are skipped (the flight cards cover them). Cached by country/origin/destination; date and party
   size are applied when serving.
+
+## 21. Live Hotels — `server/hotelService.ts`, `src/components/HotelCards.tsx`
+
+In live-data mode (`USE_REAL_DATA`, with `SERPAPI_KEY`) each stop's "Staying in [City]?" card, when opened, loads real
+hotels from Google Hotels through SerpApi (`engine=google_hotels`, `q` city, check-in/out, adults, USD). One search
+costs one credit, so it runs only for an opened stop and is cached 24 h (`hotels:v1:…`, Redis + memory). In sample mode
+`GET /api/hotels/search` answers `enabled: false` without calling out and the section does not render; the estimated
+stay categories below it are unchanged.
+
+- **Card.** A ticket-shaped card (same mask, outline and notch as the boarding pass): thumbnail, name, type, stars,
+  review score and count, up to four amenity badges, a deal label when Google shows one, and a stub with the nightly
+  rate, the stay total and `PROCEED TO BOOKING`. Properties without a price are dropped. Only amenities Google lists
+  without "($)" get a badge, so "Breakfast ($)" is not shown as included.
+- **Booking panel.** `OffersButton` (the generic floating panel behind the flight booking button) lists the property's
+  own site or Google Hotels with the live price first, then Booking.com and Trip.com (both searched by property name)
+  and Agoda (city search, only for cities with a known id; Agoda takes no free text). Their prices are not known, so
+  they say "Check price". Partner ids are added where configured; Trip.com's hotel URL parameters are unverified.
+- **Hotels are not Smart Scored.** The estimated categories (`shared/stays.ts`) and the live hotels are both listed
+  cheapest first by the stay total; the old stay scoring (commute and comfort penalties, hourly rate, traveller
+  profile) is gone, and the first category is tagged "Cheapest".
+- **Live hotel sort and filters.** Sort: lowest price (default), highest price, top rated, most reviewed, star class,
+  best match (Google's order). Filters: minimum guest rating (3.5+/4+/4.5+), minimum stars, maximum nightly price
+  (slider over the results' range), included amenities (only free ones count, as for the badges), property type and
+  deals only, with a result count and reset. Choices that no result could satisfy are not offered. The estimated
+  categories are a fixed list of six and are not filtered.

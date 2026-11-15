@@ -376,24 +376,6 @@ export interface VoucherValidationResult {
 export type StayCategory = 'hostel' | 'budget' | 'midrange' | 'apartment' | 'upscale' | 'luxury';
 
 /** Same shape of idea as `SmartScoreBreakdown`: every term in USD, lower total is better. */
-export interface StayScoreBreakdown {
-  nights: number;
-  adults: number;
-  nightlyPriceUsd: number;
-  totalPriceUsd: number;
-  hourlyRateUsd: number;
-  /** Door-to-centre time, one way. */
-  commuteMinutesOneWay: number;
-  commuteHours: number;
-  commutePenaltyUsd: number;
-  /** Share of the hours spent at the property that counts as lost comfort (0 = none). */
-  comfortMultiplier: number;
-  comfortPenaltyUsd: number;
-  priceWeight: number;
-  timeWeight: number;
-  totalSmartScore: number;
-}
-
 export interface StayLink {
   provider: Extract<BookingProvider, 'booking' | 'agoda'>;
   providerName: string;
@@ -412,9 +394,8 @@ export interface StayOption {
   /** Whole party, per night. */
   nightlyPriceUsd: number;
   totalPriceUsd: number;
+  /** Typical door-to-centre time, one way (context only). */
   commuteMinutesOneWay: number;
-  smartScore: number;
-  smartScoreBreakdown: StayScoreBreakdown;
   dataSource: 'synthesized';
   links: StayLink[];
 }
@@ -432,6 +413,33 @@ export interface StaySearch {
   rooms: number;
   /** Unfiltered city + dates search on each partner. */
   links: StayLink[];
-  /** Ranked by Smart Score, best first. */
+  /** Cheapest first. */
   options: StayOption[];
+}
+
+/**
+ * A live hotel from Google Hotels (via SerpApi). Prices are USD for the whole party: `nightlyUsd`
+ * per night, `totalUsd` for the stay (taxes and fees as Google quotes them).
+ */
+export interface HotelResult {
+  id: string;
+  name: string;
+  /** "Hotel", "Apartment", "Hostel"… as Google labels it. */
+  type?: string;
+  /** Hotel class, 1 to 5. */
+  stars?: number;
+  /** Guest review score out of 5, and how many reviews it rests on. */
+  rating?: number;
+  reviews?: number;
+  thumbnailUrl?: string;
+  amenities: string[];
+  nightlyUsd: number;
+  totalUsd: number;
+  nights: number;
+  /** The property's own site, when Google lists one. */
+  link?: string;
+  /** A deal label such as "17% less than usual", when Google shows one. */
+  deal?: string;
+  lat?: number;
+  lng?: number;
 }
