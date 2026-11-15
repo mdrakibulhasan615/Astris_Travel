@@ -1,4 +1,4 @@
-import { useMemo, type CSSProperties, type ReactNode } from 'react';
+import { useMemo, useRef, type CSSProperties, type ReactNode } from 'react';
 import { Backpack, Check, Luggage, Plane } from 'lucide-react';
 import { formatDuration } from '../../shared/smartScore.ts';
 import { describeBaggageStub } from '../../shared/ticketDetails.ts';
@@ -6,6 +6,7 @@ import type { OptionTag, TransitOption } from '../../shared/types.ts';
 import { ticketAirlines, ticketPalette } from '../utils/airlineColors.ts';
 import { useCurrency } from '../currency.tsx';
 import { SmartScoreBadge } from './SmartScoreBadge.tsx';
+import { BookingButton } from './BookingOffers.tsx';
 
 const TAG_LABELS: Record<OptionTag, string> = {
   cheapest: 'Cheapest',
@@ -123,8 +124,8 @@ interface BoardingPassProps {
   onSelect: () => void;
   /** Source and score-flag chips, shown after the tags. */
   extras?: ReactNode;
-  /** The booking button(s); receives the ticket's brand colours. Omit to show no button. */
-  renderBook?: (accent: CSSProperties) => ReactNode;
+  /** Shows the `Proceed to booking` button and its merchant comparison panel. */
+  showBooking?: boolean;
 }
 
 /**
@@ -141,9 +142,10 @@ export function BoardingPass({
   departureDate,
   onSelect,
   extras,
-  renderBook,
+  showBooking = true,
 }: BoardingPassProps) {
   const { fmt } = useCurrency();
+  const cardRef = useRef<HTMLDivElement>(null);
   const airlines = useMemo(() => ticketAirlines(option), [option]);
   const palette = useMemo(() => ticketPalette(airlines), [airlines]);
 
@@ -179,6 +181,7 @@ export function BoardingPass({
   return (
     <div className="@container">
     <div
+      ref={cardRef}
       data-option-id={option.id}
       data-source={option.dataSource ?? 'unknown'}
       data-route-code={option.routeCode}
@@ -419,7 +422,14 @@ export function BoardingPass({
 
           <div className="mt-2 space-y-1.5 @[28rem]:mt-auto">
             <Barcode seed={`${option.id}-stub`} className="h-3 w-full text-[#111827]/80 @[28rem]:hidden" />
-            {renderBook && <div className="space-y-1.5">{renderBook(accentButton)}</div>}
+            {showBooking && (
+              <BookingButton
+                option={option}
+                accent={accentButton}
+                discountUsd={b.discountAppliedUsd}
+                cardRef={cardRef}
+              />
+            )}
           </div>
         </div>
       </div>

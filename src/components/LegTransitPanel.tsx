@@ -582,11 +582,7 @@ export function LegTransitPanel({
                           <FlagChips flags={b.flags} />
                         </>
                       }
-                      renderBook={
-                        coveredByLeg
-                          ? undefined
-                          : (accent) => <BookLinks option={option} accent={accent} />
-                      }
+                      showBooking={!coveredByLeg}
                     />
                   );
                 }
