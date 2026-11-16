@@ -87,8 +87,6 @@ export const ENV_KEYS: EnvKeySpec[] = [
   { name: 'TRAVELPAYOUTS_TOKEN', purpose: 'recent real fares in sample mode (Aviasales Data API)', fallback: 'fully sample flights' },
   { name: 'UPSTASH_REDIS_REST_URL', purpose: '12-hour transit cache (Upstash Redis)', fallback: 'uncached queries' },
   { name: 'UPSTASH_REDIS_REST_TOKEN', purpose: '12-hour transit cache (Upstash Redis)', fallback: 'uncached queries' },
-  { name: 'TRIPCOM_ALLIANCE_ID', purpose: 'Trip.com attribution on flight links', fallback: 'un-attributed Trip.com links (no commission)' },
-  { name: 'TRIPCOM_SID', purpose: 'Trip.com attribution on flight links', fallback: 'un-attributed Trip.com links (no commission)' },
   { name: 'BOOKING_AID', purpose: 'Booking.com attribution on stay links', fallback: 'un-attributed Booking.com links (no commission)' },
   { name: 'AGODA_CID', purpose: 'Agoda attribution on stay links', fallback: 'un-attributed Agoda links (no commission)' },
 ];

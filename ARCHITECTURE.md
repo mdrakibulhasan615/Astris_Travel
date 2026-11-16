@@ -472,12 +472,23 @@ those as `dataSource: 'cached'` ("Recent fare" chip) instead of the sample fligh
 
 ## 18. Partner Ids — `shared/config.ts`
 
-- **12Go** (coaches, trains, ferries) takes `z=<id>`; the id defaults to `AFFILIATE_DEFAULTS.twelveGoAffiliateId`
-  (`17520220`) when `TWELVEGO_AFFILIATE_ID` is unset.
-- **Aviasales** fare links (recent fares in sample mode) get `marker=` from `TRAVELPAYOUTS_MARKER`, defaulting to
-  `AFFILIATE_DEFAULTS.travelpayoutsMarker` (`806003`).
-- Both are public ids (every outbound link carries them), so defaults are safe; an environment variable overrides them.
-- Booking.com, Agoda and Trip.com keep their exact-search deep links without affiliate ids until ids are configured.
+- **Trip.com** (flights, trains, hotels): `Allianceid`, `SID` and `trip_sub3` (+ an empty `trip_sub1`, the shape of Trip.com's
+  own partner links) are appended to every Trip.com link. They default to `AFFILIATE_DEFAULTS.tripcom*`; `TRIPCOM_ALLIANCE_ID`,
+  `TRIPCOM_SID`, `TRIPCOM_SUB3` (or `VITE_TRIP_ALLIANCE_ID` / `VITE_TRIP_SID`) override them on the server, which also hands
+  them to the browser via `GET /api/affiliate/config`.
+  - **Flights:** `buildTripFlightUrl({ originIata, destinationIata, departureDate, tripType: 'ow' | 'rt', … })` builds
+    `…/flights/showfarefirst?dcity&acity&ddate&triptype&…` (metro codes, airport codes where a city has several, `rdate` for a
+    round trip, party size, single-airline filter). `buildTripcomFlightUrl` feeds it each ticket's own airports, date and way-back
+    date, so the card's Book button and the Trip.com row of the booking panel open the exact route and date.
+  - **Hotels:** `…/hotels/list?city=<id>&display=…&optionId=<id>&optionType=City&optionName=…&checkin&checkout&adult&crn` when the
+    city's Trip.com id is known (`TRIPCOM_CITY_IDS`, currently Istanbul 532 only, read from a Trip.com link), otherwise a text
+    search (`cityName`, `searchWord`). Add ids by copying `city=` from a Trip.com hotel search.
+  - **Trains:** Trip.com's train search needs internal station codes (`departurecitycode=GB1594`) we do not have, so each train
+    ticket gets an "or on Trip.com" link to the train page with the ids (`tripcomTrainsHome`); 12Go stays the main button.
+- **12Go** (coaches, trains, ferries) takes `z=<id>`; default `AFFILIATE_DEFAULTS.twelveGoAffiliateId` (`17520220`).
+- **Aviasales** fare links (recent fares in sample mode) get `marker=`; default `AFFILIATE_DEFAULTS.travelpayoutsMarker` (`806003`).
+- All are public ids (every outbound link carries them), so defaults are safe; an environment variable overrides them.
+- Booking.com and Agoda keep their exact-search deep links without affiliate ids until ids are configured.
 
 ## 19. Ticket Shapes — `src/index.css`, `src/useTicketMask.ts`
 

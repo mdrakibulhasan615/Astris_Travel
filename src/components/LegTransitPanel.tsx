@@ -212,6 +212,25 @@ function BookLink({
 /** Ground return tickets are sold per direction, so they get one button each way. */
 function BookLinks({ option, accent }: { option: TransitOption; accent?: CSSProperties }) {
   if (!option.bookingUrl) return null;
+  // Another place to look for this ticket (Trip.com for trains); it cannot take this exact route
+  const extras = option.extraLinks?.length ? (
+    <div className={`flex flex-wrap gap-x-2 text-[10px] ${accent ? 'justify-center pt-1' : 'items-center'}`}>
+      {option.extraLinks.map((l) => (
+        <a
+          key={l.name}
+          href={l.url}
+          target="_blank"
+          rel="sponsored noopener noreferrer"
+          title={`Opens ${l.name}'s train search; enter your stations there`}
+          className="font-semibold underline underline-offset-2 opacity-80 hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF812E]"
+          style={accent ? { color: 'inherit' } : { color: '#4B5563' }}
+        >
+          or on {l.name}
+        </a>
+      ))}
+    </div>
+  ) : null;
+
   if (option.ticketType === 'return' && option.returnBookingUrl) {
     const merchant = option.bookingProvider ? PROVIDER_NAMES[option.bookingProvider] : 'partner site';
     return (
@@ -224,10 +243,16 @@ function BookLinks({ option, accent }: { option: TransitOption; accent?: CSSProp
           secondary
           accent={accent}
         />
+        {extras}
       </div>
     );
   }
-  return <BookLink option={option} accent={accent} />;
+  return (
+    <div className={accent ? '' : 'flex flex-wrap items-center gap-2'}>
+      <BookLink option={option} accent={accent} />
+      {extras}
+    </div>
+  );
 }
 
 const legLabel = (l: TripLeg) => `${l.fromCode} → ${l.toCode}`;

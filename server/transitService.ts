@@ -47,8 +47,10 @@ registerAirportResolver((code) => {
 // Partner ids for the direct merchant links (see shared/affiliate.ts). Every id is optional:
 // without one, that merchant's links still land on the exact search, just un-attributed.
 configureAffiliate({
-  tripcomAllianceId: getEnv('TRIPCOM_ALLIANCE_ID'),
-  tripcomSid: getEnv('TRIPCOM_SID'),
+  tripcomAllianceId:
+    getEnv('TRIPCOM_ALLIANCE_ID') ?? getEnv('VITE_TRIP_ALLIANCE_ID') ?? AFFILIATE_DEFAULTS.tripcomAllianceId,
+  tripcomSid: getEnv('TRIPCOM_SID') ?? getEnv('VITE_TRIP_SID') ?? AFFILIATE_DEFAULTS.tripcomSid,
+  tripcomSub3: getEnv('TRIPCOM_SUB3') ?? AFFILIATE_DEFAULTS.tripcomSub3,
   bookingAid: getEnv('BOOKING_AID'),
   agodaCid: getEnv('AGODA_CID'),
   twelveGoAffiliateId: getEnv('TWELVEGO_AFFILIATE_ID') ?? AFFILIATE_DEFAULTS.twelveGoAffiliateId,

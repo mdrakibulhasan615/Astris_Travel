@@ -226,6 +226,8 @@ export interface TransitOption {
   returnBookingUrl?: string;
   /** Flights: the merchants that sell this ticket, with their prices and links (see AffiliateOffer). */
   offers?: AffiliateOffer[];
+  /** Other merchants worth offering for this ticket (Trip.com for trains). */
+  extraLinks?: { name: string; url: string }[];
   baggage?: BaggageInfo;
   /** `Cheapest`, `Cheapest Direct` and `Direct` badges, set when the list is ranked. */
   tags?: OptionTag[];
