@@ -58,6 +58,7 @@ import type {
 import { AddStopModal } from './components/AddStopModal.tsx';
 import { AnimatePresence } from 'motion/react';
 import { HeroScene } from './components/HeroScene.tsx';
+import { SHOW_HOME_HERO } from '../shared/config.ts';
 import { RouteBar, type SegmentChoice } from './components/RouteBar.tsx';
 import { TransportFilter } from './components/TransportFilter.tsx';
 import { LegTransitPanel } from './components/LegTransitPanel.tsx';
@@ -100,7 +101,7 @@ export default function App() {
   const [destinations, setDestinations] = useState<DestinationHub[]>(DESTINATION_HUBS);
   const [isLoadingInitial, setIsLoadingInitial] = useState(true);
   // The landing hero covers the planner until the visitor adds a stop, searches or scrolls in
-  const [showHero, setShowHero] = useState(true);
+  const [showHero, setShowHero] = useState(SHOW_HOME_HERO);
 
   // Sync & workspace UI states
   const [activePanel, setActivePanel] = useState<WorkspacePanel>('timeline');
