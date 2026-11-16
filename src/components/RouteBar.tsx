@@ -31,6 +31,8 @@ interface RouteBarProps {
   onHoverStop: (stopId: string | null) => void;
   onFocusStop: (stop: TripStop) => void;
   onSearch: () => void;
+  /** `map` floats over the map (default); `hero` sits in normal flow on the landing page. */
+  variant?: 'map' | 'hero';
 }
 
 // ── A menu that floats above the bar's scroll area (a plain absolute menu would be clipped) ──────
@@ -377,6 +379,7 @@ export function RouteBar({
   onHoverStop,
   onFocusStop,
   onSearch,
+  variant = 'map',
 }: RouteBarProps) {
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [overIndex, setOverIndex] = useState<number | null>(null);
@@ -384,11 +387,17 @@ export function RouteBar({
   const legBetween = (a: TripStop, b: TripStop) => legs.find((l) => l.fromStopId === a.id && l.toStopId === b.id);
 
   return (
-    <div className="pointer-events-none absolute left-3 right-3 top-3 z-30 sm:left-4 sm:right-4">
+    <div
+      className={
+        variant === 'hero'
+          ? 'w-full'
+          : 'pointer-events-none absolute left-3 right-3 top-3 z-30 sm:left-4 sm:right-4'
+      }
+    >
       <div
         role="group"
         aria-label="Trip route"
-        className="pointer-events-auto flex items-start gap-2 rounded-2xl border border-white/50 bg-white/80 p-1.5 pl-2 shadow-lg backdrop-blur-md"
+        className={`pointer-events-auto flex items-start gap-2 rounded-2xl border border-white/50 ${variant === 'hero' ? 'bg-white/90 shadow-2xl' : 'bg-white/80 shadow-lg'} p-1.5 pl-2 backdrop-blur-md`}
       >
         <ol
           aria-label="Stops in order"
