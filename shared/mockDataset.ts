@@ -98,6 +98,7 @@ export const DESTINATION_HUBS: DestinationHub[] = [
   },
 ];
 
+/** A new trip starts at the origin only; the traveller adds every destination after it. */
 export const INITIAL_STOPS: TripStop[] = [
   {
     id: 'stop-kul',
@@ -113,45 +114,6 @@ export const INITIAL_STOPS: TripStop[] = [
     arrivalDate: '2026-11-21',
     departureDate: '2026-11-21',
     notes: 'Depart KL Sentral via KLIA Ekspres (28m to terminal)',
-  },
-  {
-    id: 'stop-ist',
-    order: 2,
-    city: 'Istanbul',
-    country: 'Turkey',
-    iataCode: 'IST',
-    lat: 41.0082,
-    lng: 28.9784,
-    stayNights: 4,
-    arrivalDate: '2026-11-22',
-    departureDate: '2026-11-26',
-    notes: 'Sultanahmet & Karakoy stay; M11 Metro to IST Airport',
-  },
-  {
-    id: 'stop-lon',
-    order: 3,
-    city: 'London',
-    country: 'United Kingdom',
-    iataCode: 'LON',
-    lat: 51.5072,
-    lng: -0.1276,
-    stayNights: 4,
-    arrivalDate: '2026-11-26',
-    departureDate: '2026-11-30',
-    notes: 'Arrive Heathrow / depart St Pancras Intl for Eurostar',
-  },
-  {
-    id: 'stop-par',
-    order: 4,
-    city: 'Paris',
-    country: 'France',
-    iataCode: 'PAR',
-    lat: 48.8566,
-    lng: 2.3522,
-    stayNights: 4,
-    arrivalDate: '2026-11-30',
-    departureDate: '2026-12-04',
-    notes: 'Final destination — Le Marais & Gare du Nord arrival',
   },
 ];
 
@@ -1067,7 +1029,7 @@ export function createDefaultTrip(): Trip {
   const hourlyTimeValue = 15; // Balanced Explorer default ($15/hr)
   return {
     id: 'trip-eurasia-2026',
-    title: 'Eurasia Autumn Grand Tour',
+    title: 'Your trip',
     travelers: 1,
     currency: 'USD',
     vttsTier: 'explorer',

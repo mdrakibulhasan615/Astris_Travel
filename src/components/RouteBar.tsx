@@ -6,10 +6,8 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
-  Loader2,
   MapPin,
   Plus,
-  Search,
   Sparkles,
   X,
 } from 'lucide-react';
@@ -23,14 +21,12 @@ interface RouteBarProps {
   /** Popular destinations offered before anything is typed (and as the offline fallback). */
   destinations: DestinationHub[];
   hoveredStopId: string | null;
-  isSearching: boolean;
   onMoveStop: (fromIndex: number, toIndex: number) => void;
   onRemoveStop: (stopId: string) => void;
   onAddDestination: (hub: DestinationHub) => void;
   onChangeSegment: (legId: string, choice: SegmentChoice) => void;
   onHoverStop: (stopId: string | null) => void;
   onFocusStop: (stop: TripStop) => void;
-  onSearch: () => void;
   /** `map` floats over the map (default); `hero` sits in normal flow on the landing page. */
   variant?: 'map' | 'hero';
 }
@@ -363,7 +359,7 @@ function AddStopInput({
 /**
  * The trip at a glance, floating over the map: one pill per stop in order, a connector between
  * them showing one-way (→) or return (⇄) that opens a menu to change it, drag handles and arrows to
- * reorder, an inline "Add a stop…" field, and the Search button. It edits the same trip state as
+ * reorder, an inline "Add a stop…" field, (adding or changing a stop searches again automatically). It edits the same trip state as
  * the itinerary list, so the two always agree.
  */
 export function RouteBar({
@@ -371,14 +367,12 @@ export function RouteBar({
   legs,
   destinations,
   hoveredStopId,
-  isSearching,
   onMoveStop,
   onRemoveStop,
   onAddDestination,
   onChangeSegment,
   onHoverStop,
   onFocusStop,
-  onSearch,
   variant = 'map',
 }: RouteBarProps) {
   const [dragIndex, setDragIndex] = useState<number | null>(null);
@@ -477,7 +471,7 @@ export function RouteBar({
                     >
                       <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
                     </button>
-                    {stops.length > 2 && (
+                    {stops.length > 1 && (
                       <button
                         type="button"
                         onClick={() => onRemoveStop(stop.id)}
@@ -506,19 +500,6 @@ export function RouteBar({
           </li>
         </ol>
 
-        <button
-          type="button"
-          onClick={onSearch}
-          disabled={isSearching || stops.length < 2}
-          className="inline-flex h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-xl bg-[#FF812E] px-4 text-xs font-bold text-white shadow-sm hover:bg-[#E56B1A] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF812E] focus-visible:ring-offset-2 disabled:cursor-default disabled:opacity-70"
-        >
-          {isSearching ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-          ) : (
-            <Search className="h-3.5 w-3.5" aria-hidden="true" />
-          )}
-          Search
-        </button>
       </div>
     </div>
   );
