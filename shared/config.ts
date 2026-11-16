@@ -15,7 +15,13 @@
  * Vercel note: deployments are NOT live by default. Set `USE_REAL_DATA=true` for the environment
  * (Production, and Preview if you want it) that should spend credits.
  */
-export const USE_REAL_TICKET_DATA = false;
+export const USE_REAL_TICKET_DATA = true;
+
+/**
+ * Whether the animated landing hero covers the planner on load. Off for now: the app opens straight
+ * on the map and itinerary. Flip to `true` to bring the hero back.
+ */
+export const SHOW_HOME_HERO = false;
 
 /**
  * Public partner ids used when the matching environment variable is not set. They are not secrets
