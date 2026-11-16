@@ -56,6 +56,8 @@ import type {
   VttsTier,
 } from '../shared/types.ts';
 import { AddStopModal } from './components/AddStopModal.tsx';
+import { AnimatePresence } from 'motion/react';
+import { HeroScene } from './components/HeroScene.tsx';
 import { RouteBar, type SegmentChoice } from './components/RouteBar.tsx';
 import { TransportFilter } from './components/TransportFilter.tsx';
 import { LegTransitPanel } from './components/LegTransitPanel.tsx';
@@ -97,6 +99,8 @@ export default function App() {
   const [trip, setTrip] = useState<Trip>(() => createDefaultTrip());
   const [destinations, setDestinations] = useState<DestinationHub[]>(DESTINATION_HUBS);
   const [isLoadingInitial, setIsLoadingInitial] = useState(true);
+  // The landing hero covers the planner until the visitor adds a stop, searches or scrolls in
+  const [showHero, setShowHero] = useState(true);
 
   // Sync & workspace UI states
   const [activePanel, setActivePanel] = useState<WorkspacePanel>('timeline');
@@ -995,6 +999,31 @@ export default function App() {
         onClose={() => setIsDatePickerOpen(false)}
         onUpdateStopDates={handleUpdateStopDates}
       />
+
+      <AnimatePresence>
+        {showHero && (
+          <HeroScene
+            key="hero"
+            stops={trip.stops}
+            legs={trip.legs}
+            destinations={destinations}
+            isSearching={isSearching}
+            onMoveStop={reorderStops}
+            onRemoveStop={handleRemoveStop}
+            onAddDestination={(hub) => {
+              handleAddDestination(hub);
+              setShowHero(false);
+            }}
+            onChangeSegment={handleChangeSegment}
+            onFocusStop={() => {}}
+            onSearch={() => {
+              setShowHero(false);
+              void handleSearchRoute();
+            }}
+            onEnter={() => setShowHero(false)}
+          />
+        )}
+      </AnimatePresence>
 
       <Analytics />
     </div>
