@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ComponentProps, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ComponentProps } from 'react';
 import { motion, useReducedMotion, useScroll, useTransform } from 'motion/react';
 import { ArrowRight, ChevronDown } from 'lucide-react';
 import { RouteBar } from './RouteBar.tsx';
@@ -11,54 +11,19 @@ interface HeroSceneProps extends Omit<RouteBarProps, 'variant' | 'hoveredStopId'
 }
 
 /**
- * The scene is built from two photographs in /public/hero (same width, so they line up):
- *   bg.webp     1094 x 746  sky, mountain, forest (the hiker and rock removed)
- *   hiker.webp  1094 x 403  the hiker and his rock, transparent around them; sits on the bottom edge
- * Everything else (cloud banks, wisps, type) is drawn in the same 1094 x 746 coordinate space, so it
- * stays registered with the photos at any window size.
+ * The landing hero: a 5 second camera move (/public/hero/hero.mp4) that starts on the hiker's back
+ * and pulls up and away to reveal the mountain. The clip is played once and holds its last frame;
+ * then the slogan pops in, soft fog keeps drifting over the held frame, and the page scrolls itself
+ * down to the route bar.
  */
-const W = 1094;
-const H = 746;
-const HIKER_H = 403;
-/** Where the hiker stands in the scene, in photo pixels. */
-const HIKER_X = 555;
-const GAP_HALF = 52; // half the gap the type leaves for him
-
-/** A box as wide as the window and cropped like `object-fit: cover`, anchored to the bottom. */
-const stageStyle: CSSProperties = {
-  position: 'absolute',
-  left: '50%',
-  bottom: '-10vh', // a little spare below the photo so the scroll parallax never shows an edge
-  width: `max(100vw, calc(110vh * ${W / H}))`,
-  aspectRatio: `${W} / ${H}`,
-  transform: 'translateX(-50%)',
-};
-
-const DOLLY_EASE = [0.22, 1, 0.36, 1] as const;
-
-/**
- * One depth layer of the dolly zoom-out: each layer starts enlarged by a different amount and settles
- * to 1, so the background swells away faster than the foreground, like a lens pulling back.
- */
-function Dolly({ from, z, reduce, children }: { from: number; z: string; reduce: boolean | null; children: ReactNode }) {
-  return (
-    <motion.div
-      className={`absolute inset-0 ${z}`}
-      style={{ transformOrigin: '50% 90%' }}
-      initial={reduce ? false : { scale: from }}
-      animate={{ scale: 1 }}
-      transition={reduce ? { duration: 0 } : { duration: 4.2, ease: DOLLY_EASE }}
-    >
-      {children}
-    </motion.div>
-  );
-}
+const EASE = [0.22, 1, 0.36, 1] as const;
+const FONT = "'Plus Jakarta Sans', 'DM Sans', system-ui, sans-serif";
 
 interface FogProps {
   id: string;
-  /** Top and height in photo pixels. */
-  y: number;
-  h: number;
+  /** Top and height as a percentage of the hero. */
+  top: number;
+  height: number;
   seed: number;
   /** Noise scale: smaller x = longer streaks. */
   freq: string;
@@ -66,8 +31,6 @@ interface FogProps {
   gain: number;
   bias: number;
   opacity: number;
-  /** Opacity to settle to after the intro, if the bank should thin out. */
-  thinTo?: number;
   /** Sideways drift in percent of the layer's width, and a full back-and-forth in seconds. */
   drift: number;
   duration: number;
@@ -78,16 +41,9 @@ interface FogProps {
  * A drifting bank of cloud: procedural fractal noise turned into soft white, faded at the top and
  * bottom. The noise is rendered once and then only moved, so the wind costs almost nothing.
  */
-function Fog({ id, y, h, seed, freq, gain, bias, opacity, thinTo, drift, duration, reduce }: FogProps) {
-  const w = W * 1.4;
+function Fog({ id, top, height, seed, freq, gain, bias, opacity, drift, duration, reduce }: FogProps) {
   return (
-    <motion.div
-      className="absolute"
-      style={{ left: '-20%', width: '140%', top: `${(y / H) * 100}%`, height: `${(h / H) * 100}%` }}
-      initial={reduce ? false : { opacity }}
-      animate={{ opacity: thinTo ?? opacity }}
-      transition={reduce ? { duration: 0 } : { delay: 0.8, duration: 4.5, ease: DOLLY_EASE }}
-    >
+    <div className="absolute" style={{ left: '-20%', width: '140%', top: `${top}%`, height: `${height}%`, opacity }}>
       <motion.div
         className="h-full w-full"
         style={{
@@ -98,7 +54,7 @@ function Fog({ id, y, h, seed, freq, gain, bias, opacity, thinTo, drift, duratio
         animate={reduce ? undefined : { x: [`${-drift}%`, `${drift}%`] }}
         transition={{ duration, ease: 'easeInOut', repeat: Infinity, repeatType: 'mirror' }}
       >
-        <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="h-full w-full" aria-hidden="true">
+        <svg viewBox="0 0 1531 300" preserveAspectRatio="none" className="h-full w-full" aria-hidden="true">
           <filter id={id} x="0" y="0" width="100%" height="100%" colorInterpolationFilters="sRGB">
             <feTurbulence type="fractalNoise" baseFrequency={freq} numOctaves="4" seed={seed} />
             <feColorMatrix
@@ -106,36 +62,8 @@ function Fog({ id, y, h, seed, freq, gain, bias, opacity, thinTo, drift, duratio
               values={`0 0 0 0 0.96  0 0 0 0 0.97  0 0 0 0 0.98  ${gain} 0 0 0 ${bias}`}
             />
           </filter>
-          <rect width={w} height={h} filter={`url(#${id})`} />
+          <rect width="1531" height="300" filter={`url(#${id})`} />
         </svg>
-      </motion.div>
-    </motion.div>
-  );
-}
-
-// The hiker's torso (jacket, pack, beanie) is the part that breathes. These are fractions of the
-// foreground image; the rest of the picture is cut around that box so nothing doubles up.
-const TORSO = { left: 46, right: 55.5, bottom: 26.8 };
-
-const hikerImg: CSSProperties = { position: 'absolute', left: 0, bottom: 0, width: '100%', height: 'auto' };
-
-function HikerPhoto({ reduce }: { reduce: boolean | null }) {
-  const src = '/hero/hiker.webp';
-  const notch = `polygon(0 0, ${TORSO.left}% 0, ${TORSO.left}% ${TORSO.bottom}%, ${TORSO.right}% ${TORSO.bottom}%, ${TORSO.right}% 0, 100% 0, 100% 100%, 0 100%)`;
-  const torso = `inset(0 ${100 - TORSO.right}% ${100 - TORSO.bottom - 0.6}% ${TORSO.left}%)`;
-  const box: CSSProperties = { position: 'absolute', left: 0, bottom: 0, width: '100%', aspectRatio: `${W} / ${HIKER_H}` };
-  return (
-    <div style={box}>
-      {/* Rock, bush and legs */}
-      <img src={src} alt="" draggable={false} style={{ ...hikerImg, clipPath: notch }} fetchPriority="high" />
-      {/* Upper body: breathes from the hips */}
-      <motion.div
-        className="absolute inset-0"
-        style={{ transformOrigin: `50% ${TORSO.bottom}%` }}
-        animate={reduce ? undefined : { scaleY: [1, 1.03, 1], scaleX: [1, 1.006, 1] }}
-        transition={{ duration: 3.6, ease: 'easeInOut', repeat: Infinity }}
-      >
-        <img src={src} alt="" draggable={false} style={{ ...hikerImg, clipPath: torso }} />
       </motion.div>
     </div>
   );
@@ -144,29 +72,57 @@ function HikerPhoto({ reduce }: { reduce: boolean | null }) {
 export function HeroScene({ onEnter, ...routeBar }: HeroSceneProps) {
   const reduce = useReducedMotion();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  /** The clip has finished (or cannot play): show the slogan and the drifting fog. */
+  const [played, setPlayed] = useState(false);
 
-  // Scrolling down parallaxes the layers (far ones barely move)
+  // Scrolling down pushes in slightly and moves the type
   const { scrollYProgress } = useScroll({ container: scrollRef });
-  const yBg = useTransform(scrollYProgress, [0, 1], [0, -15]);
-  const yFog = useTransform(scrollYProgress, [0, 1], [0, -30]);
-  const yText = useTransform(scrollYProgress, [0, 1], [0, -45]);
-  const yFront = useTransform(scrollYProgress, [0, 1], [0, -65]);
-  const zoom = useTransform(scrollYProgress, [0, 1], [1, 1.03]);
+  const zoom = useTransform(scrollYProgress, [0, 1], [1, 1.05]);
+  const yText = useTransform(scrollYProgress, [0, 1], [0, -40]);
   // The route bar waits below the fold and rises into view as the page scrolls
   const barY = useTransform(scrollYProgress, [0, 1], ['34vh', '0vh']);
   const barOpacity = useTransform(scrollYProgress, (v) => Math.min(1, v / 0.55));
   const barPointer = useTransform(scrollYProgress, (v) => (v > 0.4 ? 'auto' : 'none'));
   const cueOpacity = useTransform(scrollYProgress, [0, 0.25], [1, 0]);
 
-  // Once the intro has played the page scrolls itself down to the route bar. Any wheel, touch or key
-  // press from the visitor takes over immediately.
+  // Play the clip once. If the browser blocks autoplay or the user prefers reduced motion, jump to
+  // the final frame so the scene still reads.
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    const finish = () => setPlayed(true);
+    const toLastFrame = () => {
+      const end = Number.isFinite(v.duration) ? v.duration : 5;
+      v.currentTime = Math.max(0, end - 0.05);
+      finish();
+    };
+    v.addEventListener('ended', finish);
+    // A stalled or failed clip must not leave the page without a slogan
+    const fallback = window.setTimeout(finish, 9000);
+    if (reduce) {
+      if (v.readyState >= 1) toLastFrame();
+      else v.addEventListener('loadedmetadata', toLastFrame, { once: true });
+    } else {
+      v.play().catch(toLastFrame);
+    }
+    return () => {
+      window.clearTimeout(fallback);
+      v.removeEventListener('ended', finish);
+    };
+  }, [reduce]);
+
+  // After the slogan has landed the page scrolls itself down to the route bar. Any wheel, touch or
+  // key press from the visitor takes over immediately.
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     let raf = 0;
     let stopped = false;
+    let timer = 0;
     const stop = () => {
       stopped = true;
+      window.clearTimeout(timer);
       cancelAnimationFrame(raf);
     };
     const start = () => {
@@ -184,20 +140,16 @@ export function HeroScene({ onEnter, ...routeBar }: HeroSceneProps) {
       };
       raf = requestAnimationFrame(step);
     };
-    const timer = window.setTimeout(start, reduce ? 300 : 5600);
     const events = ['wheel', 'touchstart', 'keydown', 'pointerdown'] as const;
     events.forEach((n) => el.addEventListener(n, stop, { passive: true }));
+    if (played) timer = window.setTimeout(start, reduce ? 300 : 3200);
     return () => {
-      window.clearTimeout(timer);
       stop();
       events.forEach((n) => el.removeEventListener(n, stop));
     };
-  }, [reduce]);
+  }, [played, reduce]);
 
-  const show = (delay: number, duration = 1.1) =>
-    reduce ? { duration: 0 } : { delay, duration, ease: DOLLY_EASE };
-
-  const font = "'Plus Jakarta Sans', 'DM Sans', system-ui, sans-serif";
+  const pop = (delay: number, duration = 1) => (reduce ? { duration: 0 } : { delay, duration, ease: EASE });
 
   return (
     <motion.div
@@ -209,107 +161,82 @@ export function HeroScene({ onEnter, ...routeBar }: HeroSceneProps) {
       exit={{ opacity: 0, transition: { duration: 0.5 } }}
     >
       <div style={{ height: '150vh' }}>
-        <div className="sticky top-0 h-screen w-full overflow-hidden bg-[#1B1D20]">
-          {/* Slow push-in while scrolling down to the bar */}
-          <motion.div className="absolute inset-0" style={{ scale: zoom, transformOrigin: '50% 90%' }}>
-            <div style={stageStyle}>
-              {/* Photo: sky, mountain and forest. It rises out of the cloud bank. */}
-              <Dolly from={1.5} z="z-[5]" reduce={reduce}>
-                <motion.div className="absolute inset-0" style={{ y: yBg }}>
-                  <motion.img
-                    src="/hero/bg.webp"
-                    alt=""
-                    draggable={false}
-                    className="absolute inset-0 h-full w-full"
-                    fetchPriority="high"
-                    initial={reduce ? false : { y: '12%' }}
-                    animate={{ y: 0 }}
-                    transition={reduce ? { duration: 0 } : { delay: 0.4, duration: 3.8, ease: [0.3, 0.7, 0.2, 1] }}
-                  />
-                </motion.div>
-              </Dolly>
-
-              {/* Cloud bank that hides the peak at first, then thins and lets it rise out */}
-              <Dolly from={1.4} z="z-[7]" reduce={reduce}>
-                <motion.div className="absolute inset-0" style={{ y: yFog }}>
-                  <Fog id="fogBank" y={90} h={430} seed={4} freq="0.0028 0.006" gain={3.4} bias={-1.1} opacity={1} thinTo={0.28} drift={5} duration={26} reduce={reduce} />
-                  <Fog id="fogWisps" y={330} h={240} seed={11} freq="0.004 0.014" gain={2.6} bias={-0.95} opacity={0.55} drift={9} duration={17} reduce={reduce} />
-                </motion.div>
-              </Dolly>
-
-              {/* Display type: behind the hiker, so he becomes the "I" */}
-              <Dolly from={1.12} z="z-10" reduce={reduce}>
-                <motion.div className="absolute inset-0" style={{ y: yText }}>
-                  <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="absolute inset-0 h-full w-full" aria-hidden="true">
-                    <motion.g
-                      initial={reduce ? false : { opacity: 0, y: 12 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={show(2.7, 0.9)}
-                      fontFamily={font}
-                      fontWeight={800}
-                      textAnchor="middle"
-                      fill="#111827"
-                    >
-                      <text x={HIKER_X} y="296" fontSize="27" letterSpacing="6">GO BEYOND</text>
-                      <text x={HIKER_X} y="328" fontSize="19" letterSpacing="6">THE</text>
-                    </motion.g>
-                    <g fontFamily={font} fontWeight={800} fill="#E8742A" fontSize="170" letterSpacing="9">
-                      <motion.text
-                        x={HIKER_X - GAP_HALF}
-                        y="478"
-                        textAnchor="end"
-                        initial={reduce ? false : { opacity: 0, x: 90 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        transition={show(3.3, 1.4)}
-                      >
-                        HOR
-                      </motion.text>
-                      <motion.text
-                        x={HIKER_X + GAP_HALF}
-                        y="478"
-                        textAnchor="start"
-                        initial={reduce ? false : { opacity: 0, x: -90 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        transition={show(3.3, 1.4)}
-                      >
-                        ZON
-                      </motion.text>
-                    </g>
-                  </svg>
-                </motion.div>
-              </Dolly>
-
-              {/* Hiker and rock photo, bottom-aligned (z-20) */}
-              <Dolly from={1.12} z="z-20" reduce={reduce}>
-                <motion.div className="absolute inset-0" style={{ y: yFront }}>
-                  <HikerPhoto reduce={reduce} />
-                </motion.div>
-              </Dolly>
-
-              {/* Low fog rolling over the base of the rock */}
-              <Dolly from={1.2} z="z-[22]" reduce={reduce}>
-                <motion.div className="pointer-events-none absolute inset-0" style={{ y: yFront }}>
-                  <Fog id="fogLow" y={520} h={226} seed={23} freq="0.0035 0.012" gain={2.4} bias={-0.9} opacity={0.5} drift={7} duration={14} reduce={reduce} />
-                </motion.div>
-              </Dolly>
-            </div>
+        <div className="sticky top-0 h-screen w-full overflow-hidden bg-[#2B2D2F]">
+          {/* The camera move, held on its last frame */}
+          <motion.div className="absolute inset-0" style={{ scale: zoom, transformOrigin: '50% 80%' }}>
+            <video
+              ref={videoRef}
+              src="/hero/hero.mp4"
+              muted
+              playsInline
+              preload="auto"
+              aria-hidden="true"
+              className="absolute inset-0 h-full w-full object-cover"
+              style={{ objectPosition: '70% 55%' }}
+            />
+            {/* Wind over the held frame: soft banks drifting across the valley */}
+            {played && (
+              <motion.div
+                className="pointer-events-none absolute inset-0"
+                initial={reduce ? false : { opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 2 }}
+              >
+                <Fog id="heroFogA" top={38} height={30} seed={5} freq="0.003 0.012" gain={2.6} bias={-0.95} opacity={0.5} drift={8} duration={20} reduce={reduce} />
+                <Fog id="heroFogB" top={58} height={30} seed={17} freq="0.0035 0.014" gain={2.4} bias={-0.9} opacity={0.4} drift={6} duration={15} reduce={reduce} />
+              </motion.div>
+            )}
           </motion.div>
 
-          {/* Soft vignette so the edges read */}
+          {/* Soft vignette so the edges and the type read */}
           <div
-            className="pointer-events-none absolute inset-0 z-[25]"
-            style={{ background: 'radial-gradient(ellipse at 50% 45%, transparent 60%, rgba(15,23,42,0.3) 100%)' }}
+            className="pointer-events-none absolute inset-0 z-[5]"
+            style={{ background: 'radial-gradient(ellipse at 50% 45%, transparent 55%, rgba(15,23,42,0.3) 100%)' }}
           />
+
+          {/* Slogan: pops in once the clip has finished */}
+          {played && (
+            <motion.div
+              className="pointer-events-none absolute left-[6vw] top-[17vh] z-10 sm:top-[20vh]"
+              style={{ y: yText, fontFamily: FONT }}
+            >
+              <motion.p
+                className="font-extrabold uppercase text-[#111827]"
+                style={{ fontSize: 'clamp(0.9rem, 2.1vw, 1.9rem)', letterSpacing: '0.24em', lineHeight: 1.3 }}
+                initial={reduce ? false : { opacity: 0, y: 14 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={pop(0.1, 0.9)}
+              >
+                Go beyond
+                <br />
+                <span style={{ fontSize: '0.78em' }}>the</span>
+              </motion.p>
+              <motion.h1
+                className="font-extrabold uppercase text-[#E8742A]"
+                style={{
+                  fontSize: 'clamp(3.4rem, 14vw, 13rem)',
+                  letterSpacing: '0.02em',
+                  lineHeight: 0.95,
+                  textShadow: '0 2px 30px rgba(255,255,255,0.35)',
+                }}
+                initial={reduce ? false : { opacity: 0, scale: 0.86, filter: 'blur(10px)' }}
+                animate={{ opacity: 1, scale: 1, filter: 'blur(0px)' }}
+                transition={pop(0.5, 1.3)}
+              >
+                Horizon
+              </motion.h1>
+            </motion.div>
+          )}
 
           {/* Brand and skip */}
           <div className="absolute left-5 right-5 top-5 z-[40] flex items-center justify-between sm:left-8 sm:right-8 sm:top-6">
-            <span className="text-sm font-extrabold uppercase tracking-[0.28em] text-[#111827]" style={{ fontFamily: font }}>
+            <span className="text-sm font-extrabold uppercase tracking-[0.28em] text-white" style={{ fontFamily: FONT, textShadow: '0 1px 8px rgba(0,0,0,0.45)' }}>
               Astris Travel
             </span>
             <button
               type="button"
               onClick={onEnter}
-              className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-neutral-900/10 bg-white/70 px-3.5 py-1.5 text-xs font-semibold text-[#111827] backdrop-blur hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF812E]"
+              className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-neutral-900/10 bg-white/75 px-3.5 py-1.5 text-xs font-semibold text-[#111827] backdrop-blur hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF812E]"
             >
               Open planner
               <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
@@ -317,19 +244,18 @@ export function HeroScene({ onEnter, ...routeBar }: HeroSceneProps) {
           </div>
 
           {/* Scroll cue: shown until the page has scrolled to the bar */}
-          <motion.div
-            aria-hidden="true"
-            className="pointer-events-none absolute inset-x-0 bottom-[5vh] z-30 flex flex-col items-center gap-1 text-[11px] font-bold uppercase tracking-[0.3em] text-white/90"
-            style={{ opacity: cueOpacity }}
-            initial={reduce ? false : { opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 4.6, duration: 0.6 }}
-          >
-            Plan your route
-            <motion.span animate={reduce ? undefined : { y: [0, 6, 0] }} transition={{ duration: 1.4, repeat: Infinity }}>
-              <ChevronDown className="h-5 w-5" />
-            </motion.span>
-          </motion.div>
+          {played && (
+            <motion.div
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-x-0 bottom-[5vh] z-30 flex flex-col items-center gap-1 text-[11px] font-bold uppercase tracking-[0.3em] text-white/90"
+              style={{ opacity: cueOpacity }}
+            >
+              Plan your route
+              <motion.span animate={reduce ? undefined : { y: [0, 6, 0] }} transition={{ duration: 1.4, repeat: Infinity }}>
+                <ChevronDown className="h-5 w-5" />
+              </motion.span>
+            </motion.div>
+          )}
 
           {/* Interactive route bar (z-30), wired to the live trip: rises in as the page scrolls */}
           <motion.div
