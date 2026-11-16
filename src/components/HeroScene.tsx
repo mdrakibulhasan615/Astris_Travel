@@ -1,12 +1,6 @@
-import { useMemo, useRef, type ComponentProps } from 'react';
-import {
-  motion,
-  useMotionValueEvent,
-  useReducedMotion,
-  useScroll,
-  useTransform,
-} from 'motion/react';
-import { ArrowRight } from 'lucide-react';
+import { useEffect, useMemo, useRef, type ComponentProps, type ReactNode } from 'react';
+import { motion, useReducedMotion, useScroll, useTransform } from 'motion/react';
+import { ArrowRight, ChevronDown } from 'lucide-react';
 import { RouteBar } from './RouteBar.tsx';
 
 type RouteBarProps = ComponentProps<typeof RouteBar>;
@@ -122,6 +116,26 @@ const layerSvgProps = {
   'aria-hidden': true,
 } as const;
 
+const DOLLY_EASE = [0.22, 1, 0.36, 1] as const;
+
+/**
+ * One depth layer of the dolly zoom-out: each layer starts enlarged by a different amount and settles
+ * to 1, so the background swells away faster than the foreground, like a lens pulling back.
+ */
+function Dolly({ from, z, reduce, children }: { from: number; z: string; reduce: boolean | null; children: ReactNode }) {
+  return (
+    <motion.div
+      className={`absolute inset-0 ${z}`}
+      style={{ transformOrigin: '50% 80%' }}
+      initial={reduce ? false : { scale: from }}
+      animate={{ scale: 1 }}
+      transition={reduce ? { duration: 0 } : { duration: 4.2, ease: DOLLY_EASE }}
+    >
+      {children}
+    </motion.div>
+  );
+}
+
 /** Backdrop layers fill the window (cropping the sides) instead of letterboxing. */
 const backdropSvgProps = { ...layerSvgProps, preserveAspectRatio: 'xMidYMax slice' } as const;
 
@@ -185,7 +199,6 @@ function Hiker({ reduce }: { reduce: boolean | null }) {
 export function HeroScene({ onEnter, ...routeBar }: HeroSceneProps) {
   const reduce = useReducedMotion();
   const scrollRef = useRef<HTMLDivElement>(null);
-  const entered = useRef(false);
 
   // Scrolling down parallaxes the layers (far ones barely move) and finally opens the planner
   const { scrollYProgress } = useScroll({ container: scrollRef });
@@ -194,14 +207,48 @@ export function HeroScene({ onEnter, ...routeBar }: HeroSceneProps) {
   const yText = useTransform(scrollYProgress, [0, 1], [0, -85]);
   const yMistFront = useTransform(scrollYProgress, [0, 1], [0, -110]);
   const yFront = useTransform(scrollYProgress, [0, 1], [0, -150]);
-  const zoom = useTransform(scrollYProgress, [0, 1], [1, 1.1]);
-  const fade = useTransform(scrollYProgress, [0.75, 1], [1, 0]);
-  useMotionValueEvent(scrollYProgress, 'change', (v) => {
-    if (v > 0.985 && !entered.current) {
-      entered.current = true;
-      onEnter();
-    }
-  });
+  const zoom = useTransform(scrollYProgress, [0, 1], [1, 1.03]);
+  // The route bar waits below the fold and rises into view as the page scrolls
+  const barY = useTransform(scrollYProgress, [0, 1], ['34vh', '0vh']);
+  const barOpacity = useTransform(scrollYProgress, (v) => Math.min(1, v / 0.55));
+  const barPointer = useTransform(scrollYProgress, (v) => (v > 0.4 ? 'auto' : 'none'));
+  const cueOpacity = useTransform(scrollYProgress, [0, 0.25], [1, 0]);
+
+  // Once the intro has played the page scrolls itself down to the route bar. Any wheel, touch or key
+  // press from the visitor takes over immediately.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    let raf = 0;
+    let stopped = false;
+    const stop = () => {
+      stopped = true;
+      cancelAnimationFrame(raf);
+    };
+    const start = () => {
+      if (stopped) return;
+      const from = el.scrollTop;
+      const to = el.scrollHeight - el.clientHeight;
+      const duration = reduce ? 0 : 2200;
+      const t0 = performance.now();
+      const step = (now: number) => {
+        if (stopped) return;
+        const k = duration ? Math.min(1, (now - t0) / duration) : 1;
+        const e = k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;
+        el.scrollTop = from + (to - from) * e;
+        if (k < 1) raf = requestAnimationFrame(step);
+      };
+      raf = requestAnimationFrame(step);
+    };
+    const timer = window.setTimeout(start, reduce ? 300 : 5600);
+    const events = ['wheel', 'touchstart', 'keydown', 'pointerdown'] as const;
+    events.forEach((n) => el.addEventListener(n, stop, { passive: true }));
+    return () => {
+      window.clearTimeout(timer);
+      stop();
+      events.forEach((n) => el.removeEventListener(n, stop));
+    };
+  }, [reduce]);
 
   const ease = [0.22, 1, 0.36, 1] as const;
   const show = (delay: number, duration = 1.1) =>
@@ -225,30 +272,49 @@ export function HeroScene({ onEnter, ...routeBar }: HeroSceneProps) {
       style={{ scrollbarWidth: 'none' }}
       exit={{ opacity: 0, transition: { duration: 0.5 } }}
     >
-      <div style={{ height: '165vh' }}>
-        <motion.div className="sticky top-0 h-screen w-full overflow-hidden" style={{ opacity: fade }}>
+      <div style={{ height: '150vh' }}>
+        <div className="sticky top-0 h-screen w-full overflow-hidden">
           {/* Sky: mist at the top, depth below */}
           <div
             className="absolute inset-0"
             style={{ background: 'linear-gradient(to bottom, #E2E8F0 0%, #CBD5E1 32%, #94A3B8 68%, #1E293B 100%)' }}
           />
 
-          {/* Everything that zooms out in the intro */}
-          <motion.div
-            className="absolute inset-0"
-            style={{ transformOrigin: '50% 80%' }}
-            initial={reduce ? false : { scale: 1.18 }}
-            animate={{ scale: 1 }}
-            transition={reduce ? { duration: 0 } : { duration: 3.4, ease }}
-          >
+          {/* Slow push-in while scrolling down to the bar */}
+          <div className="absolute inset-0">
             <motion.div className="absolute inset-0" style={{ scale: zoom, transformOrigin: '50% 80%' }}>
-              {/* Mountains (z-5): rise out of the mist */}
-              <motion.div className="absolute inset-0 z-[5]" style={{ y: yMountains }}>
+              {/* Sky clouds (z-2): big soft banks pushed along by the wind */}
+              <Dolly from={1.7} z="z-[2]" reduce={reduce}>
+                <svg {...backdropSvgProps}>
+                  <defs>
+                    <filter id="skyBlur" x="-30%" y="-80%" width="160%" height="260%">
+                      <feGaussianBlur stdDeviation="46" />
+                    </filter>
+                  </defs>
+                  <motion.g
+                    animate={reduce ? undefined : { x: [-140, 140] }}
+                    transition={{ duration: 40, ease: 'easeInOut', repeat: Infinity, repeatType: 'mirror' }}
+                  >
+                    <g filter="url(#skyBlur)">
+                      <ellipse cx="200" cy="120" rx="360" ry="90" fill="#FFFFFF" opacity="0.8" />
+                      <ellipse cx="720" cy="40" rx="420" ry="80" fill="#F8FAFC" opacity="0.7" />
+                      <ellipse cx="1300" cy="140" rx="400" ry="100" fill="#FFFFFF" opacity="0.75" />
+                      <ellipse cx="1800" cy="60" rx="380" ry="80" fill="#F1F5F9" opacity="0.7" />
+                      <ellipse cx="0" cy="300" rx="340" ry="80" fill="#94A3B8" opacity="0.5" />
+                      <ellipse cx="1550" cy="330" rx="380" ry="70" fill="#94A3B8" opacity="0.45" />
+                    </g>
+                  </motion.g>
+                </svg>
+              </Dolly>
+
+              {/* Mountains (z-5): rise out of the cloud bank */}
+              <Dolly from={1.55} z="z-[5]" reduce={reduce}>
+              <motion.div className="absolute inset-0" style={{ y: yMountains }}>
                 <motion.svg
                   {...backdropSvgProps}
-                  initial={reduce ? false : { y: 170, opacity: 0.5 }}
+                  initial={reduce ? false : { y: 440, opacity: 0.6 }}
                   animate={{ y: 0, opacity: 1 }}
-                  transition={show(0.3, 2.6)}
+                  transition={reduce ? { duration: 0 } : { delay: 0.5, duration: 3.6, ease: [0.3, 0.7, 0.2, 1] }}
                 >
                   <defs>
                     <linearGradient id="farGrad" gradientUnits="userSpaceOnUse" x1="0" y1="250" x2="0" y2="700">
@@ -277,24 +343,52 @@ export function HeroScene({ onEnter, ...routeBar }: HeroSceneProps) {
                   {/* Dark forested slopes */}
                   <path d="M-900 120 L-420 230 L-60 330 L120 450 L300 590 L420 900 L-900 900 Z" fill="#0F172A" opacity="0.94" />
                   <path d="M2400 380 L2000 470 L1760 600 L1620 720 L1560 900 L2400 900 Z" fill="#0F172A" opacity="0.94" />
-                  <path d={pines.left} fill="#0B1220" />
-                  <path d={pines.right} fill="#0B1220" />
+                  {/* Trees lean slightly with the wind */}
+                  <motion.path
+                    d={pines.left}
+                    fill="#0B1220"
+                    style={{ originX: 0.5, originY: 1 }}
+                    animate={reduce ? undefined : { rotate: [-0.5, 0.6] }}
+                    transition={{ duration: 6, ease: 'easeInOut', repeat: Infinity, repeatType: 'mirror' }}
+                  />
+                  <motion.path
+                    d={pines.right}
+                    fill="#0B1220"
+                    style={{ originX: 0.5, originY: 1 }}
+                    animate={reduce ? undefined : { rotate: [0.6, -0.5] }}
+                    transition={{ duration: 7.5, ease: 'easeInOut', repeat: Infinity, repeatType: 'mirror' }}
+                  />
                 </motion.svg>
               </motion.div>
+              </Dolly>
 
               {/* Back mist (z-8) */}
-              <motion.div className="absolute inset-0 z-[8]" style={{ y: yMistBack }}>
-                <motion.svg
-                  {...backdropSvgProps}
-                  initial={reduce ? false : { opacity: 1 }}
-                  animate={{ opacity: 0.9 }}
-                  transition={show(0.3, 3)}
-                >
+              <Dolly from={1.4} z="z-[8]" reduce={reduce}>
+              <motion.div className="absolute inset-0" style={{ y: yMistBack }}>
+                <motion.svg {...backdropSvgProps}>
                   <defs>
                     <filter id="mistBlur" x="-20%" y="-60%" width="140%" height="220%">
                       <feGaussianBlur stdDeviation="30" />
                     </filter>
                   </defs>
+                  {/* Thick cloud bank that hides the peaks at first, then thins and sinks */}
+                  <motion.g
+                    initial={reduce ? false : { opacity: 1, y: -60 }}
+                    animate={{ opacity: 0.55, y: 40 }}
+                    transition={reduce ? { duration: 0 } : { delay: 0.8, duration: 4.5, ease: DOLLY_EASE }}
+                  >
+                    <motion.g
+                      animate={reduce ? undefined : { x: [60, -60] }}
+                      transition={{ duration: 21, ease: 'easeInOut', repeat: Infinity, repeatType: 'mirror' }}
+                    >
+                      <g filter="url(#mistBlur)" fill="#F1F5F9">
+                        <ellipse cx="500" cy="430" rx="700" ry="130" opacity="0.95" />
+                        <ellipse cx="1250" cy="400" rx="720" ry="120" opacity="0.95" />
+                        <ellipse cx="-200" cy="460" rx="600" ry="120" opacity="0.9" />
+                        <ellipse cx="1900" cy="450" rx="600" ry="120" opacity="0.9" />
+                      </g>
+                    </motion.g>
+                  </motion.g>
                   <motion.g
                     animate={reduce ? undefined : { x: [-90, 90] }}
                     transition={{ duration: 25, ease: 'easeInOut', repeat: Infinity, repeatType: 'mirror' }}
@@ -309,14 +403,16 @@ export function HeroScene({ onEnter, ...routeBar }: HeroSceneProps) {
                   </motion.g>
                 </motion.svg>
               </motion.div>
+              </Dolly>
 
               {/* Display type (z-10): behind the hiker, so he becomes the "I" */}
-              <motion.div className="absolute inset-0 z-10" style={{ y: yText }}>
+              <Dolly from={1.12} z="z-10" reduce={reduce}>
+              <motion.div className="absolute inset-0" style={{ y: yText }}>
                 <svg {...layerSvgProps}>
                   <motion.g
                     initial={reduce ? false : { opacity: 0, y: 18 }}
                     animate={{ opacity: 1, y: 0 }}
-                    transition={show(1.6, 0.9)}
+                    transition={show(2.7, 0.9)}
                     fontFamily="'Plus Jakarta Sans', 'DM Sans', system-ui, sans-serif"
                     fontWeight={800}
                     textAnchor="middle"
@@ -333,7 +429,7 @@ export function HeroScene({ onEnter, ...routeBar }: HeroSceneProps) {
                       letterSpacing="14"
                       initial={reduce ? false : { opacity: 0, x: 150 }}
                       animate={{ opacity: 1, x: 0 }}
-                      transition={show(2.0, 1.3)}
+                      transition={show(3.3, 1.4)}
                     >
                       HOR
                     </motion.text>
@@ -344,17 +440,29 @@ export function HeroScene({ onEnter, ...routeBar }: HeroSceneProps) {
                       letterSpacing="14"
                       initial={reduce ? false : { opacity: 0, x: -150 }}
                       animate={{ opacity: 1, x: 0 }}
-                      transition={show(2.0, 1.3)}
+                      transition={show(3.3, 1.4)}
                     >
                       ZON
                     </motion.text>
                   </g>
                 </svg>
               </motion.div>
+              </Dolly>
 
-              {/* Front mist (z-15) */}
-              <motion.div className="absolute inset-0 z-[15]" style={{ y: yMistFront }}>
+              {/* Front mist (z-15) with fast wisps */}
+              <Dolly from={1.25} z="z-[15]" reduce={reduce}>
+              <motion.div className="absolute inset-0" style={{ y: yMistFront }}>
                 <svg {...layerSvgProps}>
+                  <motion.g
+                    animate={reduce ? undefined : { x: [-260, 260] }}
+                    transition={{ duration: 11, ease: 'easeInOut', repeat: Infinity, repeatType: 'mirror' }}
+                  >
+                    <g filter="url(#mistBlur)" fill="#F8FAFC" opacity="0.55">
+                      <ellipse cx="300" cy="690" rx="320" ry="16" />
+                      <ellipse cx="1150" cy="660" rx="380" ry="14" />
+                      <ellipse cx="1600" cy="720" rx="300" ry="16" />
+                    </g>
+                  </motion.g>
                   <motion.g
                     animate={reduce ? undefined : { x: [70, -70] }}
                     transition={{ duration: 18, ease: 'easeInOut', repeat: Infinity, repeatType: 'mirror' }}
@@ -368,9 +476,11 @@ export function HeroScene({ onEnter, ...routeBar }: HeroSceneProps) {
                   </motion.g>
                 </svg>
               </motion.div>
+              </Dolly>
 
               {/* Foreground rock and hiker (z-20) */}
-              <motion.div className="absolute inset-0 z-20" style={{ y: yFront }}>
+              <Dolly from={1.12} z="z-20" reduce={reduce}>
+              <motion.div className="absolute inset-0" style={{ y: yFront }}>
                 <svg {...layerSvgProps}>
                   <defs>
                     <linearGradient id="rockGrad" x1="0" y1="0" x2="0" y2="1">
@@ -379,7 +489,13 @@ export function HeroScene({ onEnter, ...routeBar }: HeroSceneProps) {
                       <stop offset="1" stopColor="#070B14" />
                     </linearGradient>
                   </defs>
-                  <path d={pines.front} fill="#0B1220" />
+                  <motion.path
+                    d={pines.front}
+                    fill="#0B1220"
+                    style={{ originX: 0.5, originY: 1 }}
+                    animate={reduce ? undefined : { rotate: [-0.7, 0.8] }}
+                    transition={{ duration: 5, ease: 'easeInOut', repeat: Infinity, repeatType: 'mirror' }}
+                  />
                   {/* Shrubs beside the rock */}
                   <g fill="#1E293B">
                     <ellipse cx="330" cy="830" rx="110" ry="40" />
@@ -407,8 +523,9 @@ export function HeroScene({ onEnter, ...routeBar }: HeroSceneProps) {
                   <Hiker reduce={reduce} />
                 </svg>
               </motion.div>
+              </Dolly>
             </motion.div>
-          </motion.div>
+          </div>
 
           {/* Soft vignette so the bar and edges read against the rock */}
           <div
@@ -431,18 +548,31 @@ export function HeroScene({ onEnter, ...routeBar }: HeroSceneProps) {
             </button>
           </div>
 
-          {/* Interactive route bar (z-30), wired to the live trip */}
-          <motion.div className="absolute inset-x-0 bottom-[7vh] z-30" style={{ y: yFront }}>
-            <motion.div
-              className="mx-auto w-[min(94vw,920px)]"
-              initial={reduce ? false : { opacity: 0, y: 90 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={show(2.9, 1)}
-            >
-              <RouteBar {...routeBar} variant="hero" hoveredStopId={null} onHoverStop={() => {}} />
-            </motion.div>
+          {/* Scroll cue: shown until the page has scrolled to the bar */}
+          <motion.div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-x-0 bottom-[5vh] z-30 flex flex-col items-center gap-1 text-[11px] font-bold uppercase tracking-[0.3em] text-white/90"
+            style={{ opacity: cueOpacity }}
+            initial={reduce ? false : { opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 4.6, duration: 0.6 }}
+          >
+            Plan your route
+            <motion.span animate={reduce ? undefined : { y: [0, 6, 0] }} transition={{ duration: 1.4, repeat: Infinity }}>
+              <ChevronDown className="h-5 w-5" />
+            </motion.span>
           </motion.div>
-        </motion.div>
+
+          {/* Interactive route bar (z-30), wired to the live trip: rises in as the page scrolls */}
+          <motion.div
+            className="absolute inset-x-0 bottom-[7vh] z-30"
+            style={{ y: barY, opacity: barOpacity, pointerEvents: barPointer }}
+          >
+            <div className="mx-auto w-[min(94vw,920px)]">
+              <RouteBar {...routeBar} variant="hero" hoveredStopId={null} onHoverStop={() => {}} />
+            </div>
+          </motion.div>
+        </div>
       </div>
     </motion.div>
   );
