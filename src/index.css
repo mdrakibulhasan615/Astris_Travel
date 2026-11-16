@@ -132,3 +132,17 @@
   mask-composite: intersect;
   -webkit-mask-composite: source-in;
 }
+
+/* Hero water: film grain that jitters in steps */
+.water-grain {
+  animation: water-grain 0.9s steps(6) infinite;
+}
+@keyframes water-grain {
+  0% { transform: translate(0, 0); }
+  17% { transform: translate(-6%, 4%); }
+  34% { transform: translate(5%, -7%); }
+  51% { transform: translate(-3%, 8%); }
+  68% { transform: translate(7%, 3%); }
+  85% { transform: translate(-8%, -4%); }
+  100% { transform: translate(0, 0); }
+}
