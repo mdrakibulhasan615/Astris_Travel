@@ -23,8 +23,14 @@ export const USE_REAL_TICKET_DATA = false;
  * commission without extra setup. An environment variable always wins.
  *   twelveGoAffiliateId     12Go `z` parameter (TWELVEGO_AFFILIATE_ID)
  *   travelpayoutsMarker     Aviasales partner marker on fare links (TRAVELPAYOUTS_MARKER)
+ *   tripcomAllianceId/Sid/Sub3  Trip.com partner ids on flight, train and hotel links
+ *                           (TRIPCOM_ALLIANCE_ID, TRIPCOM_SID, TRIPCOM_SUB3; the VITE_TRIP_ALLIANCE_ID and
+ *                           VITE_TRIP_SID names work too)
  */
 export const AFFILIATE_DEFAULTS = {
   twelveGoAffiliateId: '17520220',
   travelpayoutsMarker: '806003',
+  tripcomAllianceId: '11395112',
+  tripcomSid: '336262403',
+  tripcomSub3: 'D21235867',
 } as const;

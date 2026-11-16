@@ -33,6 +33,8 @@ export interface AffiliateConfig {
   /** Trip.com affiliate pair, sent as `Allianceid` + `SID`. Both are needed for attribution. */
   tripcomAllianceId?: string;
   tripcomSid?: string;
+  /** Trip.com sub-id (`trip_sub3`), for reporting inside the Trip.com partner portal. */
+  tripcomSub3?: string;
   /** Booking.com affiliate id, sent as `aid`. */
   bookingAid?: string;
   /** Agoda partner id, sent as `cid`. */
@@ -100,6 +102,7 @@ export function configureAffiliate(config: AffiliateConfig): void {
   activeConfig = {
     tripcomAllianceId: validId(config.tripcomAllianceId, 'TRIPCOM_ALLIANCE_ID'),
     tripcomSid: validId(config.tripcomSid, 'TRIPCOM_SID'),
+    tripcomSub3: validId(config.tripcomSub3, 'TRIPCOM_SUB3'),
     bookingAid: validId(config.bookingAid, 'BOOKING_AID'),
     agodaCid: validId(config.agodaCid, 'AGODA_CID'),
     twelveGoAffiliateId: validId(config.twelveGoAffiliateId, 'TWELVEGO_AFFILIATE_ID'),
@@ -267,11 +270,16 @@ function ticketAirline(option: LinkableOption): string | null {
   return AIRLINE_RE.test(code) && code === (option.carrierCode ?? code).toUpperCase() ? code : null;
 }
 
-/** Appends Trip.com's own partner parameters. */
+/**
+ * Appends Trip.com's own partner parameters, in the shape its partner links use:
+ * `Allianceid=…&SID=…&trip_sub1=&trip_sub3=…`. Both ids are needed for attribution.
+ */
 function tripcomAttribution(params: URLSearchParams): void {
   if (activeConfig.tripcomAllianceId && activeConfig.tripcomSid) {
     params.set('Allianceid', activeConfig.tripcomAllianceId);
     params.set('SID', activeConfig.tripcomSid);
+    params.set('trip_sub1', '');
+    if (activeConfig.tripcomSub3) params.set('trip_sub3', activeConfig.tripcomSub3);
   }
 }
 
@@ -282,34 +290,82 @@ function tripcomAttribution(params: URLSearchParams): void {
  * several. A return ticket adds `rdate` and `triptype=rt` (Trip.com normalises it to its own return
  * search). Returns null when the codes or the date cannot form a valid search.
  */
-export function buildTripcomFlightUrl(option: LinkableOption, ctx: BookingContext): string | null {
-  // The provider's own departure timestamp is the ticket's date; the leg date is the fallback
-  const date = parseIsoDate(option.departureAt) ?? parseIsoDate(ctx.date);
-  const { from, to } = ticketAirports(option, ctx);
-  if (!date || !IATA_RE.test(from) || !IATA_RE.test(to)) return null;
+/** What Trip.com's flight search needs. Airports may be city (metro) or airport codes. */
+export interface TripFlightSearch {
+  originIata: string;
+  destinationIata: string;
+  /** `YYYY-MM-DD` */
+  departureDate: string;
+  /** `ow` one-way, `rt` round trip (needs `returnDate`). */
+  tripType: 'ow' | 'rt';
+  returnDate?: string;
+  passengers?: number;
+  /** A single operating airline (IATA, e.g. `PC`) to filter the results to. */
+  airline?: string | null;
+}
+
+/**
+ * Trip.com flight search with our partner ids:
+ * `https://www.trip.com/flights/showfarefirst?dcity=KUL&acity=IST&ddate=2026-11-21&triptype=ow&class=y&quantity=1&Allianceid=…&SID=…&trip_sub1=&trip_sub3=…`
+ * City codes (`dcity`/`acity`) are the metro code of each airport; when a city has several airports
+ * the airport itself goes in `dairport`/`aairport`. Returns null for codes or dates that cannot form a
+ * search, or when origin and destination are the same city.
+ */
+export function buildTripFlightUrl(search: TripFlightSearch): string | null {
+  const date = parseIsoDate(search.departureDate);
+  const from = search.originIata?.trim().toUpperCase();
+  const to = search.destinationIata?.trim().toUpperCase();
+  if (!date || !IATA_RE.test(from ?? '') || !IATA_RE.test(to ?? '')) return null;
 
   const fromCity = toMetroCode(from);
   const toCity = toMetroCode(to);
   if (fromCity === toCity) return null;
 
-  // A return ticket carries the way-back date; without a usable one it can only be a one-way search
-  const back = option.ticketType === 'return' ? parseIsoDate(ctx.returnDate) : null;
+  // A round trip needs a usable way-back date; without one it can only be a one-way search
+  const back = search.tripType === 'rt' ? parseIsoDate(search.returnDate) : null;
   const isReturn = back !== null && utcDay(back) >= utcDay(date);
 
   const params = new URLSearchParams({ dcity: fromCity.toLowerCase(), acity: toCity.toLowerCase() });
   if (from !== fromCity) params.set('dairport', from.toLowerCase());
   if (to !== toCity) params.set('aairport', to.toLowerCase());
   params.set('ddate', isoDate(date));
-  if (isReturn) params.set('rdate', isoDate(back));
+  if (isReturn && back) params.set('rdate', isoDate(back));
   params.set('triptype', isReturn ? 'rt' : 'ow');
   params.set('class', 'y');
-  params.set('quantity', String(clampCount(ctx.passengers, 9)));
-  const airline = ticketAirline(option);
-  if (airline) params.set('airline', airline);
+  params.set('quantity', String(clampCount(search.passengers, 9)));
+  if (search.airline && AIRLINE_RE.test(search.airline)) params.set('airline', search.airline);
   params.set('locale', 'en-US');
   params.set('curr', 'USD');
   tripcomAttribution(params);
   return `https://www.trip.com/flights/showfarefirst?${params.toString()}`;
+}
+
+/** The Trip.com search for one ticket: its exact airports, date, way-back date, party and airline. */
+export function buildTripcomFlightUrl(option: LinkableOption, ctx: BookingContext): string | null {
+  // The provider's own departure timestamp is the ticket's date; the leg date is the fallback
+  const date = parseIsoDate(option.departureAt) ?? parseIsoDate(ctx.date);
+  const { from, to } = ticketAirports(option, ctx);
+  if (!date) return null;
+  return buildTripFlightUrl({
+    originIata: from,
+    destinationIata: to,
+    departureDate: isoDate(date),
+    tripType: option.ticketType === 'return' ? 'rt' : 'ow',
+    returnDate: ctx.returnDate,
+    passengers: ctx.passengers,
+    airline: ticketAirline(option),
+  });
+}
+
+/**
+ * Trip.com trains. Its train search takes internal city codes (`departurecitycode=GB1594`) that we
+ * do not have for every station, so this opens the train page with our partner ids rather than a
+ * route; the traveller enters the stations there.
+ */
+export function tripcomTrainsHome(): string {
+  const params = new URLSearchParams({ locale: 'en-US', curr: 'USD' });
+  tripcomAttribution(params);
+  return `https://www.trip.com/trains/?${params.toString()}`;
 }
 
 function tripcomFlightsHome(): string {
@@ -545,6 +601,9 @@ export function attachBookingUrls(options: TransitOption[], ctx: BookingContext)
       bookingUrl: link.url,
       bookingProvider: link.provider,
       returnBookingUrl: link.returnUrl,
+      ...(option.mode === 'train'
+        ? { extraLinks: [{ name: 'Trip.com', url: track('tripcom', tripcomTrainsHome()) }] }
+        : {}),
       ...(option.mode === 'flight'
         ? { offers: buildFlightOffers({ ...option, mode: 'flight' }, ctx, link) }
         : {}),
@@ -662,6 +721,15 @@ export function buildAgodaStayUrl(ctx: StayLinkContext): string | null {
 }
 
 /**
+ * Trip.com's own numeric city ids, which its hotel list needs to open on the right city. Only ids
+ * read from a Trip.com link are listed; other cities fall back to a text search on `searchWord`.
+ * Add more by copying `city=` from a Trip.com hotel search for that city.
+ */
+const TRIPCOM_CITY_IDS: Record<string, number> = {
+  istanbul: 532,
+};
+
+/**
  * Trip.com hotel search: `https://www.trip.com/hotels/list?searchWord=…&checkin=…&checkout=…&adult=2&crn=1`.
  * The property name goes in `searchWord`; Trip.com resolves it to its own city id. Not checked
  * against the live site's current parameters, so it lands on Trip.com hotels at worst.
@@ -670,17 +738,27 @@ export function buildTripcomHotelUrl(ctx: StayLinkContext): string | null {
   const dates = stayDates(ctx);
   const city = ctx.city?.trim();
   if (!dates || !city) return null;
-  const params = new URLSearchParams({
-    searchWord: ctx.property?.trim() ? `${ctx.property.trim()} ${city}` : city,
-    cityName: city,
-    checkin: isoDate(dates.checkIn),
-    checkout: isoDate(dates.checkOut),
-    adult: String(clampCount(ctx.adults, 30)),
-    crn: String(clampCount(ctx.rooms, 30)),
-    children: '0',
-    locale: 'en-US',
-    curr: 'USD',
-  });
+  const params = new URLSearchParams();
+  const cityId = TRIPCOM_CITY_IDS[citySlug(city).replace(/-/g, ' ')];
+  if (cityId) {
+    // Trip.com's own city search: `city=532&display=Istanbul&optionId=532&optionType=City&optionName=Istanbul`
+    params.set('city', String(cityId));
+    params.set('display', city);
+    params.set('optionId', String(cityId));
+    params.set('optionType', 'City');
+    params.set('optionName', city);
+  } else {
+    params.set('cityName', city);
+  }
+  if (ctx.property?.trim()) params.set('searchWord', `${ctx.property.trim()} ${city}`);
+  else if (!cityId) params.set('searchWord', city);
+  params.set('checkin', isoDate(dates.checkIn));
+  params.set('checkout', isoDate(dates.checkOut));
+  params.set('adult', String(clampCount(ctx.adults, 30)));
+  params.set('crn', String(clampCount(ctx.rooms, 30)));
+  params.set('children', '0');
+  params.set('locale', 'en-US');
+  params.set('curr', 'USD');
   tripcomAttribution(params);
   return `https://www.trip.com/hotels/list?${params.toString()}`;
 }
