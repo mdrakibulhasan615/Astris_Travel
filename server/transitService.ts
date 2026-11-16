@@ -277,8 +277,16 @@ async function fetchSerpApiFlights(
 
   try {
     // Metro codes (LON, PAR) return nothing from Google Flights, so search the city's airports.
-    const departureIds = airportsForCity(origin).join(',');
-    const arrivalIds = airportsForCity(destination).join(',');
+    // Round trips are asked for each city's main airport only: Google Flights answers a round trip
+    // that lists several airports on either side with "hasn't returned any results" (KUL,SZB to
+    // IST,SAW found nothing while KUL to IST returned a dozen fares). One-way searches handle the
+    // extra airports fine.
+    const pickIds = (city: string) => {
+      const ids = airportsForCity(city);
+      return (returnDate ? ids.slice(0, 1) : ids).join(',');
+    };
+    const departureIds = pickIds(origin);
+    const arrivalIds = pickIds(destination);
     if (!departureIds || !arrivalIds) return null;
 
     const url = new URL('https://serpapi.com/search.json');
@@ -320,7 +328,8 @@ async function fetchSerpApiFlights(
     ];
 
     if (flightGroups.length === 0) {
-      console.log('[Transit API] No flights found in SerpAPI response, falling back.');
+      const why = typeof data.error === 'string' ? ` (${data.error})` : '';
+      console.log(`[Transit API] No flights found in SerpAPI response${why}, falling back.`);
       return null;
     }
 

@@ -448,19 +448,6 @@ export default function App() {
     else handleChangeLegTicket(legId, { type: choice });
   };
 
-  // Search: ask the server for every leg's flights, trains and buses again, then re-frame the map
-  const [isSearching, setIsSearching] = useState(false);
-  const [fitRouteTick, setFitRouteTick] = useState(0);
-  const handleSearchRoute = async () => {
-    setIsSearching(true);
-    try {
-      await recomputeStopsAndLegs(trip.stops);
-    } finally {
-      setIsSearching(false);
-      setFitRouteTick((n) => n + 1);
-    }
-  };
-
   const handleOpenStays = (stopId: string) => {
     setActivePanel('stays');
     setLeftView('stays');
@@ -675,8 +662,9 @@ export default function App() {
           <div className="flex flex-wrap items-end justify-between gap-4">
             <div>
               <div className="text-xs font-medium text-[#4B5563] tabular-nums">
-                {trip.stops.length} stops · {totalNights} nights ·{' '}
-                {trip.legs.length} transit corridors
+                {trip.stops.length} {trip.stops.length === 1 ? 'stop' : 'stops'} · {totalNights}{' '}
+                {totalNights === 1 ? 'night' : 'nights'} · {trip.legs.length}{' '}
+                {trip.legs.length === 1 ? 'transit corridor' : 'transit corridors'}
               </div>
               <h1 className="mt-1 font-display text-2xl font-bold tracking-tight text-[#111827]">
                 {trip.title}
@@ -780,14 +768,14 @@ export default function App() {
                   );
                 })}
               </div>
-              {trip.stops.length !== 4 && (
+              {trip.stops.length > 1 && (
                 <button
                   type="button"
                   onClick={handleRestoreDefaultTrip}
                   className="inline-flex items-center gap-1 text-xs font-medium text-[#4B5563] hover:text-[#111827] cursor-pointer whitespace-nowrap"
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
-                  <span>Reset 4-stop route</span>
+                  <span>Start over</span>
                 </button>
               )}
             </div>
@@ -951,7 +939,6 @@ export default function App() {
               hoveredLegId={hoveredLegId}
               activeLegId={activeLegId}
               focusTarget={focusTarget}
-              fitRouteTick={fitRouteTick}
               onHoverStop={setHoveredStopId}
               onSelectLeg={(legId) => {
                 setActiveLegId(legId);
@@ -964,14 +951,12 @@ export default function App() {
             legs={trip.legs}
             destinations={destinations}
             hoveredStopId={hoveredStopId}
-            isSearching={isSearching}
             onMoveStop={reorderStops}
             onRemoveStop={handleRemoveStop}
             onAddDestination={handleAddDestination}
             onChangeSegment={handleChangeSegment}
             onHoverStop={setHoveredStopId}
             onFocusStop={(s) => setFocusTarget({ lat: s.lat, lng: s.lng, zoom: 5.2, ts: Date.now() })}
-            onSearch={handleSearchRoute}
           />
         </div>
       </main>
@@ -1008,7 +993,6 @@ export default function App() {
             stops={trip.stops}
             legs={trip.legs}
             destinations={destinations}
-            isSearching={isSearching}
             onMoveStop={reorderStops}
             onRemoveStop={handleRemoveStop}
             onAddDestination={(hub) => {
@@ -1017,10 +1001,6 @@ export default function App() {
             }}
             onChangeSegment={handleChangeSegment}
             onFocusStop={() => {}}
-            onSearch={() => {
-              setShowHero(false);
-              void handleSearchRoute();
-            }}
           />
         )}
       </AnimatePresence>
