@@ -1020,7 +1020,6 @@ export default function App() {
               setShowHero(false);
               void handleSearchRoute();
             }}
-            onEnter={() => setShowHero(false)}
           />
         )}
       </AnimatePresence>
