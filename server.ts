@@ -29,8 +29,7 @@ import { getPublicAffiliateConfig } from './shared/affiliate.ts';
 import { fetchGoogleTransitRoutes, googleMapsKey } from './server/googleRoutesService.ts';
 import { fetchTwelveGoTimetable, twelveGoCountry } from './server/twelveGoService.ts';
 import { fetchHotels, serpApiHotelsKey } from './server/hotelService.ts';
-import { registerDuffelWebhook, registerFlightRoutes } from './server/flightsApi.ts';
-import { isDuffelConfigured } from './server/duffelService.ts';
+import { registerLiveFlightRoutes } from './server/liveFlightsApi.ts';
 import type { GroundSchedules } from './shared/groundSchedule.ts';
 import {
   finalizeLegs,
@@ -280,10 +279,8 @@ function logLegs(label: string, legs: TripLeg[]): void {
 export function createApp() {
   logEnvStatus();
   const app = express();
-  // The Duffel webhook needs the raw body for its signature, so it goes before the JSON parser
-  registerDuffelWebhook(app);
   app.use(express.json());
-  registerFlightRoutes(app);
+  registerLiveFlightRoutes(app);
 
   // Health & initial dataset
   // The initial trip used to be pure mock data (TK 61 etc.), so live SerpApi fares only appeared
@@ -325,7 +322,7 @@ export function createApp() {
 
   // Whether fares are live or sample data (read-only; the switch lives in code/env, not the UI)
   app.get('/api/config', (_req, res) => {
-    res.json({ dataMode: useRealData() && isDuffelConfigured() ? 'live' : 'mock' });
+    res.json({ dataMode: useRealData() ? 'live' : 'mock' });
   });
 
   // Exchange rates for the currency switcher (12 h cache, fallback table on failure)

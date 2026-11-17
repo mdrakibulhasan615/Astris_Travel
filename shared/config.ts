@@ -1,12 +1,13 @@
 /**
- * Ticket data source. ONE flag to flip between the built-in sample data and live Duffel fares.
+ * Live fares switch. ONE flag to allow or forbid the "Fetch Live Fares" button spending SerpApi searches.
  *
- *   false            sample/curated tickets only (plus recent real fares from the free Aviasales Data
- *                    API when TRAVELPAYOUTS_TOKEN is set). No Duffel request is made, so developing
- *                    the UI never searches or books anything.
- *   true (default)   live, bookable Duffel offers (needs DUFFEL_ACCESS_TOKEN) with a service fee
- *                    added, cached 10 minutes, checked out through Duffel Links. Airlines Duffel does
- *                    not sell (AirAsia, Ryanair…) appear as "Book direct" partner links. Ground
+ *   false            sample/curated flights only (plus recent real fares from the free Aviasales Data
+ *                    API when TRAVELPAYOUTS_TOKEN is set). The button answers with the offline schedule
+ *                    and exact-route search links; no SerpApi request is ever made.
+ *   true (default)   the button fetches live Google Flights fares (needs SERPAPI_API_KEY) and "Book
+ *                    Exact Ticket" looks up the sellers of one fare. Both are on request only: nothing is
+ *                    fetched on page load or on an edit, because the free plan has 100 searches a
+ *                    month. Results are cached 30 minutes (fares) and 15 minutes (sellers). Ground
  *                    transport stays curated/estimated either way: there is no live availability API
  *                    for trains and coaches.
  *
@@ -15,7 +16,7 @@
  * environment variable wins when it is set; see `useRealData()` in `server/env.ts`.
  *
  * Vercel note: deployments are NOT live by default. Set `USE_REAL_DATA=true` for the environment
- * (Production, and Preview if you want it) that should search Duffel.
+ * (Production, and Preview if you want it) that should offer live fares.
  */
 export const USE_REAL_TICKET_DATA = true;
 

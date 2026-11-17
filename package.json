@@ -10,13 +10,12 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "tsx --test shared/pricing.test.ts server/duffel.test.ts"
+    "test": "tsx --test shared/liveFlights.test.ts server/liveFlights.test.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
-    "@duffel/api": "^4.31.0",
     "@google/genai": "^2.4.0",
     "@tailwindcss/vite": "^4.3.3",
     "@turf/great-circle": "^7.4.0",

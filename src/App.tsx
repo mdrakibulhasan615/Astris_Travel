@@ -57,7 +57,8 @@ import type {
 } from '../shared/types.ts';
 import { AddStopModal } from './components/AddStopModal.tsx';
 import { AnimatePresence } from 'motion/react';
-import { BookingBanner } from './components/BookingBanner.tsx';
+import { legLiveKey, mergeLiveFares, type LiveFareEntry, type LiveFareStatus } from './liveFares.ts';
+import type { LiveSearchResponse } from '../shared/liveFlights.ts';
 import { HeroScene } from './components/HeroScene.tsx';
 import { SHOW_HOME_HERO } from '../shared/config.ts';
 import { RouteBar, type SegmentChoice } from './components/RouteBar.tsx';
@@ -449,6 +450,63 @@ export default function App() {
     else handleChangeLegTicket(legId, { type: choice });
   };
 
+  // Live fares: fetched only when the traveller presses "Fetch Live Fares" on a leg. Every search can
+  // spend one of the free monthly SerpApi lookups, so nothing here runs on load or on an edit.
+  const [liveFares, setLiveFares] = useState<Record<string, LiveFareEntry>>({});
+  const [liveStatus, setLiveStatus] = useState<Record<string, LiveFareStatus>>({});
+  const handleFetchLiveFares = async (legId: string) => {
+    const leg = trip.legs.find((l) => l.id === legId);
+    const date = leg?.departureDate ?? trip.stops.find((s) => s.id === leg?.fromStopId)?.departureDate;
+    if (!leg || !date) return;
+    const key = legLiveKey(leg);
+    setLiveStatus((p) => ({ ...p, [legId]: { loading: true } }));
+    try {
+      const res = await fetch('/api/flights/live-search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          originIata: leg.fromCode,
+          destinationIata: leg.toCode,
+          departureDate: date,
+          // A return ticket is a round-trip search (priced for both directions)
+          returnDate: leg.ticketType === 'return' ? leg.returnDate : undefined,
+          adults: 1,
+          currency: 'USD',
+          hourlyRateUsd: trip.hourlyTimeValue,
+          passengers: trip.travelers,
+        }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setLiveStatus((p) => ({ ...p, [legId]: { loading: false, error: data?.message ?? 'Live fares could not be fetched.' } }));
+        return;
+      }
+      const result = data as LiveSearchResponse;
+      learnAirports([{ ...leg, transitOptions: result.options } as TripLeg]);
+      setLiveFares((p) => ({
+        ...p,
+        [legId]: {
+          key,
+          mode: result.mode,
+          options: result.options,
+          fetchedAt: result.fetchedAt,
+          cached: result.cached,
+          reason: result.reason,
+          fallbackLinks: result.fallbackLinks,
+        },
+      }));
+      setLiveStatus((p) => ({ ...p, [legId]: { loading: false } }));
+    } catch {
+      setLiveStatus((p) => ({ ...p, [legId]: { loading: false, error: 'Could not reach the server. Check your connection.' } }));
+    }
+  };
+
+  // The legs as shown: the server's estimated schedule with any fetched live fares swapped in
+  const displayLegs = useMemo(
+    () => trip.legs.map((leg) => mergeLiveFares(leg, liveFares[leg.id], trip.hourlyTimeValue, trip.travelerProfile)),
+    [trip.legs, trip.hourlyTimeValue, trip.travelerProfile, liveFares]
+  );
+
   const handleOpenStays = (stopId: string) => {
     setActivePanel('stays');
     setLeftView('stays');
@@ -561,7 +619,7 @@ export default function App() {
     let totalSmartScore = 0;
     let totalDistanceKm = 0;
 
-    for (const leg of trip.legs) {
+    for (const leg of displayLegs) {
       totalDistanceKm += leg.distanceKm;
       // A return ticket is counted once, on the leg that carries it; the leg it covers adds nothing
       const t = legTotals(leg);
@@ -576,7 +634,7 @@ export default function App() {
       totalSmartScore: round2(totalSmartScore),
       totalDistanceKm,
     };
-  }, [trip.legs]);
+  }, [displayLegs]);
 
   const totalNights = useMemo(() => totalTripNights(trip.stops), [trip.stops]);
 
@@ -612,7 +670,6 @@ export default function App() {
         isOptimizing={isOptimizing}
         dataMode={dataMode}
       />
-      <BookingBanner />
 
       {/* Mobile View Switcher (keeps sticky height well under 15%) */}
       <div className="lg:hidden px-4 py-2 bg-white border-b border-neutral-200/80 flex items-center justify-between gap-2">
@@ -783,7 +840,7 @@ export default function App() {
             </div>
 
             {leftView === 'route' && !isLoadingInitial && trip.legs.length > 0 && (
-              <TransportFilter legs={trip.legs} value={modeFilter} onChange={setModeFilter} />
+              <TransportFilter legs={displayLegs} value={modeFilter} onChange={setModeFilter} />
             )}
 
             {isLoadingInitial ? (
@@ -861,7 +918,7 @@ export default function App() {
                 >
                   <div className="space-y-1">
                     {trip.stops.map((stop, idx) => {
-                      const nextLeg = trip.legs[idx];
+                      const nextLeg = displayLegs[idx];
                       const staySearch = stayByStopId[stop.id];
                       return (
                         <div key={stop.id}>
@@ -892,8 +949,11 @@ export default function App() {
                           {nextLeg && (
                             <LegTransitPanel
                               leg={nextLeg}
-                              pairedLeg={trip.legs.find((l) => l.id === nextLeg.pairedLegId)}
-                              coveredByLeg={trip.legs.find((l) => l.id === nextLeg.coveredByLegId)}
+                              pairedLeg={displayLegs.find((l) => l.id === nextLeg.pairedLegId)}
+                              coveredByLeg={displayLegs.find((l) => l.id === nextLeg.coveredByLegId)}
+                              liveFare={liveFares[nextLeg.id]}
+                              liveStatus={liveStatus[nextLeg.id]}
+                              onFetchLive={handleFetchLiveFares}
                               onChangeTicket={handleChangeLegTicket}
                               modeFilter={modeFilter}
                               isActive={
@@ -935,7 +995,7 @@ export default function App() {
             <WorldMapCanvas
               transitOverlays={transitOverlays}
               stops={trip.stops}
-              legs={trip.legs}
+              legs={displayLegs}
               modeFilter={modeFilter}
               hoveredStopId={hoveredStopId}
               hoveredLegId={hoveredLegId}
@@ -950,7 +1010,7 @@ export default function App() {
           </ErrorBoundary>
           <RouteBar
             stops={trip.stops}
-            legs={trip.legs}
+            legs={displayLegs}
             destinations={destinations}
             hoveredStopId={hoveredStopId}
             onMoveStop={reorderStops}
@@ -993,7 +1053,7 @@ export default function App() {
           <HeroScene
             key="hero"
             stops={trip.stops}
-            legs={trip.legs}
+            legs={displayLegs}
             destinations={destinations}
             onMoveStop={reorderStops}
             onRemoveStop={handleRemoveStop}

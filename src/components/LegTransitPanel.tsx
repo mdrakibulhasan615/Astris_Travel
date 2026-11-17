@@ -22,6 +22,8 @@ import { PROVIDER_NAMES } from '../../shared/affiliate.ts';
 import { BoardingPass, TagPill } from './BoardingPass.tsx';
 import { GroundTicket } from './GroundTicket.tsx';
 import { GroundSchedulePanel } from './GroundSchedulePanel.tsx';
+import { LiveFaresBar } from './LiveFaresBar.tsx';
+import type { LiveFareEntry, LiveFareStatus } from '../liveFares.ts';
 import type { OverlayLine } from '../../shared/groundSchedule.ts';
 import { SmartScoreBadge } from './SmartScoreBadge.tsx';
 import type {
@@ -44,6 +46,11 @@ export interface TicketChange {
 
 interface LegTransitPanelProps {
   leg: TripLeg;
+  /** Live fares fetched for this leg's current search, and what the fetch is doing. */
+  liveFare?: LiveFareEntry;
+  liveStatus?: LiveFareStatus;
+  /** "Fetch Live Fares": the only thing that spends a live search. */
+  onFetchLive?: (legId: string) => void;
   /** The later leg that comes back; a return ticket on this leg would cover it. */
   pairedLeg?: TripLeg;
   /** The leg whose return ticket already covers this one. */
@@ -98,27 +105,7 @@ const WARNING_FLAGS: ReadonlySet<ScoreFlag> = new Set([
  * Tells the user whether the ticket details are a real provider fare or sample/estimated data.
  * Sample data (curated or synthesized) must never look like a live fare.
  */
-function SourceChip({ source, kind }: { source: TransitOption['dataSource']; kind?: TransitOption['source'] }) {
-  if (kind === 'duffel') {
-    return (
-      <span
-        title="A live fare from the airline, bookable here. The price includes our service fee."
-        className="rounded-md bg-[#F0FDF4] px-1.5 py-0.5 text-[10px] font-medium text-[#15803D]"
-      >
-        Bookable
-      </span>
-    );
-  }
-  if (kind === 'external_ulcc') {
-    return (
-      <span
-        title="This airline sells only on its own channels. The fare is a recent one; the airline's site shows the current price."
-        className="rounded-md bg-[#EFF6FF] px-1.5 py-0.5 text-[10px] font-medium text-[#1D4ED8]"
-      >
-        Partner fare
-      </span>
-    );
-  }
+function SourceChip({ source }: { source: TransitOption['dataSource'] }) {
   if (source === 'live') {
     return (
       <span
@@ -148,7 +135,7 @@ function SourceChip({ source, kind }: { source: TransitOption['dataSource']; kin
       }
       className="rounded-md bg-neutral-100 px-1.5 py-0.5 text-[10px] font-medium text-[#4B5563]"
     >
-      {source === 'synthesized' ? 'Estimate' : 'Sample'}
+      Estimated / Offline Schedule
     </span>
   );
 }
@@ -457,6 +444,9 @@ function TicketControls({
 
 export function LegTransitPanel({
   leg,
+  liveFare,
+  liveStatus,
+  onFetchLive,
   pairedLeg,
   coveredByLeg,
   onChangeTicket,
@@ -605,6 +595,15 @@ export function LegTransitPanel({
           onChangeTicket={onChangeTicket}
         />
 
+        {onFetchLive && !coveredByLeg && leg.transitOptions.some((o) => o.mode === 'flight') && (
+          <LiveFaresBar
+            entry={liveFare}
+            status={liveStatus}
+            hasLiveFares={leg.transitOptions.some((o) => o.source === 'serpapi_live')}
+            onFetch={() => onFetchLive(leg.id)}
+          />
+        )}
+
         {selectedOption?.bookingUrl && !expanded && !coveredByLeg && (
           <div className="flex justify-end px-3.5 pb-2.5">
             <BookLinks option={selectedOption} />
@@ -641,12 +640,13 @@ export function LegTransitPanel({
                       }}
                       extras={
                         <>
-                          <SourceChip source={option.dataSource} kind={option.source} />
+                          <SourceChip source={option.dataSource} />
                           <FlagChips flags={b.flags} />
                         </>
                       }
                       showBooking={!coveredByLeg}
                       passengers={travellers}
+                      onRefreshLive={onFetchLive ? () => onFetchLive(leg.id) : undefined}
                     />
                   );
                 }
