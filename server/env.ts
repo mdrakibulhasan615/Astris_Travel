@@ -39,10 +39,14 @@ for (const name of ENV_FILES) {
   }
 }
 
+// SERPAPI_KEY was this project's first name for the key; SERPAPI_API_KEY is the current one
+if (!process.env.SERPAPI_API_KEY && process.env.SERPAPI_KEY) process.env.SERPAPI_API_KEY = process.env.SERPAPI_KEY;
+
 /**
- * Whether flights come from live Duffel offers (true) or the built-in sample data (false). The default is
+ * Whether the "Fetch Live Fares" button may spend SerpApi searches (true), or the app stays on the
+ * built-in sample data (false). The default is
  * `USE_REAL_TICKET_DATA` in `shared/config.ts`; the `USE_REAL_DATA` environment variable overrides it
- * (`true`/`1`/`yes`/`on`, or `false`/`0`/`no`/`off`).
+ * (`true`/`1`/`yes`/`on`, or `false`/`0`/`no`/`off`). Live fares are never fetched automatically.
  */
 export function useRealData(): boolean {
   const raw = getEnv('USE_REAL_DATA')?.toLowerCase();
@@ -78,14 +82,11 @@ export interface EnvKeySpec {
 }
 
 /**
- * Keys reported at startup. (GEMINI_API_KEY is not used yet. The optional `*_TRACKING_TEMPLATE`
- * keys, TWELVEGO_AFFILIATE_ID, APP_BASE_URL and the markup settings are read too but not reported
- * as missing.)
+ * Keys reported at startup. (GEMINI_API_KEY is not used yet. The optional
+ * `*_TRACKING_TEMPLATE` keys and TWELVEGO_AFFILIATE_ID are read too but not reported as missing.)
  */
 export const ENV_KEYS: EnvKeySpec[] = [
-  { name: 'DUFFEL_ACCESS_TOKEN', purpose: 'live bookable flights and hosted checkout (Duffel)', fallback: 'curated/synthesized flights, no booking' },
-  { name: 'DUFFEL_WEBHOOK_SECRET', purpose: 'recording issued tickets from Duffel webhooks', fallback: 'webhook requests are rejected (bookings are still made, just not recorded)' },
-  { name: 'SERPAPI_KEY', purpose: 'live hotel search (SerpApi)', fallback: 'no live hotels' },
+  { name: 'SERPAPI_API_KEY', purpose: 'live fares and exact-ticket sellers (SerpApi Google Flights) and live hotels', fallback: 'estimated schedules and exact-route search links' },
   { name: 'GOOGLE_MAPS_API_KEY', purpose: 'real transit directions and map lines (Google Routes API)', fallback: 'no transit directions (12Go timetables still work)' },
   { name: 'TRAVELPAYOUTS_TOKEN', purpose: 'recent real fares in sample mode (Aviasales Data API)', fallback: 'fully sample flights' },
   { name: 'UPSTASH_REDIS_REST_URL', purpose: '12-hour transit cache (Upstash Redis)', fallback: 'uncached queries' },
@@ -112,14 +113,14 @@ export function warnMissingKey(name: string, context?: string): void {
 export function logEnvStatus(): void {
   if (useRealData()) {
     console.log(
-      getEnv('DUFFEL_ACCESS_TOKEN')
-        ? '[data] ticket data: LIVE (Duffel). Offers are cached 10 minutes and expire quickly.'
-        : '[data] ticket data: LIVE requested, but DUFFEL_ACCESS_TOKEN is missing: using sample data.'
+      getEnv('SERPAPI_API_KEY')
+        ? '[data] live fares: ON (SerpApi), on request only. Each uncached search and each "Book Exact Ticket" lookup spends one of the monthly searches.'
+        : '[data] live fares: requested, but SERPAPI_API_KEY is missing: estimated schedules and route links are shown.'
     );
   } else {
     console.log(
-      '[data] ticket data: SAMPLE. No Duffel requests are made. ' +
-        'Set USE_REAL_DATA=true (or USE_REAL_TICKET_DATA in shared/config.ts) for live fares.' +
+      '[data] live fares: OFF. No SerpApi requests are made. ' +
+        'Set USE_REAL_DATA=true (or USE_REAL_TICKET_DATA in shared/config.ts) to enable "Fetch Live Fares".' +
         (getEnv('TRAVELPAYOUTS_TOKEN')
           ? ' Flights use recent real fares from the Aviasales Data API where it has them.'
           : '')

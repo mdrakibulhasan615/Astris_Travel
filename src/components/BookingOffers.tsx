@@ -7,16 +7,14 @@ import {
   useState,
   useSyncExternalStore,
   type CSSProperties,
-  type ReactNode,
   type RefObject,
 } from 'react';
 import { createPortal } from 'react-dom';
-import { Clock, ExternalLink, Loader2, X } from 'lucide-react';
+import { ExternalLink, X } from 'lucide-react';
 import type { AffiliateOffer, OfferProviderId, TransitOption } from '../../shared/types.ts';
 import { PROVIDER_NAMES } from '../../shared/affiliate.ts';
-import { ulccCarrier } from '../../shared/ulcc.ts';
-import type { CheckoutErrorResponse, CheckoutResponse } from '../../shared/flights.ts';
 import { useCurrency } from '../currency.tsx';
+import { BookExactButton } from './SellerModal.tsx';
 
 // ── One panel open at a time: opening another card's panel switches to it ──────────────────────
 
@@ -127,7 +125,6 @@ function OffersPanel({
   id,
   label,
   rows,
-  body,
   footnote,
   cardRef,
   onClose,
@@ -135,8 +132,6 @@ function OffersPanel({
   id: string;
   label: string;
   rows: OfferRow[];
-  /** Replaces the merchant rows (the Duffel checkout panel). */
-  body?: ReactNode;
   footnote?: string;
   cardRef: RefObject<HTMLElement | null>;
   onClose: () => void;
@@ -203,7 +198,6 @@ function OffersPanel({
             <X className="h-4 w-4" aria-hidden="true" />
           </button>
         )}
-        {body}
         <ul className="divide-y divide-slate-100">
           {rows.map((row, i) => (
             <li key={row.key} className="flex items-center justify-between gap-3 px-2 py-2.5">
@@ -253,7 +247,6 @@ export function OffersButton({
   id,
   label,
   rows,
-  body,
   footnote,
   accent,
   cardRef,
@@ -261,7 +254,6 @@ export function OffersButton({
   id: string;
   label: string;
   rows: OfferRow[];
-  body?: ReactNode;
   footnote?: string;
   /** The card's brand colours; the default is the app's orange. */
   accent?: CSSProperties;
@@ -274,7 +266,7 @@ export function OffersButton({
   // A card that goes away (list re-ranked, leg collapsed) must not leave its panel behind
   useEffect(() => () => (activeOptionId === id ? setActive(null) : undefined), [id]);
 
-  if (rows.length === 0 && !body) return null;
+  if (rows.length === 0) return null;
   return (
     <>
       <button
@@ -291,136 +283,8 @@ export function OffersButton({
       >
         Proceed to booking
       </button>
-      {open && <OffersPanel id={id} label={label} rows={rows} body={body} footnote={footnote} cardRef={cardRef} onClose={close} />}
+      {open && <OffersPanel id={id} label={label} rows={rows} footnote={footnote} cardRef={cardRef} onClose={close} />}
     </>
-  );
-}
-
-// ── Duffel offers: our own price panel and "Select & Book" ──────────────────────────────────────
-
-/** `Date.now()` that re-renders every `ms`, for the offer countdown. */
-function useNow(ms: number): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const t = window.setInterval(() => setNow(Date.now()), ms);
-    return () => window.clearInterval(t);
-  }, [ms]);
-  return now;
-}
-
-/** Show the validity note only when it matters: the last 10 minutes of an offer. */
-const EXPIRY_WARNING_MS = 10 * 60 * 1000;
-
-/**
- * The panel for a bookable Duffel fare: total, the airline fare plus our service fee, how long the
- * offer is still valid, and the button that opens Duffel's hosted checkout. The server re-checks the
- * offer and the price before it hands out the checkout link.
- */
-function DuffelCheckout({ option, passengers }: { option: TransitOption; passengers: number }) {
-  const { fmt } = useCurrency();
-  const pricing = option.pricing!;
-  const now = useNow(15_000);
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-  // After a price change the traveller confirms the new total by clicking again
-  const [acceptedTotal, setAcceptedTotal] = useState<number | null>(null);
-
-  // USD (the app's display base) per unit of the offer's own currency
-  const usdPerUnit = pricing.displayTotal > 0 ? option.basePriceUsd / pricing.displayTotal : 0;
-  const baseUsd = pricing.baseFare * usdPerUnit;
-  const feeUsd = pricing.serviceFee * usdPerUnit;
-
-  const msLeft = option.expiresAt ? Date.parse(option.expiresAt) - now : Infinity;
-  const expired = msLeft <= 0;
-  const expiring = !expired && msLeft <= EXPIRY_WARNING_MS;
-
-  const book = async () => {
-    setBusy(true);
-    setMessage(null);
-    try {
-      const res = await fetch('/api/flights/checkout', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          offerId: option.offerId,
-          slices: option.checkout?.slices ?? [],
-          passengers,
-          cabinClass: option.checkout?.cabinClass,
-          expectedTotal: acceptedTotal ?? pricing.displayTotal,
-          currency: pricing.currency,
-        }),
-      });
-      if (res.ok) {
-        const data = (await res.json()) as CheckoutResponse;
-        window.location.assign(data.checkoutUrl);
-        return; // leaving the page: keep the button busy
-      }
-      const err = (await res.json().catch(() => null)) as CheckoutErrorResponse | null;
-      if (err?.error === 'price_changed' && err.pricing) {
-        setAcceptedTotal(err.pricing.displayTotal);
-        setMessage(`The price is now ${fmt(err.pricing.displayTotal * usdPerUnit)}. Select & Book again to continue.`);
-      } else {
-        setMessage(err?.message ?? 'Booking could not be started. Try again.');
-      }
-    } catch {
-      setMessage('Could not reach the booking service. Check your connection and try again.');
-    }
-    setBusy(false);
-  };
-
-  return (
-    <div className="space-y-2 px-2 pb-1 pt-1.5">
-      <div>
-        <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-          {option.ticketType === 'return' ? 'Return total · per person' : 'Total · per person'}
-        </div>
-        <div className="font-display text-2xl font-extrabold leading-tight text-slate-900 tabular-nums">
-          {fmt(acceptedTotal !== null ? acceptedTotal * usdPerUnit : option.basePriceUsd)}
-        </div>
-      </div>
-
-      <dl className="space-y-0.5 text-[11px] text-slate-600 tabular-nums">
-        <div className="flex justify-between gap-3">
-          <dt>Base fare ({option.carrier})</dt>
-          <dd className="font-semibold text-slate-800">{fmt(baseUsd)}</dd>
-        </div>
-        <div className="flex justify-between gap-3">
-          <dt>Service fee</dt>
-          <dd className="font-semibold text-slate-800">{fmt(feeUsd)}</dd>
-        </div>
-      </dl>
-
-      {(expiring || expired) && (
-        <p
-          role="status"
-          className={`flex items-center gap-1 text-[11px] font-medium ${expired ? 'text-red-600' : 'text-amber-600'}`}
-        >
-          <Clock className="h-3 w-3 shrink-0" aria-hidden="true" />
-          {expired
-            ? 'This fare has expired. Search again for current prices.'
-            : `Fare valid for about ${Math.max(1, Math.ceil(msLeft / 60000))} more min`}
-        </p>
-      )}
-
-      <button
-        type="button"
-        onClick={() => void book()}
-        disabled={busy || expired}
-        className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-orange-500 px-3 py-2 text-xs font-bold text-white hover:bg-orange-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-1 disabled:cursor-default disabled:opacity-60"
-      >
-        {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />}
-        {busy ? 'Opening checkout…' : 'Select & Book'}
-      </button>
-
-      {message && (
-        <p role="alert" className="text-[11px] leading-snug text-red-600">
-          {message}
-        </p>
-      )}
-      <p className="text-[10px] leading-snug text-slate-500">
-        You enter passenger details and pay on Duffel's secure checkout. The airline issues your ticket there.
-      </p>
-    </div>
   );
 }
 
@@ -430,42 +294,20 @@ export function BookingButton({
   accent,
   cardRef,
   passengers = 1,
+  onRefreshLive,
 }: {
   option: TransitOption;
   /** The ticket's brand colours (matches the card header). */
   accent: CSSProperties;
   cardRef: RefObject<HTMLElement | null>;
-  /** Party size, sent to the checkout. */
+  /** Party size, for the seller lookup. */
   passengers?: number;
+  /** Re-fetches this leg's live fares (offered when a fare's token has expired). */
+  onRefreshLive?: () => void;
 }) {
-  // Airlines Duffel does not sell: straight to the partner, no checkout call
-  if (option.source === 'external_ulcc' && option.affiliateUrl) {
-    const name = ulccCarrier(option.carrierCode)?.name ?? option.carrier;
-    return (
-      <a
-        href={option.affiliateUrl}
-        target="_blank"
-        rel="sponsored noopener noreferrer"
-        onClick={(e) => e.stopPropagation()}
-        title={`Opens ${name} fares on our partner's site`}
-        className="inline-flex w-full items-center justify-center gap-1 whitespace-nowrap rounded-lg border border-slate-300 bg-white px-1.5 py-1 text-[10px] font-bold text-slate-800 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF812E] focus-visible:ring-offset-1"
-      >
-        Book direct on {name}
-        <ExternalLink className="h-3 w-3" aria-hidden="true" />
-      </a>
-    );
-  }
-  if (option.source === 'duffel' && option.pricing && option.offerId) {
-    return (
-      <OffersButton
-        id={option.id}
-        label={`Book ${option.carrier}`}
-        rows={[]}
-        body={<DuffelCheckout option={option} passengers={passengers} />}
-        accent={accent}
-        cardRef={cardRef}
-      />
-    );
+  // A live fare is bought from its own sellers, at the exact ticket
+  if (option.source === 'serpapi_live') {
+    return <BookExactButton option={option} passengers={passengers} onRefreshLive={onRefreshLive} />;
   }
   const rows = useMemo<OfferRow[]>(
     () =>

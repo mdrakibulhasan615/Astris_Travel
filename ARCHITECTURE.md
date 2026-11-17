@@ -20,7 +20,7 @@ Booking.com, Agoda) with the selected option's parameters filled in.
 - **Backend (primary):** Node.js + Express 4 in a single entry, `server.ts`, run with `tsx`.
   In development it mounts Vite as middleware; in production it serves `dist/`.
 - **Caching:** Upstash Redis (`@upstash/redis`, HTTP/REST) — **12-hour (`43200s`) TTL** on transit
-  search responses, with an in-process L1 cache of the same TTL in front of it. **Only live (Duffel)
+  search responses, with an in-process L1 cache of the same TTL in front of it. **Only live (SerpApi)
   results are cached**; curated/synthesized fallbacks are rebuilt each time so sample data can never be
   served as a cache hit or shadow real fares. Redis is optional.
 - **Shared code:** `shared/` is imported by both server and client (pure TypeScript, no Node APIs).
@@ -48,13 +48,8 @@ unprefixed keys (including `GEMINI_API_KEY`) are deliberately never exposed to t
 | Variable | Required | Used by | Purpose |
 | :--- | :--- | :--- | :--- |
 | `PORT` | no (3000) | `server.ts` | HTTP port |
-| `USE_REAL_DATA` | no (`false`) | `server/env.ts` `useRealData()` | `true` = live Duffel fares, `false` = sample data only (no Duffel or Redis fare requests). Overrides `USE_REAL_TICKET_DATA` in `shared/config.ts`, which is the in-code default (`false`). **Vercel: set it to `true` for the environment that should be live.** |
-| `DUFFEL_ACCESS_TOKEN` | no | `server/duffelService.ts` | Live bookable flights (Duffel Offers API) and the hosted checkout (Duffel Links); used when `USE_REAL_DATA` is on. Absent → curated/synthesized flights, no booking |
-| `DUFFEL_WEBHOOK_SECRET` | no | `server/flightsApi.ts` | Verifies `POST /api/webhooks/duffel` (HMAC-SHA256 of `t.body`); without it the webhook answers 503 |
-| `SHORT_HAUL_FLAT_FEE_USD`, `LONG_HAUL_MARKUP_PERCENT` | no (`10`, `4.5`) | `server/duffelService.ts` `markupConfig()` | Our service fee on a Duffel fare (§23) |
-| `APP_BASE_URL`, `APP_LOGO_URL` | no | `server/flightsApi.ts` | Where Duffel Links returns the traveller, and the logo it shows (default: the request's own origin / none) |
-| `DUFFEL_BASE_URL` | no | `server/duffelService.ts` | Points the SDK at another host (a local mock in tests) |
-| `SERPAPI_KEY` | no | `server/hotelService.ts` | Live hotel search (`engine=google_hotels`) only; flights no longer use SerpApi |
+| `USE_REAL_DATA` | no (`true`) | `server/env.ts` `useRealData()` | `true` = the "Fetch Live Fares" button may spend SerpApi searches, `false` = sample data only (the button answers with the offline schedule and route links). Overrides `USE_REAL_TICKET_DATA` in `shared/config.ts`. **Live fares are never fetched automatically** (§23). |
+| `SERPAPI_API_KEY` | no | `server/flightProvider.ts`, `server/hotelService.ts` | Live fares, exact-ticket sellers (`engine=google_flights`) and live hotels. Absent → estimated schedule + exact-route links. `SERPAPI_KEY` (the old name) is still read |
 | `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` | no | `server/transitService.ts` | 12-hour transit cache |
 | `TRIPCOM_ALLIANCE_ID`, `TRIPCOM_SID` | no | `shared/affiliate.ts` (configured in `transitService.ts`) | Trip.com partner pair, sent as `Allianceid` + `SID` on flight links. Both are needed. Absent → links work but are **not attributed** |
 | `BOOKING_AID` | no | same | Booking.com affiliate id, sent as `aid` on stay links |
@@ -62,7 +57,6 @@ unprefixed keys (including `GEMINI_API_KEY`) are deliberately never exposed to t
 | `TWELVEGO_AFFILIATE_ID` | no | same | 12Go partner id, sent as `z` on train / ferry / coach links |
 | `TRIPCOM_TRACKING_TEMPLATE`, `FLIXBUS_…`, `TWELVEGO_…`, `BOOKING_…`, `AGODA_…` | no | same | For programs run through a network (FlixBus on Awin, anything on Travelpayouts/CJ): an https URL containing `{url}`, which is replaced with the encoded deep link |
 | `FLIXBUS_CITY_LOOKUP` | no (on) | `server/flixbusService.ts` | `off` disables the FlixBus city-id lookup; FlixBus coaches then link to 12Go |
-| `DUFFEL_ACCESS_TOKEN` | **Phase 2 — not read by any code yet** | — | Reserved for native Duffel offers/orders |
 | `GEMINI_API_KEY`, `APP_URL` | no | — | AI Studio scaffolding; **not read by any code today** |
 
 ---
@@ -71,14 +65,14 @@ unprefixed keys (including `GEMINI_API_KEY`) are deliberately never exposed to t
 
 | Layer | Provider / Package | Implementation & Role |
 | :--- | :--- | :--- |
-| **Live Flight Discovery** | **Duffel** (`@duffel/api`) | `server/duffelService.ts` (offer request with `return_offers`; one slice = one-way, two = return). Offers are normalised to the DTOs in `shared/flights.ts`, priced with our fee (`shared/pricing.ts`), cached 10 minutes (offers within 2 minutes of `expires_at` are never served) and mapped to `TransitOption`s by `fetchDuffelFlights` in `server/transitService.ts`. City codes (`LON`, `PAR`) work as-is. See §23. |
+| **Live Flight Discovery** | **SerpApi** (`engine=google_flights`), on request only | `server/flightProvider.ts` (the `FlightProvider` interface and its SerpApi implementation) behind `server/liveFlightsApi.ts`. Step 1 `POST /api/flights/live-search` (30-minute cache), step 2 `POST /api/flights/booking-options` (15-minute cache) for the sellers of one exact ticket. See §23. |
 | **Fallback corridors** | `CURATED_CORRIDOR_OPTIONS` + `synthesizeCorridorOptions` | Hand-authored options for the default trip's corridors; every other pair is synthesized (flight / 1-stop / rail / coach) from great-circle distance. |
 | **Global Airport Data** | **`airports`** (npm) | `server/airportService.ts`: autocomplete (`searchAirports`) and IATA → exact tarmac lat/lng (`getAirportByIata`). Registered into `shared/airports.ts` at startup and used for every flight segment (§7). |
 | **Affiliate Monetization** | **Trip.com, FlixBus, 12Go, Booking.com, Agoda** (direct) | `shared/affiliate.ts` — see §6. The former Travelpayouts/Aviasales and Rome2Rio links are gone; `TRAVELPAYOUTS_*` variables are no longer read. |
 | **FlixBus city ids** | flixbus.com public city autocomplete | `server/flixbusService.ts`: city name + coordinates → FlixBus UUID, cached 24 h. Undocumented endpoint: every failure means "no FlixBus link". |
 | **Ground corridors** | built-in network (no API) | `shared/groundRouting.ts` — see §7. |
 | **Stays** | built-in estimates (no inventory API) | `shared/stays.ts` — see §10. |
-| **Ticket Fulfillment** | **Duffel API** *(Phase 2, not implemented)* | Planned: offer requests, single-offer pricing, ancillaries, order creation. `@duffel/api` is not yet a dependency. |
+| **Ticket Fulfillment** | **Seller handoff, not our own checkout** | "Book Exact Ticket" opens the sellers of the exact fare and posts the traveller to the chosen seller's checkout (§23). No payments or accounts here: no Duffel or order API, because Duffel does not support a Malaysian business. |
 
 ---
 
@@ -87,7 +81,7 @@ unprefixed keys (including `GEMINI_API_KEY`) are deliberately never exposed to t
 ├── server.ts                    # Express entry: API routes, input validation, Vite middleware / static serving
 ├── server/
 │   ├── env.ts                   # dotenv bootstrap (.env.local → .env), getEnv(), missing-key warnings — import FIRST
-│   ├── transitService.ts        # Duffel → TransitOption mapping, transit cache wrapper, coordinate resolution, fallback corridors
+│   ├── transitService.ts        # live-offer mapping, Redis cache wrapper, coordinate resolution, fallback corridors
 │   ├── airportService.ts        # `airports` dataset search + IATA lookup
 │   └── flixbusService.ts        # FlixBus city-id lookup (cached) for FlixBus deep links
 ├── shared/                      # Imported by server AND client
@@ -232,7 +226,7 @@ ground travel to/from the airport is a *separate* connecting segment.
   (Havabus, Stansted Express, KLIA Ekspres, metro…) are preserved. `normalizeOptionGeometry` does both
   and is idempotent.
 - Applied in `buildLegsFromStops` (curated + synthesized options) and `queryTransitWithCache` (cache
-  hit, live Duffel, fallback). Duffel hops are resolved from each hop's own `departure_airport.id` /
+  hit, live SerpApi, fallback). SerpApi hops are resolved from each hop's own `departure_airport.id` /
   `arrival_airport.id`, so SAW vs IST is preserved. Synthesized 1-stop flights connect through a real
   hub airport (`pickConnectionHub`), not a computed midpoint.
 - Client: the browser has the built-in table plus every airport it has seen (`registerAirports`: flight
@@ -270,9 +264,9 @@ It is not a routing engine: lines follow corridors between junction cities, not 
 ## 8. Flight Data Integrity (backend → UI)
 
 - **One pipeline:** `/api/trips/default` and `/api/legs/recompute` both call `buildLegsViaTransitService`
-  (live Duffel → cache → curated/synthesized fallback). Previously the first page load was pure mock
+  (recent fares → curated/synthesized fallback; live fares are fetched on request, §23). Previously the first page load was pure mock
   data (e.g. "TK 61") and live fares only appeared after the first edit.
-- **Provider fields are not invented.** `fetchDuffelFlights` copies airline(s), every flight number
+- **Provider fields are not invented.** `fetchSerpApiFlights` copies airline(s), every flight number
   (`routeCode` = `"QR 851 + QR 239"`, plus `flightNumbers[]`/`carriers[]`), departure/arrival clock times
   (with `+Nd` computed from the real dates), duration, layovers and price verbatim. An itinerary without
   a price, flights or duration is **dropped**, never given a placeholder fare/time.
@@ -303,7 +297,7 @@ It is not a routing engine: lines follow corridors between junction cities, not 
 
 ## 9. Reliability Conventions
 - Async Express handlers wrap their bodies in `try/catch` (Express 4 does not catch rejected promises).
-- Redis and Duffel failures never fail a request: cache errors degrade to a miss, live-API errors
+- Redis and SerpApi failures never fail a request: cache errors degrade to a miss, live-API errors
   fall back to curated/synthesized corridors; a failed leg falls back to the synchronous builder.
 - Client: optimistic update first, server reconcile second; stale `recompute` responses are discarded
   via a monotonic request id. `<ErrorBoundary>` wraps the app and, separately, the map.
@@ -362,14 +356,14 @@ It is not a routing engine: lines follow corridors between junction cities, not 
 
 `vercel.json` serves the Vite build from `dist` and rewrites `/api/*` to the single function
 `api/index.ts` (`createApp()` from `server.ts`, `maxDuration` 30). Everything above runs inside that one
-Express app: Duffel + Upstash calls happen per request, the in-process cache is per instance (Upstash is
+Express app: SerpApi + Upstash calls happen per request, the in-process cache is per instance (Upstash is
 the shared one), and nothing needs a long-running process.
 
 ## 13. Data Mode, Currency, Baggage, Tags & Ranking
 
 - **Sample vs live (`shared/config.ts`, `useRealData()` in `server/env.ts`).** One flag,
   `USE_REAL_TICKET_DATA = false` in code, overridable per environment with `USE_REAL_DATA`. When off,
-  `queryTransitWithCache` never calls Duffel **and never reads or writes the Redis fare cache**, so page
+  `queryTransitWithCache` never calls SerpApi **and never reads or writes the Redis fare cache**, so page
   loads, reloads and edits spend no credits; the app runs entirely on curated/estimated tickets. Server
   start logs which mode is active. The header shows "Sample data" or "Live fares" (information only; there
   is no UI switch). Ground transport is curated/estimated in both modes.
@@ -381,7 +375,7 @@ the shared one), and nothing needs a long-running process.
   Switching never re-queries fares and never changes a ranking. Rates come from `/api/rates`; the choice is
   kept in `localStorage`. Smart Score is a unit-less points figure and is not converted.
 - **Baggage (`BaggageInfo` on `TransitOption.baggage`).** Live fares: `parseBaggage` reads carry-on /
-  checked-bag phrases from the fare's amenity strings. In practice many Duffel fares state none, so the
+  checked-bag phrases from the fare's amenity strings. In practice many SerpApi fares state none, so the
   fallback is the carrier's typical economy policy (`typicalBaggage`: full-service = carry-on + 1 × 23 kg,
   low-cost = carry-on, checked for a fee, "Saver/Basic/Light" fares = no checked bag, coach 1 × 25 kg,
   rail/ferry included). Typical values are tagged `source: 'typical'` and shown with a "typical" marker and
@@ -458,7 +452,7 @@ sell the flight, cheapest first; the cheapest has the orange `Buy` button, the r
 With `USE_REAL_DATA` off the flights used to be fully invented. When `TRAVELPAYOUTS_TOKEN` is set, the server asks
 the free Aviasales Data API (`/aviasales/v3/prices_for_dates`, token in the `X-Access-Token` header, prices in USD)
 for the cheapest fare and the cheapest non-stop for the leg's date (round-trip total for return tickets) and shows
-those as `dataSource: 'cached'` ("Recent fare" chip) instead of the sample flights. No Duffel request is made.
+those as `dataSource: 'cached'` ("Recent fare" chip) instead of the sample flights. No SerpApi credit is spent.
 
 - **What the data is.** Fares other travellers found on Aviasales in the last ~48 h: real, but possibly moved, and
   only for routes someone searched. When there is nothing for the exact date, the nearest cached day within ±3 days
@@ -472,7 +466,7 @@ those as `dataSource: 'cached'` ("Recent fare" chip) instead of the sample fligh
 - **Booking panel.** A cached ticket's cheapest row is Aviasales itself (the fare's own results page, with
   `TRAVELPAYOUTS_MARKER` appended when set); Trip.com and the others are estimates just above it.
 - **Rules that follow.** `cached` counts as a real fare for the one-way vs return comparison and for reusing earlier
-  results; a return derived from a cached one-way is an estimate. With `USE_REAL_DATA` on, Duffel is used instead
+  results; a return derived from a cached one-way is an estimate. With `USE_REAL_DATA` on, SerpApi is used as before
   and this service is not called. A rejected or missing token degrades to the sample flights.
 
 ## 18. Partner Ids — `shared/config.ts`
@@ -572,35 +566,36 @@ trip state as the itinerary list (`trip.stops`, `trip.legPrefs`), so the two alw
 - Menus render in portals so the bar's pills never clip them.
 
 
-## 23. Duffel Flights, Service Fee and Hosted Checkout
+## 23. Live Fares and Exact-Ticket Handoff — `server/liveFlightsApi.ts`, `server/flightProvider.ts`, `shared/liveFlights.ts`
 
-Flights in live mode (`USE_REAL_DATA`) come from Duffel, not a scraper, so every fare is a bookable offer
-(`off_0000…`) with the exact airline price.
+A SerpApi Google Flights search gives flights, prices and a token; the sellers of one exact ticket cost a second
+search. The free plan has 100 searches a month, so **nothing fetches on page load, on an edit or on a filter change**:
+the leg list starts as the estimated / offline schedule (curated, or recent fares from the Aviasales Data API).
 
-- **Search** — `POST /api/flights/search` `{ slices, passengers, cabinClass? }` (`server/flightsApi.ts`) returns
-  `{ offers, ulcc, cached }` (`shared/flights.ts`). The transit pipeline asks for one adult per slice and the UI scales by party size.
-- **Cache** — Upstash Redis + memory, key `duffel:offers:v1:…`, TTL 600 s. The cache holds the airline price; our fee is applied on
-  every read, so a changed fee or exchange rate shows immediately. Offers with under 2 minutes left are filtered out.
-- **Service fee** — `applyDynamicMarkup` in `shared/pricing.ts` (pure, unit-tested in `shared/pricing.test.ts`): fares under $150 USD-equivalent
-  get a flat fee (`SHORT_HAUL_FLAT_FEE_USD`, default 10, converted into the fare's currency); at or above $150 they get `LONG_HAUL_MARKUP_PERCENT`
-  (default 4.5%). Returns `{ baseFare, serviceFee, displayTotal, currency }`; amounts round to the currency's minor unit (JPY whole numbers).
-  A currency with no exchange rate cannot be tiered, so that offer is dropped and counted in the log. `TransitOption.basePriceUsd` is the USD value
-  of `displayTotal`, so ranking and the Smart Score use the price the traveller actually pays.
-- **Checkout** — `POST /api/flights/checkout` `{ offerId, slices, passengers, cabinClass, expectedTotal, currency }`: re-fetches the offer
-  (`offers.get`), answers 410 `offer_expired` when it is gone, re-prices it on the server and answers 409 `price_changed` (with the new price)
-  when it differs from `expectedTotal`, then creates a Duffel Links session (`links.create`: Astris brand colour, `reference`, return URLs
-  `/?booking=success|failed|abandoned&ref=…`, `markup_amount` = fee × passengers, `markup_currency`) and returns `{ checkoutUrl }`.
-  **Duffel Links takes no offer id**: the session carries a tracking reference and a flat markup, and the traveller searches again inside
-  Duffel's page. The re-validation protects what we show before the hand-off; it cannot pin the fare inside Links.
-- **Webhook** — `POST /api/webhooks/duffel` (registered before `express.json()`: the signature needs the raw body) verifies
-  `X-Duffel-Signature` (`t=…,v1=…`, 5 minute tolerance) and records `order.created` (order id, booking reference/PNR) in
-  `server/duffelBookings.ts`. `GET /api/flights/orders/:ref` feeds the confirmation banner (`src/components/BookingBanner.tsx`).
-  Duffel's success redirect adds `order_id` next to our `reference`; the banner passes both to `GET /api/flights/orders/:ref?order_id=` and the
-  server reads the order back from Duffel (`orders.get`) to record the PNR, so it does not depend on the webhook echoing the reference
-  (the webhook still searches its payload for the `astris_…` prefix as a second route).
-- **ULCCs** — airlines Duffel does not sell (`shared/ulcc.ts`: AirAsia group, Ryanair, Wizz…) are surfaced from the Aviasales Data API as
-  `source: 'external_ulcc'` with an `affiliateUrl`; the card shows "Book direct on {carrier}" and never calls the checkout.
-- **UI** — Duffel cards show the total, an "incl. $X fee" line and a Bookable chip; the floating panel (`DuffelCheckout` in `BookingOffers.tsx`)
-  shows Base fare + Service fee, a validity note in the last 10 minutes of an offer, and **Select & Book** (loading state, price-change and
-  expiry messages). Duffel and ULCC options get no estimated merchant comparison rows.
-- **Tests** — `npm test` (`tsx --test`): pricing tiers and rounding, offer normalisation, cache lifetime, request validation, webhook signature.
+1. **Fetch Live Fares** (button per leg, `src/components/LiveFaresBar.tsx`) → `POST /api/flights/live-search`
+   `{ originIata, destinationIata, departureDate, returnDate?, adults?, currency? }`. One-way and individual corridors use
+   `type=2`, a return ticket `type=1` with `return_date` (main airport per side: several airports on a round trip return nothing).
+   `best_flights` + `other_flights` become `LiveFlightOffer`s (`shared/liveFlights.ts`: airline, flight numbers, times, duration,
+   stops and layovers, price, `baggageSummary` parsed from `extensions[]`, `bookingToken` or, for a round trip's outbound,
+   `departureToken`) and also the same scored `TransitOption`s the cards draw (`liveOffersToOptions`, `source: 'serpapi_live'`).
+   Cached 30 minutes in Upstash Redis when configured, else an in-process Map (`server/ttlCache.ts`).
+   The browser keeps the answer beside the trip (`src/liveFares.ts`) and swaps it into the leg while the search it answers is still the one
+   on screen (route, date, ticket type), so edits do not lose a fare that cost a search.
+2. **Book Exact Ticket** (a card button, `src/components/SellerModal.tsx`) → `POST /api/flights/booking-options`
+   `{ bookingToken, search }`, cached 15 minutes per token. Round trip: the outbound has a `departureToken` only, so the modal first calls
+   `POST /api/flights/return-flights` (return flights, each with a `bookingToken`) and the traveller picks one.
+   `booking_options[]` (`together`, or a `departing` + `returning` pair sold as two tickets) become `SellerBookingOption`s: seller,
+   `isAirlineDirect`, price, `baggagePrices`, `bookingRequest { url, postData? }`. Cheapest first, airline direct first on a tie.
+   **Verified against the live API: a `booking_token` is only accepted together with the search it came from** (`departure_id`,
+   `arrival_id`, `outbound_date`, `type`…). A bare token answers HTTP 400 "Missing `departure_id` parameter", and different airports find nothing,
+   so the lookup repeats the original search (the opposite of what SerpApi's reference suggests).
+3. **Handoff** — with `postData` the button is a real `<form method="POST" target="_blank" rel="noopener noreferrer">` whose hidden inputs
+   are `postDataFields(postData)` (decoded once, so the browser re-encodes them into the original body); without it a plain `<a>` link.
+
+- **Errors**: an expired or unknown token → `410 TOKEN_EXPIRED` (the modal offers "Refresh live fares"); quota or no key → the search answers
+  `mode: 'offline'` with `fallbackLinks` (Trip.com, Skyscanner: exact route and date) and the cards stay on the estimated schedule, labelled
+  "Estimated / Offline Schedule"; `BAD_REQUEST` 400, `UPSTREAM_ERROR` 502.
+- **Swappable source**: `FlightProvider` (`searchCorridor`, `getReturnFlights`, `getBookingOptions`) hides SerpApi. A later provider
+  (Travelpayouts real-time search at 50k MAU, Duffel once an overseas entity exists) is one new class in `liveFlightsApi.ts`.
+- **Tests**: `npm test` (`tsx --test`): extension/baggage parsing and offer normalisation, `booking_options` parsing, `post_data` field
+  round-trip, the 30-minute cache (hit, miss, expiry, Redis cold start, outage), the provider's request shapes and error mapping.

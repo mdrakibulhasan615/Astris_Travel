@@ -12,7 +12,7 @@ export const HOTEL_CACHE_TTL_SECONDS = 24 * 60 * 60;
 const TIMEOUT_MS = 12_000;
 const MAX_HOTELS = 12;
 
-export const serpApiHotelsKey = (): string | undefined => getEnv('SERPAPI_KEY');
+export const serpApiHotelsKey = (): string | undefined => getEnv('SERPAPI_API_KEY');
 
 export interface HotelQuery {
   city: string;
@@ -80,7 +80,7 @@ export function parseHotels(data: { properties?: RawProperty[] }, nights: number
 export async function fetchHotels(q: HotelQuery): Promise<{ hotels: HotelResult[]; cached: boolean } | null> {
   const key = serpApiHotelsKey();
   if (!key) {
-    warnMissingKey('SERPAPI_KEY', 'live hotel search');
+    warnMissingKey('SERPAPI_API_KEY', 'live hotel search');
     return null;
   }
   const nights = nightsBetween(q.checkIn, q.checkOut);

@@ -1,6 +1,3 @@
-import type { CabinClass, SliceRequest } from './flights.ts';
-import type { PriceBreakdown } from './pricing.ts';
-
 export type TransitMode = 'flight' | 'train' | 'bus' | 'ferry';
 
 export type ModeFilter = 'all' | TransitMode;
@@ -253,23 +250,24 @@ export interface TransitOption {
   /** Raw provider timestamps ("YYYY-MM-DD HH:MM") for the first departure / last arrival. */
   departureAt?: string;
   arrivalAt?: string;
-  /** When a Duffel offer can no longer be booked (ISO, UTC). */
   expiresAt?: string;
   segments?: TransitSegment[];
   /**
-   * `duffel`: a bookable fare, checked out through `/api/flights/checkout` (priced with our service
-   * fee in `pricing`, `basePriceUsd` is its USD total). `external_ulcc`: an airline Duffel does not
-   * sell, handed off to `affiliateUrl`. Absent: sample or recent-fare data with merchant `offers`.
+   * `serpapi_live`: a live fare the traveller fetched with "Fetch Live Fares". "Book Exact Ticket"
+   * opens its sellers; the tokens below feed that call.
    */
-  source?: 'duffel' | 'external_ulcc';
-  /** Duffel offer id (`off_0000…`) for `source: 'duffel'`. */
-  offerId?: string;
-  /** The traveller's price in the offer's own currency: airline fare, our fee, and the total. */
-  pricing?: PriceBreakdown;
-  /** Partner link for `external_ulcc` fares ("Book direct on AirAsia"). */
-  affiliateUrl?: string;
-  /** What the checkout call needs to re-find this offer. */
-  checkout?: { slices: SliceRequest[]; cabinClass?: CabinClass };
+  source?: 'serpapi_live';
+  liveOfferId?: string;
+  /** One-way offers (and a chosen return flight): the booking-options lookup key. */
+  bookingToken?: string;
+  /** The search this fare answers: a round-trip outbound needs it to fetch its return flights. */
+  liveSearch?: { originIata: string; destinationIata: string; departureDate: string; returnDate?: string };
+  /** Round-trip outbound offers: fetches the matching return flights first. */
+  departureToken?: string;
+  /** When the live fare was fetched (ISO). */
+  fetchedAt?: string;
+  /** `1 carry-on · Checked bag included`, from the fare's own extension strings. */
+  baggageSummary?: string;
 }
 
 /** One-way tickets vs a return ticket for a pair of legs that go there and back. */
