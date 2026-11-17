@@ -78,8 +78,8 @@ function ModeIcon({ mode, className }: { mode: TransitMode; className?: string }
 
 function getModeAccentClass(mode: TransitMode, isSelected: boolean): string {
   if (mode === 'flight') return isSelected ? 'text-[#FF812E]' : 'text-[#FF812E]';
-  if (mode === 'train') return 'text-[#0D9488]';
-  if (mode === 'bus') return 'text-[#7C3AED]';
+  if (mode === 'train') return 'text-[#7C3AED]';
+  if (mode === 'bus') return 'text-[#0D9488]';
   return 'text-[#0284C7]';
 }
 

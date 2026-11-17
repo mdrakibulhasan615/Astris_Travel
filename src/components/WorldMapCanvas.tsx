@@ -74,8 +74,8 @@ const FALLBACK_OSM_RASTER_STYLE = {
 
 function getModeColor(mode: TransitMode): string {
   if (mode === 'flight') return '#FF812E';
-  if (mode === 'train') return '#0D9488';
-  if (mode === 'bus') return '#7C3AED';
+  if (mode === 'train') return '#7C3AED';
+  if (mode === 'bus') return '#0D9488';
   return '#0284C7';
 }
 
@@ -557,7 +557,7 @@ export function WorldMapCanvas({
       >
         <NavigationControl position="bottom-right" showCompass={false} />
 
-        {/* 1. Trains: Emerald/Teal (#0D9488) multi-point rail polylines */}
+        {/* 1. Trains: Purple (#7C3AED) multi-point rail polylines (the same purple as train tickets) */}
         <Source id="astris-train-lines" type="geojson" data={mapLayersData.trainGeoJson}>
           <Layer
             id="astris-train-casing"
@@ -573,7 +573,7 @@ export function WorldMapCanvas({
             id="astris-train-stroke"
             type="line"
             paint={{
-              'line-color': '#0D9488',
+              'line-color': '#7C3AED',
               'line-width': ['case', ['boolean', ['get', 'isHighlighted'], false], 4, 3],
               'line-opacity': 0.95,
             }}
@@ -581,7 +581,7 @@ export function WorldMapCanvas({
           />
         </Source>
 
-        {/* 2. Buses & Local Ground Transfers: Royal Purple (#7C3AED) polylines */}
+        {/* 2. Buses & Local Ground Transfers: Teal (#0D9488) polylines */}
         <Source id="astris-bus-lines" type="geojson" data={mapLayersData.busGeoJson}>
           <Layer
             id="astris-bus-casing"
@@ -597,7 +597,7 @@ export function WorldMapCanvas({
             id="astris-bus-stroke"
             type="line"
             paint={{
-              'line-color': '#7C3AED',
+              'line-color': '#0D9488',
               'line-width': ['case', ['boolean', ['get', 'isHighlighted'], false], 4, 3],
               'line-opacity': 0.95,
             }}
@@ -904,11 +904,11 @@ export function WorldMapCanvas({
                 Flight
               </span>
               <span className="inline-flex items-center gap-1">
-                <span className="w-2.5 h-0.5 bg-[#0D9488] rounded-full" />
+                <span className="w-2.5 h-0.5 bg-[#7C3AED] rounded-full" />
                 Rail
               </span>
               <span className="inline-flex items-center gap-1">
-                <span className="w-2.5 h-0.5 bg-[#7C3AED] rounded-full" />
+                <span className="w-2.5 h-0.5 bg-[#0D9488] rounded-full" />
                 Bus
               </span>
             </div>
