@@ -15,6 +15,8 @@ import type { AffiliateOffer, OfferProviderId, TransitOption } from '../../share
 import { PROVIDER_NAMES } from '../../shared/affiliate.ts';
 import { useCurrency } from '../currency.tsx';
 import { BookExactButton } from './SellerModal.tsx';
+import { BrandLogo } from './BrandLogo.tsx';
+import { merchantLogoUrl } from '../utils/logos.ts';
 
 // ── One panel open at a time: opening another card's panel switches to it ──────────────────────
 
@@ -45,15 +47,23 @@ const BADGES: Record<string, { bg: string; glyph: string }> = {
   'google-flights': { bg: '#EA4335', glyph: 'G' },
 };
 
-function MerchantBadge({ id }: { id: string }) {
+function MerchantBadge({ id, name }: { id: string; name?: string }) {
   const b = BADGES[id] ?? { bg: '#6B7280', glyph: '?' };
-  return (
+  // The merchant's real logo; the drawn letter badge stands in when it cannot be loaded
+  const letter = (
     <span
       aria-hidden="true"
       className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg font-display text-sm font-black text-white"
       style={{ background: b.bg }}
     >
       {b.glyph}
+    </span>
+  );
+  const src = merchantLogoUrl(id);
+  if (!src) return letter;
+  return (
+    <span className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-white ring-1 ring-slate-200">
+      <BrandLogo src={src} alt={name ? `${name} logo` : ''} className="h-6 w-6 object-contain" fallback={letter} />
     </span>
   );
 }
@@ -202,7 +212,7 @@ function OffersPanel({
           {rows.map((row, i) => (
             <li key={row.key} className="flex items-center justify-between gap-3 px-2 py-2.5">
               <div className="flex min-w-0 items-center gap-2.5">
-                <MerchantBadge id={row.badge} />
+                <MerchantBadge id={row.badge} name={row.name} />
                 <div className="min-w-0">
                   <div className="whitespace-nowrap font-display text-[15px] font-extrabold leading-tight text-slate-900 tabular-nums">
                     {row.priceUsd === undefined ? (

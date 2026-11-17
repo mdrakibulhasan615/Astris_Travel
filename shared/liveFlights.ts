@@ -127,6 +127,8 @@ export interface SellerBookingOption {
   groupPrice: number;
   baggagePrices: string[];
   optionTitle?: string;
+  /** The seller's logo, as SerpApi sends it. */
+  logo?: string;
   bookingRequest: BookingRequest;
 }
 
@@ -362,6 +364,7 @@ interface RawSeller {
   airline?: boolean;
   price?: number;
   option_title?: string;
+  airline_logos?: string[];
   baggage_prices?: string[];
   booking_request?: { url?: string; post_data?: string };
 }
@@ -398,6 +401,7 @@ export function parseBookingOptions(
       price,
       baggagePrices: Array.isArray(raw.baggage_prices) ? raw.baggage_prices.filter((b) => typeof b === 'string') : [],
       ...(raw.option_title ? { optionTitle: raw.option_title } : {}),
+      ...(typeof raw.airline_logos?.[0] === 'string' ? { logo: raw.airline_logos[0] } : {}),
       bookingRequest: { url, ...(typeof postData === 'string' && postData.length > 0 ? { postData } : {}) },
     };
   };

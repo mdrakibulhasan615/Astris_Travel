@@ -178,7 +178,15 @@ describe('parseBookingOptions', () => {
     assert.deepEqual(o.baggagePrices, ['1 free carry-on', '1st checked bag $32']);
     assert.equal(o.part, 'together');
     assert.equal(o.separateTickets, false);
+    assert.equal(o.logo, undefined);
     assert.deepEqual(o.bookingRequest, { url: 'https://www.google.com/travel/clk/f', postData: 'u=abc%3D%3D&f.req=%5B%5B1%5D%5D' });
+  });
+
+  it("keeps the seller's logo when SerpApi sends one", () => {
+    const [o] = parseBookingOptions({
+      booking_options: [{ together: seller({ airline_logos: ['https://www.gstatic.com/flights/partner_logos/70px/CTRIP.png'] }) }],
+    });
+    assert.equal(o.logo, 'https://www.gstatic.com/flights/partner_logos/70px/CTRIP.png');
   });
 
   it('a seller without post_data has a plain url request (GET deep link)', () => {
