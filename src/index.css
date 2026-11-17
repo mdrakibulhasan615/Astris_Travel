@@ -146,3 +146,11 @@
   85% { transform: translate(-8%, -4%); }
   100% { transform: translate(0, 0); }
 }
+
+/* Login nudge toast (src/components/auth/NudgeToast.tsx): slides in from the bottom right */
+@keyframes astris-nudge-in {
+  from { opacity: 0; transform: translate3d(24px, 12px, 0); }
+  to { opacity: 1; transform: none; }
+}
+.astris-nudge { animation: astris-nudge-in 320ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+@media (prefers-reduced-motion: reduce) { .astris-nudge { animation: none; } }

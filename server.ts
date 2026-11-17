@@ -8,6 +8,7 @@ import {
   REDIS_CACHE_TTL_SECONDS,
   buildTransitCacheKey,
   checkRedisConnection,
+  getRedisClient,
   isRedisConfigured,
   queryTransitWithCache,
 } from './server/transitService.ts';
@@ -29,6 +30,9 @@ import { fetchGoogleTransitRoutes, googleMapsKey } from './server/googleRoutesSe
 import { fetchTwelveGoTimetable, twelveGoCountry } from './server/twelveGoService.ts';
 import { fetchHotels, serpApiHotelsKey } from './server/hotelService.ts';
 import { registerLiveFlightRoutes } from './server/liveFlightsApi.ts';
+import { registerAuthRoutes } from './server/auth.ts';
+import { securityMiddleware } from './server/security/headers.ts';
+import { createLimiter, rateLimit, RATE_LIMITS } from './server/security/rateLimit.ts';
 import type { GroundSchedules } from './shared/groundSchedule.ts';
 import {
   finalizeLegs,
@@ -276,8 +280,15 @@ function logLegs(label: string, legs: TripLeg[]): void {
 export function createApp() {
   logEnvStatus();
   const app = express();
-  app.use(express.json());
+  app.disable('x-powered-by');
+  // Behind Vercel's (or any single) proxy: req.ip is the client from X-Forwarded-For, used by the rate limiter
+  app.set('trust proxy', 1);
+  // Security headers, CORS allowlist, CSRF Origin check, anonymous session cookie (server/security/headers.ts)
+  app.use(securityMiddleware());
+  app.use(express.json({ limit: '256kb' }));
   registerLiveFlightRoutes(app);
+  registerAuthRoutes(app);
+  const hotelsLimiter = createLimiter(RATE_LIMITS.hotels, getRedisClient);
 
   // Health & initial dataset
   // The initial trip used to be pure mock data (TK 61 etc.), so live SerpApi fares only appeared
@@ -354,7 +365,7 @@ export function createApp() {
 
   // Live hotels for one stop (Google Hotels via SerpApi). Only in live-data mode: a search costs a
   // credit, so with live fares off it answers `enabled: false` without calling out. Cached 24 hours.
-  app.get('/api/hotels/search', async (req, res) => {
+  app.get('/api/hotels/search', rateLimit(RATE_LIMITS.hotels, hotelsLimiter), async (req, res) => {
     try {
       const enabled = useRealData() && Boolean(serpApiHotelsKey());
       if (!enabled) return res.json({ enabled: false, hotels: [] });

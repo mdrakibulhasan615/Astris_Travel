@@ -34,6 +34,8 @@ Booking.com, Agoda) with the selected option's parameters filled in.
 | `npm run dev` | `tsx server.ts` | Express + Vite middleware on `PORT` (default 3000) |
 | `npm run build` | `vite build` | Client bundle to `dist/` |
 | `npm run lint` | `tsc --noEmit` | Type-check client, server and shared code |
+| `npm test` | `tsx --test …` | Tests: live flights, no-dummy-data, security (rate limits, zod, XSS URLs, headers, CORS/CSRF, secrets), route storage |
+| `npm run headers:sync` | `tsx scripts/sync-security-headers.ts` | Copy the security headers / CSP from `server/security/headers.ts` into `vercel.json` |
 
 ### Environment variables (`.env.local`, see `.env.example`)
 Loading is centralised in `server/env.ts`, which must be the **first import** of `server.ts` (ES imports
@@ -57,7 +59,10 @@ unprefixed keys (including `GEMINI_API_KEY`) are deliberately never exposed to t
 | `TWELVEGO_AFFILIATE_ID` | no | same | 12Go partner id, sent as `z` on train / ferry / coach links |
 | `TRIPCOM_TRACKING_TEMPLATE`, `FLIXBUS_…`, `TWELVEGO_…`, `BOOKING_…`, `AGODA_…` | no | same | For programs run through a network (FlixBus on Awin, anything on Travelpayouts/CJ): an https URL containing `{url}`, which is replaced with the encoded deep link |
 | `FLIXBUS_CITY_LOOKUP` | no (on) | `server/flixbusService.ts` | `off` disables the FlixBus city-id lookup; FlixBus coaches then link to 12Go |
-| `GEMINI_API_KEY`, `APP_URL` | no | — | AI Studio scaffolding; **not read by any code today** |
+| `SUPABASE_URL`, `SUPABASE_ANON_KEY` (or `SUPABASE_PUBLISHABLE_KEY`) | no | `server/auth.ts` | Accounts + saved-route sync (§25). Server-side only. Absent → guest-only, no login prompts |
+| `APP_URL` | no | `server/auth.ts`, `server/security/headers.ts` | Public site URL: OAuth / magic-link redirects, allowed CORS origin |
+| `ALLOWED_ORIGINS` | no | `server/security/headers.ts` | Extra comma-separated CORS / CSRF origins (never `*`) |
+| `GEMINI_API_KEY` | no | — | AI Studio scaffolding; **not read by any code today** |
 
 ---
 
@@ -79,6 +84,7 @@ unprefixed keys (including `GEMINI_API_KEY`) are deliberately never exposed to t
 ## 4. Core File Architecture
 ```text
 ├── server.ts                    # Express entry: API routes, input validation, Vite middleware / static serving
+├── supabase/migrations/         # 001_saved_routes.sql (saved routes + RLS)
 ├── server/
 │   ├── env.ts                   # dotenv bootstrap (.env.local → .env), getEnv(), missing-key warnings — import FIRST
 │   ├── transitService.ts        # live-offer mapping, Redis cache wrapper, coordinate resolution, fallback corridors
@@ -621,3 +627,54 @@ removed. What is left:
 - **Route optimizer** orders stops by total distance (cost and score are zero without fares, so ties keep the distance order).
 - `shared/mockDataset.ts` became `shared/destinations.ts`: reference data only (city suggestions, the starting stop, the empty default trip).
 - Tests: `shared/noDummyData.test.ts` pins this (empty new trip, empty legs, no stay prices, unpriced merchant rows, no guessed baggage).
+
+## 25. Accounts, Route Persistence & Login Prompts — `server/auth.ts`, `src/useRouteStorage.ts`, `src/context/`
+
+Everything works without an account. Accounts only add cross-device sync.
+
+- **Guests (local-first).** `useRouteStorage` writes the current route (stops, dates, party, ticket choices; no fares) to
+  `localStorage['astris_guest_routes']` (`{ v, activeId, routes[] }`, max 20, newest first) 600 ms after each change, and restores the active
+  route once `/api/trips/default` has loaded. Zero cloud writes. Model and zod schemas: `shared/savedRoutes.ts`; storage helpers: `src/routeStorage.ts`.
+- **Share link.** "Copy route sync link" (top bar, `src/components/auth/AccountControls.tsx`) copies `/#r=<token>`: `z` + base64url(deflate-raw(JSON))
+  via `CompressionStream` (`j` + plain base64url as a fallback). It lives in the hash, so it never reaches a server log. A link is validated with zod
+  when opened (on load or `hashchange`) and becomes its own recent route.
+- **Accounts (Supabase Auth: Google OAuth, email magic link + code).** The server runs the PKCE flow (`@supabase/ssr`) and keeps the session in
+  `HttpOnly; SameSite=Lax` cookies (`Secure` in production); the browser never holds a token (`/api/auth/session` returns a public profile only;
+  `src/context/AuthContext.tsx`). Routes: `GET /api/auth/session`, `GET /api/auth/google?next=`, `POST /api/auth/magic-link`, `POST /api/auth/verify`,
+  `GET /api/auth/callback`, `POST /api/auth/logout`; `GET /api/routes`, `PUT /api/routes/:clientId`, `POST /api/routes/import`,
+  `DELETE /api/routes/:clientId`. `next` is limited to same-site relative paths.
+- **Sync.** Signed in, each change is also `PUT` to `saved_routes` (2.5 s debounce). On login, `migrateGuestRoutes` sends the local routes to
+  `/api/routes/import` once per account (newer `updatedAt` wins; timestamps are clamped to now), stores the merged list locally, and loads the newest
+  account route when this device had none. Logout clears the local copy (shared devices).
+- **Database.** `supabase/migrations/001_saved_routes.sql`: `unique(user_id, client_id)`, 32 KB JSON cap, RLS enabled and forced, select / insert /
+  update / delete policies `(select auth.uid()) = user_id` for `authenticated` only, `anon` revoked, a trigger that blocks moving a row to another user
+  and caps 100 routes per user. The API queries as the user (anon key + the user's JWT), so RLS does the enforcing; no service-role key is used.
+- **Login prompts (`src/context/AuthPromptContext.tsx`).** Guests only, only when Supabase is configured, all dismissible, state in `sessionStorage`:
+  - *A, checkout handoff:* "Proceed to {Seller}" (`SellerAction`, link or POST form) sets `astris_pending_checkout_prompt` and opens
+    "Save your trip itinerary & track this flight?" on this tab ("Continue as Guest"). Not shown again for 10 min after a dismissal.
+  - *B, exit intent:* the pointer leaves through the top edge (`mouseout`, `clientY <= 0`), or on touch devices the tab is hidden (shown on return),
+    with a route of 2+ stops, once per session. A pending checkout prompt wins. No `beforeunload` dialog (nothing unsaved to lose).
+  - *C, nudge toast:* bottom right, first after 90 s, then every 4 min of active use (input in the last 2 min, tab visible), at most 3 per session,
+    hides itself after 20 s; × snoozes it for 4 min.
+
+## 26. Security Hardening — `server/security/`, `shared/safeUrl.ts`
+
+- **Rate limits (`rateLimit.ts`).** Sliding windows per IP (`trust proxy` 1 → X-Forwarded-For) **and** per `astris_sid` session cookie:
+  live-search 5 / 10 min, return-flights 10, booking-options 15, hotels 10, auth emails 5, route writes 60. `@upstash/ratelimit` when Upstash is
+  configured (shared across instances, 1.5 s timeout), an in-memory sliding log otherwise or on a Redis error. Exceeded → `429` JSON with
+  `Retry-After` and `RateLimit-*` headers, before any provider call (invalid requests count too).
+- **Validation (`validation.ts`, zod).** IATA `^[A-Z]{3}$` (trimmed, upper-cased first), real calendar dates, adults 1–9, ISO currency, bounded
+  provider tokens (no markup), emails, OTP codes, saved routes (bounded arrays and coordinates, text stripped of `<>` and control characters).
+- **URLs (`shared/safeUrl.ts`).** Only absolute `https:` URLs without credentials pass. Applied when parsing SerpApi `booking_request.url` and logos,
+  and again in `SellerAction` before an `href` / form `action` is rendered (`javascript:`, `data:`, `http:` → "Link unavailable").
+- **Headers (`headers.ts`).** CSP (production only; Vite's dev server injects inline scripts): `default-src 'self'`, scripts self + `tp-em.com` +
+  Vercel analytics, `connect-src` self + Supabase + map tiles + Travelpayouts, `img-src https:`, `frame-ancestors 'none'`, `form-action 'self' https:`
+  (seller checkouts are POST forms), `object-src 'none'`; HSTS 2 years + preload; `X-Frame-Options: DENY`; `nosniff`;
+  `strict-origin-when-cross-origin`; a restrictive `Permissions-Policy`. The Travelpayouts loader moved from an inline script to `public/tp-drive.js`.
+  `vercel.json` carries the same headers for the CDN (`npm run headers:sync`; a test fails when they drift). If Travelpayouts starts loading from
+  another host, add it to `CSP_SOURCES`.
+- **CORS / CSRF.** `Access-Control-Allow-Origin` only echoes `APP_URL`, `ALLOWED_ORIGINS`, Vercel's production / deployment URLs and (in dev)
+  localhost, never `*`. Every non-GET `/api` request needs an `Origin` (or `Referer`) equal to the request's own origin or the allowlist, else `403`
+  (with neither, refused in production).
+- **Secrets.** Server keys are read only through `getEnv` on the server; the browser bundle reads none. `server/security.test.ts` scans `src/` and
+  `shared/` for secret env reads and secret-named `VITE_*` variables.
