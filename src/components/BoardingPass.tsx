@@ -126,6 +126,8 @@ interface BoardingPassProps {
   extras?: ReactNode;
   /** Shows the `Proceed to booking` button and its merchant comparison panel. */
   showBooking?: boolean;
+  /** Party size, sent to the Duffel checkout. */
+  passengers?: number;
 }
 
 /**
@@ -142,6 +144,7 @@ export function BoardingPass({
   onSelect,
   extras,
   showBooking = true,
+  passengers,
 }: BoardingPassProps) {
   const { fmt } = useCurrency();
   const cardRef = useRef<HTMLDivElement>(null);
@@ -397,6 +400,14 @@ export function BoardingPass({
                 </span>
                 <SmartScoreBadge score={option.smartScore} size="sm" />
               </div>
+              {option.source === 'duffel' && option.pricing && option.basePriceUsd > 0 && (
+                <div
+                  className="mt-0.5 text-[10px] leading-tight text-[#6B7280] tabular-nums"
+                  title="Airline fare plus our service fee. This is the price you pay at checkout."
+                >
+                  incl. {fmt((option.basePriceUsd * option.pricing.serviceFee) / option.pricing.displayTotal)} fee
+                </div>
+              )}
             </div>
           </div>
 
@@ -407,6 +418,7 @@ export function BoardingPass({
                 option={option}
                 accent={accentButton}
                 cardRef={cardRef}
+                passengers={passengers}
               />
             )}
           </div>

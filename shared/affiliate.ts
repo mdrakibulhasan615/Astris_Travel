@@ -594,6 +594,15 @@ const roundCents = (n: number) => Math.round(n * 100) / 100;
  */
 export function attachBookingUrls(options: TransitOption[], ctx: BookingContext): TransitOption[] {
   return options.map((option) => {
+    // Duffel fares are bought through our own checkout at the exact priced offer, and ULCC fares go
+    // straight to their partner link: neither gets the metasearch comparison rows (whose prices for
+    // other merchants were only ever estimates).
+    if (option.source === 'duffel' || option.source === 'external_ulcc') {
+      return {
+        ...completeTicketDetails(option, ctx.date),
+        ...(option.source === 'external_ulcc' ? { bookingUrl: option.affiliateUrl } : {}),
+      };
+    }
     const link = buildBookingLink(option, ctx);
     return {
       // Baggage and the flight breakdown, so sample and live options render from one shape

@@ -1,3 +1,6 @@
+import type { CabinClass, SliceRequest } from './flights.ts';
+import type { PriceBreakdown } from './pricing.ts';
+
 export type TransitMode = 'flight' | 'train' | 'bus' | 'ferry';
 
 export type ModeFilter = 'all' | TransitMode;
@@ -250,8 +253,23 @@ export interface TransitOption {
   /** Raw provider timestamps ("YYYY-MM-DD HH:MM") for the first departure / last arrival. */
   departureAt?: string;
   arrivalAt?: string;
+  /** When a Duffel offer can no longer be booked (ISO, UTC). */
   expiresAt?: string;
   segments?: TransitSegment[];
+  /**
+   * `duffel`: a bookable fare, checked out through `/api/flights/checkout` (priced with our service
+   * fee in `pricing`, `basePriceUsd` is its USD total). `external_ulcc`: an airline Duffel does not
+   * sell, handed off to `affiliateUrl`. Absent: sample or recent-fare data with merchant `offers`.
+   */
+  source?: 'duffel' | 'external_ulcc';
+  /** Duffel offer id (`off_0000…`) for `source: 'duffel'`. */
+  offerId?: string;
+  /** The traveller's price in the offer's own currency: airline fare, our fee, and the total. */
+  pricing?: PriceBreakdown;
+  /** Partner link for `external_ulcc` fares ("Book direct on AirAsia"). */
+  affiliateUrl?: string;
+  /** What the checkout call needs to re-find this offer. */
+  checkout?: { slices: SliceRequest[]; cabinClass?: CabinClass };
 }
 
 /** One-way tickets vs a return ticket for a pair of legs that go there and back. */

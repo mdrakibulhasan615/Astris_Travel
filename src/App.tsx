@@ -57,6 +57,7 @@ import type {
 } from '../shared/types.ts';
 import { AddStopModal } from './components/AddStopModal.tsx';
 import { AnimatePresence } from 'motion/react';
+import { BookingBanner } from './components/BookingBanner.tsx';
 import { HeroScene } from './components/HeroScene.tsx';
 import { SHOW_HOME_HERO } from '../shared/config.ts';
 import { RouteBar, type SegmentChoice } from './components/RouteBar.tsx';
@@ -611,6 +612,7 @@ export default function App() {
         isOptimizing={isOptimizing}
         dataMode={dataMode}
       />
+      <BookingBanner />
 
       {/* Mobile View Switcher (keeps sticky height well under 15%) */}
       <div className="lg:hidden px-4 py-2 bg-white border-b border-neutral-200/80 flex items-center justify-between gap-2">
