@@ -5,6 +5,7 @@ import {
   createLinkSession,
   describeDuffelError,
   getLiveOffer,
+  getOrderSummary,
   isDuffelConfigured,
   markupConfig,
   searchDuffelOffers,
@@ -150,6 +151,14 @@ export function registerFlightRoutes(app: Express): void {
     // 3. Hosted checkout: Duffel collects the passengers' details and payment and issues the ticket
     const reference = `astris_${Date.now().toString(36)}${randomBytes(5).toString('hex')}`;
     const base = appBaseUrl(req);
+    // Duffel Links only accepts public https return URLs (it rejects http://localhost)
+    if (!/^https:\/\/[^/]+\./.test(base)) {
+      console.warn(`[Duffel] checkout needs a public https return URL, got "${base}". Set APP_BASE_URL.`);
+      return fail(res, 503, {
+        error: 'not_configured',
+        message: 'Checkout needs a public https address. Set APP_BASE_URL (for example https://your-domain.com).',
+      });
+    }
     const back = (state: string) => `${base}/?booking=${state}&ref=${reference}`;
     try {
       const checkoutUrl = await createLinkSession({
@@ -172,8 +181,19 @@ export function registerFlightRoutes(app: Express): void {
     }
   });
 
+  // The success redirect from Duffel Links carries `order_id` and our `reference`. The order is read
+  // back from Duffel with our own token, so the PNR is recorded even if the webhook is late or
+  // does not echo the reference.
   app.get('/api/flights/orders/:reference', async (req, res) => {
-    const record = await getBookingByReference(String(req.params.reference));
+    const reference = String(req.params.reference);
+    const orderId = String(req.query.order_id ?? '');
+    let record = await getBookingByReference(reference);
+    if (record?.status !== 'issued' && /^ord_[A-Za-z0-9]+$/.test(orderId) && /^astris_[a-z0-9]+$/i.test(reference) && record) {
+      const order = await getOrderSummary(orderId);
+      if (order) {
+        record = await recordIssuedOrder({ orderId: order.id, bookingReference: order.bookingReference, reference });
+      }
+    }
     if (!record) return res.status(404).json({ error: 'Unknown booking reference.' });
     res.json({
       reference: record.reference,

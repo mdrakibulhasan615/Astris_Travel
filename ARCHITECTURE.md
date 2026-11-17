@@ -595,7 +595,9 @@ Flights in live mode (`USE_REAL_DATA`) come from Duffel, not a scraper, so every
 - **Webhook** — `POST /api/webhooks/duffel` (registered before `express.json()`: the signature needs the raw body) verifies
   `X-Duffel-Signature` (`t=…,v1=…`, 5 minute tolerance) and records `order.created` (order id, booking reference/PNR) in
   `server/duffelBookings.ts`. `GET /api/flights/orders/:ref` feeds the confirmation banner (`src/components/BookingBanner.tsx`).
-  The tracking reference is located by searching the payload for the `astris_…` prefix, because where Duffel echoes it is not in the SDK types.
+  Duffel's success redirect adds `order_id` next to our `reference`; the banner passes both to `GET /api/flights/orders/:ref?order_id=` and the
+  server reads the order back from Duffel (`orders.get`) to record the PNR, so it does not depend on the webhook echoing the reference
+  (the webhook still searches its payload for the `astris_…` prefix as a second route).
 - **ULCCs** — airlines Duffel does not sell (`shared/ulcc.ts`: AirAsia group, Ryanair, Wizz…) are surfaced from the Aviasales Data API as
   `source: 'external_ulcc'` with an `affiliateUrl`; the card shows "Book direct on {carrier}" and never calls the checkout.
 - **UI** — Duffel cards show the total, an "incl. $X fee" line and a Bookable chip; the floating panel (`DuffelCheckout` in `BookingOffers.tsx`)
