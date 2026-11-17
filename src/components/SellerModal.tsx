@@ -13,6 +13,7 @@ import {
 } from '../../shared/liveFlights.ts';
 import { formatDuration } from '../../shared/smartScore.ts';
 import { useCurrency } from '../currency.tsx';
+import { BrandLogo } from './BrandLogo.tsx';
 
 /**
  * "Book Exact Ticket": the sellers of one specific fare (the airline itself and travel agencies),
@@ -163,6 +164,18 @@ function SellerRows({ options }: { options: SellerBookingOption[] }) {
                 <div key={o.id} className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
                   <div className="min-w-0 space-y-1">
                     <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-md bg-white ring-1 ring-slate-200">
+                        <BrandLogo
+                          src={o.logo}
+                          alt={`${o.bookWith} logo`}
+                          className="h-5 w-5 object-contain"
+                          fallback={
+                            <span aria-hidden="true" className="text-[11px] font-black text-slate-500">
+                              {o.bookWith.charAt(0).toUpperCase()}
+                            </span>
+                          }
+                        />
+                      </span>
                       <span className="text-sm font-bold text-slate-900">{o.bookWith}</span>
                       {o.isAirlineDirect && (
                         <span className="rounded-md bg-orange-500 px-1.5 py-0.5 text-[10px] font-bold uppercase text-white">Airline direct</span>

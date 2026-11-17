@@ -5,6 +5,8 @@ import { formatDuration } from '../../shared/smartScore.ts';
 import { describeBaggageStub } from '../../shared/ticketDetails.ts';
 import type { OptionTag, TransitOption } from '../../shared/types.ts';
 import { ticketAirlines, ticketPalette } from '../utils/airlineColors.ts';
+import { airlineLogoUrl } from '../utils/logos.ts';
+import { BrandLogo } from './BrandLogo.tsx';
 import { useCurrency } from '../currency.tsx';
 import { SmartScoreBadge } from './SmartScoreBadge.tsx';
 import { BookingButton } from './BookingOffers.tsx';
@@ -203,7 +205,24 @@ export function BoardingPass({
       >
         <div className="flex min-w-0 items-center justify-between gap-x-3 px-4 py-[3px]">
           <div className="flex min-w-0 flex-1 items-center gap-2">
-            <Plane className="h-4 w-4 shrink-0" aria-hidden="true" />
+            {/* The airline's own logo, transparent on the header (a thin light halo keeps dark emblems readable on
+                dark headers); up to two for a connection, the plane icon when there is none */}
+            <span className="flex shrink-0 items-center -space-x-1">
+              {airlines.slice(0, 2).map((a) => (
+                <span key={a.code ?? a.name} className="flex h-5 w-5 items-center justify-center">
+                  <BrandLogo
+                    src={airlineLogoUrl(
+                      a.code,
+                      option.hops?.find((h) => /^([A-Z0-9]{2})\s?\d/i.exec(h.flightNumber)?.[1]?.toUpperCase() === a.code)
+                        ?.airlineLogo ?? (airlines.length === 1 ? option.airlineLogo : undefined)
+                    )}
+                    alt={`${a.name} logo`}
+                    className="h-full w-full object-contain [filter:drop-shadow(0_0_1px_rgba(255,255,255,0.95))_drop-shadow(0_0_1px_rgba(255,255,255,0.95))]"
+                    fallback={<Plane className="h-4 w-4" aria-hidden="true" />}
+                  />
+                </span>
+              ))}
+            </span>
             <span
               className="text-[12px] font-extrabold uppercase leading-tight tracking-wide"
               title={airlines.map((a) => (a.code ? `${a.name} (${a.code})` : a.name)).join(' × ')}
