@@ -134,8 +134,8 @@ export type OfferProviderId = 'aviasales' | 'tripcom' | 'kiwi' | 'skyscanner' | 
 
 /**
  * One merchant's offer for a flight ticket. The price is per person in USD (the app converts it for
- * display). `estimated` is true when it is not a quote from that merchant: only the primary
- * merchant's offer carries the live fare, the others are derived from it and confirmed on their site.
+ * display) and is present only when that merchant really quoted it. Every other merchant is a link to
+ * its own search for this route and date, where the price is shown ("Check price").
  */
 export interface AffiliateOffer {
   providerId: OfferProviderId;
@@ -143,10 +143,9 @@ export interface AffiliateOffer {
   provider: string;
   /** Key of the merchant badge the UI draws (same as `providerId`). */
   logo: OfferProviderId;
-  priceUsd: number;
+  priceUsd?: number;
   /** Deep link to that merchant's results for this exact route and date. */
   url: string;
-  estimated: boolean;
 }
 
 /** Whether a bag comes with the fare. `unknown` = the provider did not say. */
@@ -159,8 +158,8 @@ export interface BaggageInfo {
   cabinKg?: number;
   checkedPieces?: number;
   checkedKg?: number;
-  /** `provider`: read from the fare data. `typical`: the carrier's usual economy policy; confirm when booking. */
-  source: 'provider' | 'typical';
+  /** Always `provider`: baggage is shown only when the fare data states it. */
+  source: 'provider';
   note?: string;
 }
 
@@ -231,16 +230,15 @@ export interface TransitOption {
   baggage?: BaggageInfo;
   /** `Cheapest`, `Cheapest Direct` and `Direct` badges, set when the list is ranked. */
   tags?: OptionTag[];
-  /** Every flight with its number, airline, aircraft and local times (live data, or derived for samples). */
+  /** Every flight with its number, airline, aircraft and local times (live data, or derived from a recent fare's own times). */
   hops?: FlightHop[];
   layovers?: Layover[];
   airlineLogo?: string;
   /**
    * Where this option's data came from. `live` is a real, current fare; `cached` is a real fare
    * another traveller found on Aviasales in the last ~48 hours (free Data API, may have moved);
-   * `curated` and `synthesized` are sample/estimated data. The UI labels each.
    */
-  dataSource?: 'live' | 'cached' | 'curated' | 'synthesized';
+  dataSource?: 'live' | 'cached';
   /** `cached` fares: the Aviasales results page for this exact fare (partner marker included when configured). */
   sourceFareUrl?: string;
   /** Every flight number on the itinerary, in order (live data), e.g. ["PC 123", "PC 456"]. */
@@ -359,31 +357,11 @@ export interface RouteOptimizationResult {
 
 // ── Stays (hotel layer) ─────────────────────────────────────────────────────────────────────────
 
-export type StayCategory = 'hostel' | 'budget' | 'midrange' | 'apartment' | 'upscale' | 'luxury';
-
-/** Same shape of idea as `SmartScoreBreakdown`: every term in USD, lower total is better. */
+/** A partner's search results for one stop's city, dates and party. */
 export interface StayLink {
   provider: Extract<BookingProvider, 'booking' | 'agoda'>;
   providerName: string;
   url: string;
-}
-
-/** A category of accommodation for one stop. Prices are estimates, never live rates. */
-export interface StayOption {
-  id: string;
-  stopId: string;
-  category: StayCategory;
-  title: string;
-  description: string;
-  /** Hotel star class used for the partner filter, when the category has one. */
-  starClass?: number;
-  /** Whole party, per night. */
-  nightlyPriceUsd: number;
-  totalPriceUsd: number;
-  /** Typical door-to-centre time, one way (context only). */
-  commuteMinutesOneWay: number;
-  dataSource: 'synthesized';
-  links: StayLink[];
 }
 
 /** Everything the "Staying in [City]?" card needs for one stop. */
@@ -399,8 +377,6 @@ export interface StaySearch {
   rooms: number;
   /** Unfiltered city + dates search on each partner. */
   links: StayLink[];
-  /** Cheapest first. */
-  options: StayOption[];
 }
 
 /**

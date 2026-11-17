@@ -72,7 +72,7 @@ export function VttsControlPanel({
           <div className="text-[11px] font-medium text-[#4B5563]">Total Fare</div>
           <div className="mt-0.5 flex items-baseline gap-1.5">
             <span className="font-display text-lg font-bold text-[#111827] tabular-nums">
-              {fmt(totalCostUsd)}
+              {totalCostUsd > 0 ? fmt(totalCostUsd) : '–'}
             </span>
           </div>
         </div>

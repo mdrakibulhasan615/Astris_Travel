@@ -21,7 +21,7 @@ const a = (code: string, name: string, lat: number, lng: number): [string, Airpo
   { code, name, lat, lng },
 ];
 
-/** Exact airport coordinates for every airport the curated data and hub list rely on. */
+/** Exact airport coordinates for every airport the hub list and the map rely on. */
 const CORE_AIRPORTS: Record<string, AirportPoint> = Object.fromEntries([
   a('KUL', 'Kuala Lumpur Intl', 2.7456, 101.7099),
   a('IST', 'Istanbul Airport', 41.2753, 28.7519),

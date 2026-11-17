@@ -6,7 +6,7 @@
 /**
  * An airline's small symbol logo (its tail or emblem, not the full wordmark, which is unreadable at
  * icon size): the one the fare data carried (SerpApi sends one per flight), else the same Google
- * Flights logo set by IATA code, so live and estimated tickets look alike. Undefined when neither.
+ * Flights logo set by IATA code, so live and recent-fare tickets look alike. Undefined when neither.
  */
 export function airlineLogoUrl(code?: string | null, hint?: string | null): string | undefined {
   if (hint) return hint;

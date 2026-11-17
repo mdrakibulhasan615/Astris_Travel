@@ -13,10 +13,9 @@ import {
 } from './server/transitService.ts';
 import { searchAirports } from './server/airportService.ts';
 import {
-  CURATED_CORRIDOR_OPTIONS,
   DESTINATION_HUBS,
   createDefaultTrip,
-} from './shared/mockDataset.ts';
+} from './shared/destinations.ts';
 import {
   buildLegIds,
   buildLegsFromStops,
@@ -140,8 +139,7 @@ interface LegBuildOptions {
 }
 
 /**
- * Builds every leg through the transit service (live SerpApi → cache → curated/synthesized
- * fallback). This is the single place legs are produced for the API, so the initial page load and
+ * Builds every leg through the transit service (recent real fares, or an empty leg). This is the single place legs are produced for the API, so the initial page load and
  * later recomputes show the same data. Option objects are passed through unchanged apart from
  * scoring, geometry normalisation and booking links.
  */
@@ -228,12 +226,11 @@ async function buildLegsViaTransitService(
       };
     } catch (err) {
       console.warn(
-        `[Flight Data] ${legId}: transit query failed, using curated/synthesized SAMPLE data:`,
+        `[Flight Data] ${legId}: transit query failed, the leg has no fares:`,
         err
       );
       const fallback = buildLegsFromStops(
         [fromStop, toStop],
-        CURATED_CORRIDOR_OPTIONS,
         hourlyRate,
         undefined,
         { profile, passengers }
@@ -285,7 +282,7 @@ export function createApp() {
   // Health & initial dataset
   // The initial trip used to be pure mock data (TK 61 etc.), so live SerpApi fares only appeared
   // after the first edit. It now runs through the same pipeline as /api/legs/recompute, with a
-  // time budget so a slow provider can't block the page (falls back to the labelled sample data).
+  // time budget so a slow provider can't block the page (falls back to legs with no fares).
   app.get('/api/trips/default', async (_req, res) => {
     const trip = createDefaultTrip();
     try {
@@ -299,10 +296,10 @@ export function createApp() {
       if (legs && legs.length === trip.legs.length) {
         trip.legs = legs;
       } else {
-        console.warn('[Flight Data] default trip: live pipeline timed out, serving SAMPLE data.');
+        console.warn('[Flight Data] default trip: fare lookup timed out, serving the trip without fares.');
       }
     } catch (err) {
-      console.warn('[Flight Data] default trip: live pipeline failed, serving SAMPLE data:', err);
+      console.warn('[Flight Data] default trip: fare lookup failed, serving the trip without fares:', err);
     }
     logLegs('default-trip', trip.legs);
     res.json(trip);
@@ -320,7 +317,7 @@ export function createApp() {
     res.json({ query: q, count: results.length, results });
   });
 
-  // Whether fares are live or sample data (read-only; the switch lives in code/env, not the UI)
+  // Whether the Fetch Live Fares button is on (read-only; the switch lives in code/env, not the UI)
   app.get('/api/config', (_req, res) => {
     res.json({ dataMode: useRealData() ? 'live' : 'mock' });
   });
@@ -356,7 +353,7 @@ export function createApp() {
   });
 
   // Live hotels for one stop (Google Hotels via SerpApi). Only in live-data mode: a search costs a
-  // credit, so sample mode answers `enabled: false` without calling out. Cached 24 hours.
+  // credit, so with live fares off it answers `enabled: false` without calling out. Cached 24 hours.
   app.get('/api/hotels/search', async (req, res) => {
     try {
       const enabled = useRealData() && Boolean(serpApiHotelsKey());
@@ -581,7 +578,6 @@ export function createApp() {
 
     const originalLegs = buildLegsFromStops(
       stops,
-      CURATED_CORRIDOR_OPTIONS,
       hourlyTimeValue,
       undefined,
       scoring
@@ -629,7 +625,6 @@ export function createApp() {
     }> = topStage1.map((entry, idx) => {
       const legs = buildLegsFromStops(
         entry.stops,
-        CURATED_CORRIDOR_OPTIONS,
         hourlyTimeValue,
         undefined,
         scoring

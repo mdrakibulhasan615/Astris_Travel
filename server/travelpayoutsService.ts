@@ -11,12 +11,12 @@ import type {
 } from '../shared/types.ts';
 
 /**
- * Flight fares from the free Aviasales Data API (Travelpayouts). Used in sample-data mode so the
+ * Flight fares from the free Aviasales Data API (Travelpayouts). Shown for every corridor (the only fares shown before "Fetch Live Fares") so the
  * cards show real prices instead of invented ones.
  *
  * What this API is: the cheapest tickets other travellers found on Aviasales in the last ~48 hours
  * (a cache, not a live search). So a fare here is real but may have moved, a route nobody searched
- * returns nothing (callers fall back to the sample data), and the payload is thin: price, airline,
+ * returns nothing (the corridor then has no fares until live fares are fetched), and the payload is thin: price, airline,
  * ONE flight number, departure time, stop count and duration. There are no layover airports, no
  * per-flight breakdown and no baggage. Everything that is not in the payload is derived or left
  * empty; nothing is invented and shown as data (the layover/in-flight split is an estimate and only
@@ -155,7 +155,7 @@ export interface TravelpayoutsQuery {
 export async function fetchTravelpayoutsFlights(q: TravelpayoutsQuery): Promise<TransitOption[] | null> {
   const token = travelpayoutsToken();
   if (!token) {
-    warnMissingKey('TRAVELPAYOUTS_TOKEN', 'recent real fares in sample mode');
+    warnMissingKey('TRAVELPAYOUTS_TOKEN', 'recent real fares');
     return null;
   }
   const origin = q.origin.trim().toUpperCase();
@@ -193,7 +193,7 @@ export async function fetchTravelpayoutsFlights(q: TravelpayoutsQuery): Promise<
     );
   }
   if (tickets.length === 0) {
-    console.log('[Travelpayouts] No cached fares for this route/date, using sample data.');
+    console.log('[Travelpayouts] No cached fares for this route/date.');
     return null;
   }
 

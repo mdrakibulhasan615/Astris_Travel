@@ -1,5 +1,5 @@
 import airportsData from 'airports' with { type: 'json' };
-import { DESTINATION_HUBS } from '../shared/mockDataset.ts';
+import { DESTINATION_HUBS } from '../shared/destinations.ts';
 import type { DestinationHub } from '../shared/types.ts';
 
 export interface RawAirport {

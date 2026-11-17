@@ -393,11 +393,7 @@ export function BoardingPass({
               {bags ? (
                 <div
                   className="space-y-0.5 text-[10.5px] font-medium leading-tight"
-                  title={
-                    option.baggage?.source === 'typical'
-                      ? 'Typical economy allowance for this carrier; confirm it for your fare when booking.'
-                      : 'Baggage as reported in the fare data'
-                  }
+                  title="Baggage as reported in the fare data"
                 >
                   <div className={`flex items-center gap-1.5 ${TONE[bags.cabin.tone]}`}>
                     <Backpack className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />

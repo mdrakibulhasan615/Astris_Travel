@@ -8,74 +8,11 @@ import type {
 
 /**
  * What a ticket card needs beyond price and times: the baggage allowance and the flight-by-flight
- * breakdown. Live fares fill these from the provider payload; sample/estimated options get the same
- * structure derived here, so the UI has one shape to render whatever the data source.
+ * breakdown. Live fares fill these from the provider payload; a recent fare (thin payload) gets the
+ * breakdown derived here from its own times, so the UI has one shape to render.
  */
 
 // ── Baggage ──────────────────────────────────────────────────────────────────────────────────
-
-/** Full-service carriers: cabin bag plus one checked bag in economy, as a rule. */
-const FULL_SERVICE = new Set([
-  'TK', 'QR', 'EY', 'EK', 'SV', 'MH', 'SQ', 'BA', 'AF', 'KL', 'LH', 'LX', 'OS', 'A3', 'TP', 'IB',
-  'AY', 'SK', 'NH', 'JL', 'CX', 'TG', 'KE', 'OZ', 'AI', 'QF', 'UL', 'GF', 'WY', 'MS', 'RJ', 'AZ',
-  'LO', 'OK', 'SN', 'EI', 'DL', 'UA', 'AA', 'AC', 'AS', 'BR', 'CI', 'VN', 'PR', 'GA', 'MU', 'CA', 'CZ',
-]);
-/** Low-cost carriers: a cabin bag at most, checked baggage is an extra. */
-const LOW_COST = new Set([
-  'PC', 'VF', 'U2', 'FR', 'W6', 'VY', 'AK', 'D7', 'TR', '6E', 'FZ', 'XY', 'LS', 'BY', 'F9', 'NK',
-  'G9', 'IX', 'QZ', 'FD', 'SL', 'OD', 'JQ', '3K', 'TT', 'DY', 'HV', 'W4', 'DD', 'VJ', 'Z2', 'BI',
-]);
-
-/**
- * The carrier's usual economy baggage policy, used when the fare data does not state it. These are
- * typical rules, not a promise for the specific fare (a "basic" fare can drop the checked bag), so
- * the card marks them as typical.
- */
-export function typicalBaggage(
-  option: Pick<TransitOption, 'mode' | 'carrier' | 'carrierCode'>
-): BaggageInfo {
-  const code = (option.carrierCode || '').toUpperCase();
-
-  if (option.mode === 'flight') {
-    // Saver / basic / light fares are sold without a checked bag
-    if (/saver|basic|light/i.test(option.carrier || '')) {
-      return { cabin: 'included', cabinKg: 8, checked: 'none', source: 'typical' };
-    }
-    if (LOW_COST.has(code)) {
-      return { cabin: 'included', cabinKg: 8, checked: 'fee', source: 'typical' };
-    }
-    if (FULL_SERVICE.has(code)) {
-      return {
-        cabin: 'included',
-        cabinKg: 7,
-        checked: 'included',
-        checkedPieces: 1,
-        checkedKg: 23,
-        source: 'typical',
-      };
-    }
-    return { cabin: 'unknown', checked: 'unknown', source: 'typical' };
-  }
-  if (option.mode === 'bus') {
-    return {
-      cabin: 'included',
-      cabinKg: 7,
-      checked: 'included',
-      checkedPieces: 1,
-      checkedKg: 25,
-      source: 'typical',
-    };
-  }
-  if (option.mode === 'train') {
-    return {
-      cabin: 'included',
-      checked: 'included',
-      source: 'typical',
-      note: 'Luggage goes on the racks; no weight limit on most services',
-    };
-  }
-  return { cabin: 'included', checked: 'included', source: 'typical', note: 'Luggage allowed on board' };
-}
 
 const kgIn = (text: string) => {
   const m = /(\d{1,2})\s?kg/i.exec(text);
@@ -194,7 +131,7 @@ function addMinutes(stamp: string, minutes: number): string {
 }
 
 /**
- * Per-flight breakdown for options that do not carry one (curated and estimated fares), built from
+ * Per-flight breakdown for options that do not carry one (recent fares), built from
  * the option's flight segments so the card shows the same "flight number, airports, times,
  * layovers" lines as a live fare. The first departure is the option's own departure time; the last
  * arrival is its arrival time (with its `+Nd` day offset); times in between follow the segment
@@ -247,13 +184,12 @@ function deriveFlightDetails(
 }
 
 /**
- * Fills in what an option lacks so every card renders from one shape: typical baggage when the fare
- * did not state any, and a flight breakdown for sample/estimated flights. Never overwrites provider
- * data. `date` is the leg's departure date (`YYYY-MM-DD`).
+ * Fills in what an option lacks so every card renders from one shape: a flight breakdown (built from
+ * the option's own times and durations) when the fare did not carry one. Baggage is never guessed: it is
+ * shown only when the fare states it. Never overwrites provider data. `date` is the leg's departure date (`YYYY-MM-DD`).
  */
 export function completeTicketDetails(option: TransitOption, date?: string): TransitOption {
   let out = option;
-  if (!out.baggage) out = { ...out, baggage: typicalBaggage(out) };
   if (!out.hops && out.mode === 'flight' && date) {
     const derived = deriveFlightDetails(out, date.slice(0, 10));
     if (derived) out = { ...out, hops: derived.hops, layovers: out.layovers ?? derived.layovers };

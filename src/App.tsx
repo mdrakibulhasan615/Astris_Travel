@@ -34,10 +34,9 @@ import {
   updateStopNightsAndCascade,
 } from '../shared/dateUtils.ts';
 import {
-  CURATED_CORRIDOR_OPTIONS,
   DESTINATION_HUBS,
   createDefaultTrip,
-} from '../shared/mockDataset.ts';
+} from '../shared/destinations.ts';
 import { buildLegsFromStops, rescoreLegs, round2 } from '../shared/smartScore.ts';
 import { legTotals } from '../shared/fares.ts';
 import { useCurrency } from './currency.tsx';
@@ -109,7 +108,6 @@ export default function App() {
   const [activePanel, setActivePanel] = useState<WorkspacePanel>('timeline');
   // Left pane: the route (stops + transport) or the stays for every destination
   const [leftView, setLeftView] = useState<'route' | 'stays'>('route');
-  const [selectedStays, setSelectedStays] = useState<Record<string, string>>({});
   // Bumped when partner ids arrive, so stay links are rebuilt with attribution
   const [affiliateVersion, setAffiliateVersion] = useState(0);
   const [mobileView, setMobileView] = useState<'split-left' | 'split-right'>('split-left');
@@ -194,8 +192,8 @@ export default function App() {
           setDestinations(destData.destinations);
         }
       } catch (err) {
-        // Fallback to the local SAMPLE dataset (cards are labelled "Sample") if the API is unreachable
-        console.warn('[Flights] initial load failed; showing local sample data:', err);
+        // If the API is unreachable the trip keeps its stops with no fares
+        console.warn('[Flights] initial load failed; showing the trip without fares:', err);
       } finally {
         if (mounted) setIsLoadingInitial(false);
       }
@@ -235,7 +233,6 @@ export default function App() {
       // Instant optimistic update so DnD & map arcs update at 60fps
       const optimisticLegs = buildLegsFromStops(
         normalizedStops,
-        CURATED_CORRIDOR_OPTIONS,
         nextHourlyRate,
         previousSelectedMap,
         {
@@ -247,7 +244,7 @@ export default function App() {
         }
       );
 
-      lastApiLegsRef.current = null; // optimistic legs are local sample data, not an API response
+      lastApiLegsRef.current = null; // optimistic legs hold only fares already fetched, not an API response
       setTrip((prev) => ({
         ...prev,
         startDate: normalizedStops[0]?.arrivalDate ?? prev.startDate,
@@ -333,7 +330,6 @@ export default function App() {
     }));
     const prelimLegs = buildLegsFromStops(
       reordered,
-      CURATED_CORRIDOR_OPTIONS,
       trip.hourlyTimeValue,
       undefined,
       { profile: trip.travelerProfile, passengers: trip.travelers }
@@ -357,7 +353,7 @@ export default function App() {
     // The first stop of a trip is the origin: a departure date, no nights
     const departureDate = lastStop ? addDaysIso(arrivalDate, hub.recommendedNights) : arrivalDate;
 
-    // Airport-search results carry the airport's own coordinates (the curated city hubs do not)
+    // Airport-search results carry the airport's own coordinates (the city suggestions list does not)
     if ('airportName' in hub) {
       registerAirports([{ code: hub.iataCode, name: hub.tagline, lat: hub.lat, lng: hub.lng }]);
     }
@@ -387,7 +383,6 @@ export default function App() {
       .map((s, idx) => ({ ...s, order: idx + 1 }));
     const prelimLegs = buildLegsFromStops(
       remaining,
-      CURATED_CORRIDOR_OPTIONS,
       trip.hourlyTimeValue,
       undefined,
       { profile: trip.travelerProfile, passengers: trip.travelers }
@@ -501,7 +496,7 @@ export default function App() {
     }
   };
 
-  // The legs as shown: the server's estimated schedule with any fetched live fares swapped in
+  // The legs as shown: the server's recent fares with any fetched live fares swapped in
   const displayLegs = useMemo(
     () => trip.legs.map((leg) => mergeLiveFares(leg, liveFares[leg.id], trip.hourlyTimeValue, trip.travelerProfile)),
     [trip.legs, trip.hourlyTimeValue, trip.travelerProfile, liveFares]
@@ -586,8 +581,8 @@ export default function App() {
       result.optimizedStops,
       result.optimizedLegs
     );
-    // The optimizer ranks with curated/synthesized corridors. Installing its legs directly would
-    // replace live fares with sample data, so apply only the new stop order and re-query every leg
+    // The optimizer orders stops by distance. Installing its legs directly would drop the real fares
+    // already fetched, so apply only the new stop order and re-query every leg
     // through the same live pipeline (optimistic local update first, API reconcile second).
     recomputeStopsAndLegs(datedStops);
     if (result.optimizedLegs[0]) {
@@ -648,18 +643,6 @@ export default function App() {
     () => Object.fromEntries(staySearches.map((s) => [s.stopId, s])),
     [staySearches]
   );
-  const staysTotalUsd = useMemo(
-    () =>
-      staySearches.reduce((sum, search) => {
-        const picked =
-          search.options.find((o) => o.id === selectedStays[search.stopId]) ?? search.options[0];
-        return sum + (picked?.totalPriceUsd ?? 0);
-      }, 0),
-    [staySearches, selectedStays]
-  );
-  const handleSelectStay = (stopId: string, optionId: string) =>
-    setSelectedStays((prev) => ({ ...prev, [stopId]: optionId }));
-
   return (
     <div className="min-h-screen lg:h-screen flex flex-col bg-[#FAFAFA] text-[#111827] lg:overflow-hidden">
       <TopBar
@@ -880,13 +863,7 @@ export default function App() {
                       {totalNights} nights · {trip.travelers} guest{trip.travelers === 1 ? '' : 's'}
                     </span>
                     <div className="mt-0.5">
-                      Cheapest first. Prices are typical estimates; the partner shows live rates.
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-[11px] font-medium text-[#4B5563]">Est. stays total</div>
-                    <div className="font-display text-lg font-bold text-[#111827] tabular-nums">
-                      ~{fmt(staysTotalUsd)}
+                      Real hotels load when you open a stop. The partner links search these dates.
                     </div>
                   </div>
                 </div>
@@ -899,9 +876,7 @@ export default function App() {
                     <StayPanel
                       key={search.stopId}
                       search={search}
-                      selectedOptionId={selectedStays[search.stopId]}
                       defaultExpanded
-                      onSelectOption={handleSelectStay}
                     />
                   ))
                 )}
@@ -940,9 +915,7 @@ export default function App() {
                           {staySearch && (
                             <StayPanel
                               search={staySearch}
-                              selectedOptionId={selectedStays[stop.id]}
                               inTimeline
-                              onSelectOption={handleSelectStay}
                             />
                           )}
 

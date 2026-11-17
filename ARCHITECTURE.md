@@ -66,12 +66,12 @@ unprefixed keys (including `GEMINI_API_KEY`) are deliberately never exposed to t
 | Layer | Provider / Package | Implementation & Role |
 | :--- | :--- | :--- |
 | **Live Flight Discovery** | **SerpApi** (`engine=google_flights`), on request only | `server/flightProvider.ts` (the `FlightProvider` interface and its SerpApi implementation) behind `server/liveFlightsApi.ts`. Step 1 `POST /api/flights/live-search` (30-minute cache), step 2 `POST /api/flights/booking-options` (15-minute cache) for the sellers of one exact ticket. See §23. |
-| **Fallback corridors** | `CURATED_CORRIDOR_OPTIONS` + `synthesizeCorridorOptions` | Hand-authored options for the default trip's corridors; every other pair is synthesized (flight / 1-stop / rail / coach) from great-circle distance. |
+| **Fallback corridors** | *(removed)* | The hand-authored corridors and the distance-estimated flights, trains and coaches no longer exist: a corridor with no real fare shows none (§24). |
 | **Global Airport Data** | **`airports`** (npm) | `server/airportService.ts`: autocomplete (`searchAirports`) and IATA → exact tarmac lat/lng (`getAirportByIata`). Registered into `shared/airports.ts` at startup and used for every flight segment (§7). |
 | **Affiliate Monetization** | **Trip.com, FlixBus, 12Go, Booking.com, Agoda** (direct) | `shared/affiliate.ts` — see §6. The former Travelpayouts/Aviasales and Rome2Rio links are gone; `TRAVELPAYOUTS_*` variables are no longer read. |
 | **FlixBus city ids** | flixbus.com public city autocomplete | `server/flixbusService.ts`: city name + coordinates → FlixBus UUID, cached 24 h. Undocumented endpoint: every failure means "no FlixBus link". |
 | **Ground corridors** | built-in network (no API) | `shared/groundRouting.ts` — see §7. |
-| **Stays** | built-in estimates (no inventory API) | `shared/stays.ts` — see §10. |
+| **Stays** | partner searches + live hotels | `shared/stays.ts` builds Booking.com / Agoda searches for each stop's city, dates and party; real hotels come from `server/hotelService.ts`. No estimated prices (§24). |
 | **Ticket Fulfillment** | **Seller handoff, not our own checkout** | "Book Exact Ticket" opens the sellers of the exact fare and posts the traveller to the chosen seller's checkout (§23). No payments or accounts here: no Duffel or order API, because Duffel does not support a Malaysian business. |
 
 ---
@@ -85,13 +85,13 @@ unprefixed keys (including `GEMINI_API_KEY`) are deliberately never exposed to t
 │   ├── airportService.ts        # `airports` dataset search + IATA lookup
 │   └── flixbusService.ts        # FlixBus city-id lookup (cached) for FlixBus deep links
 ├── shared/                      # Imported by server AND client
-│   ├── smartScore.ts            # VTTS / Smart Score engine, corridor synthesis, leg building
+│   ├── smartScore.ts            # VTTS / Smart Score engine, leg skeletons (no invented options)
 │   ├── affiliate.ts             # Direct merchant deep links: Trip.com, FlixBus, 12Go, Booking.com, Agoda
 │   ├── airports.ts              # Airport anchoring: exact airport coords, city↔airport codes, ground connectors
 │   ├── groundRouting.ts         # Land network + Dijkstra + Catmull-Rom smoothing for ground polylines
 │   ├── stays.ts                 # Stay categories per stop (cheapest first), partner links
 │   ├── types.ts                 # TransitOption, SmartScoreBreakdown, TravelerProfile, Trip, ...
-│   ├── mockDataset.ts           # Default trip, destination hubs, curated corridors
+│   ├── destinations.ts           # The city suggestions list, the starting stop and the default trip
 │   └── dateUtils.ts             # Stop date recalculation after reorder; origin = departure date only
 ├── src/
 │   ├── main.tsx                 # React root wrapped in <ErrorBoundary>
@@ -117,9 +117,9 @@ Imports use explicit `.ts`/`.tsx` extensions (`allowImportingTsExtensions`).
 ### HTTP API (`server.ts`)
 | Route | Purpose |
 | :--- | :--- |
-| `GET /api/trips/default` | Default trip; legs go through the same live pipeline as `/api/legs/recompute` (9 s budget, then labelled sample data) |
+| `GET /api/trips/default` | Default trip; legs go through the same live pipeline as `/api/legs/recompute` (9 s budget, then the trip without fares) |
 | `GET /api/destinations`, `GET /api/airports/search?q=&limit=` | Airport hubs / autocomplete |
-| `GET /api/config` | `{ dataMode: 'live' \| 'mock' }`, read-only; drives the header's "Sample data" / "Live fares" chip |
+| `GET /api/config` | `{ dataMode: 'live' \| 'mock' }`, read-only; drives the header's "Live fares" / "Live fares off" chip |
 | `GET /api/rates` | USD-based exchange rates for the currency switcher (Frankfurter / ECB, 12 h in-memory cache, built-in fallback table) |
 | `GET /api/affiliate/config` | Validated partner ids for the browser's link builders (public by nature: every link carries them) |
 | `GET\|POST /api/transit/query` | Single-corridor query through the Redis wrapper (`X-Cache-*` headers); optional `returnDate` for return fares |
@@ -599,3 +599,25 @@ the leg list starts as the estimated / offline schedule (curated, or recent fare
   (Travelpayouts real-time search at 50k MAU, Duffel once an overseas entity exists) is one new class in `liveFlightsApi.ts`.
 - **Tests**: `npm test` (`tsx --test`): extension/baggage parsing and offer normalisation, `booking_options` parsing, `post_data` field
   round-trip, the 30-minute cache (hit, miss, expiry, Redis cold start, outage), the provider's request shapes and error mapping.
+
+## 24. Real Data Only (supersedes the sample-data parts of §3-§17)
+
+The app holds **no made-up fares, schedules or prices**. Earlier sections still describe curated corridors, synthesized
+estimates, `Sample` / `Estimate` chips, derived return fares, estimated stay prices and estimated merchant prices; all of that was
+removed. What is left:
+
+- **Flights**: recent real fares from the Aviasales Data API (`dataSource: 'cached'`, when `TRAVELPAYOUTS_TOKEN` is set) and live fares
+  fetched on request (§23). A corridor with neither shows "No fares yet" and a **Fetch Live Fares** button.
+- **Trains, coaches, ferries**: no live availability API exists, so no tickets are listed. Real timetables appear in the Schedules panel
+  (12Go, Google transit).
+- **Legs without fares** keep their route, distance and dates, and the map draws a plain dashed line between the two stops
+  (no mode or route is implied). Totals show "–" until a fare exists.
+- **Stays**: a stop's card holds its city, dates, party and Booking.com / Agoda searches, plus live hotels when opened. No estimated nightly
+  prices, commute times or category cards.
+- **Merchant panel**: only a price a merchant really quoted is shown (the Aviasales row of a recent fare). Other merchants are links that
+  say "Check price"; their prices are no longer derived from the primary one.
+- **Baggage** is shown only when the fare states it; the carrier-typical fallback is gone (the card says "not stated").
+- **Return fares** come only from live or recent return searches; nothing is derived from a one-way price.
+- **Route optimizer** orders stops by total distance (cost and score are zero without fares, so ties keep the distance order).
+- `shared/mockDataset.ts` became `shared/destinations.ts`: reference data only (city suggestions, the starting stop, the empty default trip).
+- Tests: `shared/noDummyData.test.ts` pins this (empty new trip, empty legs, no stay prices, unpriced merchant rows, no guessed baggage).

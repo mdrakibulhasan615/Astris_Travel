@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "tsx --test shared/liveFlights.test.ts server/liveFlights.test.ts"
+    "test": "tsx --test shared/liveFlights.test.ts shared/noDummyData.test.ts server/liveFlights.test.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

@@ -84,8 +84,8 @@ export function TopBar({
           <span
             title={
               dataMode === 'live'
-                ? 'Live Google Flights fares (SerpApi)'
-                : 'Sample tickets: no SerpApi requests are made. Set USE_REAL_DATA=true for live fares.'
+                ? 'Live fares are on: press Fetch Live Fares on a leg'
+                : 'Live fares are off: no SerpApi searches are made. Set USE_REAL_DATA=true to turn them on.'
             }
             className={`hidden lg:inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold whitespace-nowrap ${
               dataMode === 'live'
@@ -93,7 +93,7 @@ export function TopBar({
                 : 'border-[#FFD6BA] bg-[#FFF4ED] text-[#E56B1A]'
             }`}
           >
-            {dataMode === 'live' ? 'Live fares' : 'Sample data'}
+            {dataMode === 'live' ? 'Live fares' : 'Live fares off'}
           </span>
         )}
 

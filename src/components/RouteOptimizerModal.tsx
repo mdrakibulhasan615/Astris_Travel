@@ -146,8 +146,12 @@ export function RouteOptimizerModal({
                       </div>
                       <div className="flex items-center gap-3 font-mono text-[#4B5563] tabular-nums">
                         <span>{cand.totalDistanceKm.toLocaleString()} km</span>
-                        <span>{cand.estimatedTotalHours.toFixed(1)}h</span>
-                        <span>{fmt(cand.estimatedTotalCostUsd)}</span>
+                        {cand.estimatedTotalCostUsd > 0 && (
+                          <>
+                            <span>{cand.estimatedTotalHours.toFixed(1)}h</span>
+                            <span>{fmt(cand.estimatedTotalCostUsd)}</span>
+                          </>
+                        )}
                         <span className="font-semibold text-[#111827]">
                           Score: {cand.totalSmartScore.toFixed(0)}
                         </span>
