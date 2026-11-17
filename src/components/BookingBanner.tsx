@@ -20,6 +20,8 @@ export function BookingBanner() {
     const params = new URLSearchParams(window.location.search);
     const state = params.get('booking');
     const ref = params.get('ref');
+    // Duffel adds the order id to the success redirect
+    const orderId = params.get('order_id');
     if (state !== 'success' && state !== 'failed' && state !== 'abandoned') return;
     setOutcome(state);
     // Keep the address bar clean so a reload does not show the banner again
@@ -32,7 +34,9 @@ export function BookingBanner() {
     const look = async () => {
       attempts++;
       try {
-        const res = await fetch(`/api/flights/orders/${encodeURIComponent(ref)}`);
+        const res = await fetch(
+          `/api/flights/orders/${encodeURIComponent(ref)}${orderId ? `?order_id=${encodeURIComponent(orderId)}` : ''}`
+        );
         if (res.ok) {
           const data = (await res.json()) as BookingStatus;
           setStatus(data);

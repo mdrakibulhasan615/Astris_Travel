@@ -328,6 +328,19 @@ export async function getLiveOffer(offerId: string): Promise<LiveOfferResult> {
   }
 }
 
+/** The order Duffel issued (authoritative: fetched with our token), or null when it cannot be read. */
+export async function getOrderSummary(orderId: string): Promise<{ id: string; bookingReference?: string } | null> {
+  const api = duffel();
+  if (!api) return null;
+  try {
+    const res = await api.orders.get(orderId);
+    return { id: res.data.id, bookingReference: res.data.booking_reference ?? undefined };
+  } catch (err) {
+    console.warn(`[Duffel] could not read order ${orderId}:`, describeDuffelError(err));
+    return null;
+  }
+}
+
 export function describeDuffelError(err: unknown): string {
   const e = err as { errors?: { title?: string; message?: string; code?: string }[]; message?: string };
   if (Array.isArray(e?.errors) && e.errors.length > 0) {
