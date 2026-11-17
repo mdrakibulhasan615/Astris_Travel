@@ -1,6 +1,11 @@
 // MUST stay the first import so env is loaded before the Redis/SerpApi clients are configured
 import { getEnv, useRealData, warnMissingKey } from './env.ts';
-import { Redis } from '@upstash/redis';
+import { getRedisClient } from './redis.ts';
+import { searchDuffelOffers } from './duffelService.ts';
+import { fetchUlccFallback } from './ulccService.ts';
+import { getRates } from './ratesService.ts';
+import { toUsd } from '../shared/pricing.ts';
+import type { SliceRequest } from '../shared/flights.ts';
 import {
   CURATED_CORRIDOR_OPTIONS,
   DESTINATION_HUBS,
@@ -66,54 +71,7 @@ configureAffiliate({
 
 export const REDIS_CACHE_TTL_SECONDS = 43200; // 12 hours (EX: 43200)
 
-// Read lazily (not captured at import time); placeholder values count as missing
-const upstashUrl = () => getEnv('UPSTASH_REDIS_REST_URL');
-const upstashToken = () => getEnv('UPSTASH_REDIS_REST_TOKEN');
-const serpApiKey = () => getEnv('SERPAPI_KEY');
-
-let redisClient: Redis | null = null;
-let redisInitialized = false;
-
-export function getRedisClient(): Redis | null {
-  if (redisInitialized) {
-    return redisClient;
-  }
-  redisInitialized = true;
-
-  const url = upstashUrl();
-  const token = upstashToken();
-  if (url && token) {
-    try {
-      redisClient = new Redis({ url, token });
-      console.log('[Upstash Redis] Client initialized with endpoint:', url);
-    } catch (err) {
-      console.warn('[Upstash Redis] Initialization failed, will use fallback:', err);
-      redisClient = null;
-    }
-  } else {
-    if (!url) warnMissingKey('UPSTASH_REDIS_REST_URL', 'Redis cache');
-    if (!token) warnMissingKey('UPSTASH_REDIS_REST_TOKEN', 'Redis cache');
-    redisClient = null;
-  }
-
-  return redisClient;
-}
-
-export function isRedisConfigured(): boolean {
-  return Boolean(upstashUrl() && upstashToken());
-}
-
-export async function checkRedisConnection(): Promise<boolean> {
-  const client = getRedisClient();
-  if (!client) return false;
-  try {
-    const pong = await client.ping();
-    return pong === 'PONG' || pong === 'OK' || Boolean(pong);
-  } catch (err) {
-    console.warn('[Upstash Redis] Ping check failed:', err);
-    return false;
-  }
-}
+export { checkRedisConnection, getRedisClient, isRedisConfigured } from './redis.ts';
 
 /**
  * Deterministic cache key generator:
@@ -257,9 +215,12 @@ function resolveCityCoords(
 }
 
 /**
- * Attempts to fetch live flights from SerpAPI Google Flights engine when SERPAPI_KEY is configured.
+ * Live, bookable flights from Duffel for one corridor, one-way or round trip, as scored options
+ * (`source: 'duffel'`). Prices are per traveller (one adult is asked, the UI scales by party size) and
+ * already include our service fee. Null when Duffel is not configured or failed; an empty list when
+ * it answered with nothing.
  */
-async function fetchSerpApiFlights(
+async function fetchDuffelFlights(
   origin: string,
   destination: string,
   date: string,
@@ -268,288 +229,155 @@ async function fetchSerpApiFlights(
   fromStop?: TripStop,
   toStop?: TripStop,
   returnDate?: string
-): Promise<TransitOption[] | null> {
-  const apiKey = serpApiKey();
-  if (!apiKey) {
-    warnMissingKey('SERPAPI_KEY', 'live flight search');
-    return null;
-  }
+): Promise<{ options: TransitOption[]; cached: boolean } | null> {
+  const from = origin.trim().toUpperCase();
+  const to = destination.trim().toUpperCase();
+  const slices: SliceRequest[] = [
+    { origin: from, destination: to, departureDate: date },
+    ...(returnDate ? [{ origin: to, destination: from, departureDate: returnDate }] : []),
+  ];
+  const found = await searchDuffelOffers({ slices, passengers: 1 });
+  if (!found) return null;
+  if (found.offers.length === 0) return { options: [], cached: found.cached };
 
-  try {
-    // Metro codes (LON, PAR) return nothing from Google Flights, so search the city's airports.
-    // Round trips are asked for each city's main airport only: Google Flights answers a round trip
-    // that lists several airports on either side with "hasn't returned any results" (KUL,SZB to
-    // IST,SAW found nothing while KUL to IST returned a dozen fares). One-way searches handle the
-    // extra airports fine.
-    const pickIds = (city: string) => {
-      const ids = airportsForCity(city);
-      return (returnDate ? ids.slice(0, 1) : ids).join(',');
+  const rates = (await getRates()).rates;
+  const fromPoint = resolveCityCoords(origin, fromStop);
+  const toPoint = resolveCityCoords(destination, toStop);
+  const distanceKm = haversineDistanceKm(fromPoint.lat, fromPoint.lng, toPoint.lat, toPoint.lng);
+  const legId = `leg-${origin.toLowerCase()}-${destination.toLowerCase()}`;
+  const stamp = (iso: string) => iso.slice(0, 16).replace('T', ' '); // "2026-11-21 19:45"
+  const dayDiff = (a: string, b: string) =>
+    Math.round((Date.parse(`${b.slice(0, 10)}T00:00:00Z`) - Date.parse(`${a.slice(0, 10)}T00:00:00Z`)) / 86_400_000);
+
+  // Cheapest first, but never lose the cheapest nonstop to a pile of cheap connections
+  const byPrice = [...found.offers].sort((a, b) => a.pricing.displayTotal - b.pricing.displayTotal);
+  const picked = byPrice.slice(0, 6);
+  const nonstop = byPrice.find((o) => o.slices[0].segments.length === 1);
+  if (nonstop && !picked.includes(nonstop)) picked.push(nonstop);
+
+  const rawOptions: TransitOption[] = [];
+  let skipped = 0;
+  picked.forEach((offer, idx) => {
+    const out = offer.slices[0];
+    const priceUsd = round2(toUsd(offer.pricing.displayTotal, offer.pricing.currency, rates) ?? 0);
+    const hopAirports = out.segments.map((s) => ({
+      from: resolveAirportCoords(s.origin.iataCode || origin),
+      to: resolveAirportCoords(s.destination.iataCode || destination),
+    }));
+    // A hop whose airport no dataset knows cannot be drawn truthfully: drop the fare rather than
+    // give it a line to an invented point.
+    if (!(priceUsd > 0) || hopAirports.some((h) => !h.from || !h.to)) {
+      skipped++;
+      return;
+    }
+
+    const layoverMinutes = out.layovers.reduce((sum, l) => sum + l.minutes, 0);
+    const inVehicleMinutes = Math.max(1, out.durationMinutes - layoverMinutes);
+    const inVehicleHours = round2(inVehicleMinutes / 60);
+    const layoverHours = round2(layoverMinutes / 60);
+    const flightNumbers = out.segments.map((s) => s.flightNumber);
+    const carriers = Array.from(new Set(out.segments.map((s) => s.carrier.name).filter(Boolean)));
+    const carrierCode = (offer.owner.iataCode || out.segments[0].carrier.iataCode).toUpperCase();
+    const depTime = out.departureAt.slice(11, 16);
+    const offset = dayDiff(out.departureAt, out.arrivalAt);
+    const arrTime = `${out.arrivalAt.slice(11, 16)}${offset > 0 ? ` +${offset}d` : ''}`;
+
+    const segments: TransitSegment[] = out.segments.map((s, i) => ({
+      id: `${legId}-duffel-${idx + 1}-s${i + 1}`,
+      mode: 'flight' as TransitMode,
+      label: s.flightNumber,
+      fromName: s.origin.name || hopAirports[i].from!.code,
+      fromCode: hopAirports[i].from!.code,
+      fromLat: hopAirports[i].from!.lat,
+      fromLng: hopAirports[i].from!.lng,
+      toName: s.destination.name || hopAirports[i].to!.code,
+      toCode: hopAirports[i].to!.code,
+      toLat: hopAirports[i].to!.lat,
+      toLng: hopAirports[i].to!.lng,
+      durationMinutes: s.durationMinutes || Math.round(inVehicleMinutes / out.segments.length),
+    }));
+    const hops: FlightHop[] = out.segments.map((s, i) => ({
+      flightNumber: s.flightNumber,
+      airline: s.carrier.name,
+      airlineLogo: s.carrier.logoUrl,
+      airplane: s.aircraft,
+      fromCode: segments[i].fromCode,
+      fromName: s.origin.name,
+      departureAt: stamp(s.departureAt),
+      toCode: segments[i].toCode,
+      toName: s.destination.name,
+      arrivalAt: stamp(s.arrivalAt),
+      durationMinutes: s.durationMinutes,
+    }));
+    const layoverInfo: Layover[] = out.layovers.map((l) => ({
+      code: l.airport.iataCode,
+      name: l.airport.name,
+      minutes: l.minutes,
+      overnight: l.overnight,
+    }));
+
+    const scorable = {
+      ticketType: returnDate ? ('return' as const) : undefined,
+      departureTime: depTime,
+      arrivalTime: arrTime,
+      stopsCount: out.layovers.length,
+      segments,
+      basePriceUsd: priceUsd,
+      inVehicleHours,
+      layoverHours,
+      isOvernightSleeper: false,
+      mode: 'flight' as TransitMode,
+      carrierCode,
     };
-    const departureIds = pickIds(origin);
-    const arrivalIds = pickIds(destination);
-    if (!departureIds || !arrivalIds) return null;
+    const breakdown = computeSmartScore(scorable, hourlyRateUsd, profile);
+    const originCode = segments[0].fromCode;
+    const destCode = segments[segments.length - 1].toCode;
 
-    const url = new URL('https://serpapi.com/search.json');
-    url.searchParams.set('engine', 'google_flights');
-    url.searchParams.set('departure_id', departureIds);
-    url.searchParams.set('arrival_id', arrivalIds);
-    url.searchParams.set('outbound_date', date);
-    // `type` defaults to 1 (round trip), which SerpApi rejects without a return_date (HTTP 400).
-    // Prices are per traveller; they are scaled by the party size in the UI, so one adult is asked.
-    url.searchParams.set('type', returnDate ? '1' : '2');
-    if (returnDate) url.searchParams.set('return_date', returnDate);
-    url.searchParams.set('currency', 'USD');
-    url.searchParams.set('hl', 'en');
-    url.searchParams.set('api_key', apiKey);
-
-    console.log(
-      `[Transit API] Querying SerpAPI Google Flights: ${departureIds} -> ${arrivalIds} on ${date}` +
-        `${returnDate ? ` (return ${returnDate})` : ' (one-way)'}...`
-    );
-    const res = await fetch(url.toString(), {
-      signal: AbortSignal.timeout(8000),
+    rawOptions.push({
+      id: `${legId}-duffel${returnDate ? '-rt' : ''}-${idx + 1}`,
+      legId,
+      mode: 'flight',
+      isOvernightSleeper: false,
+      carrier: carriers.join(' + ') || offer.owner.name,
+      carrierCode,
+      routeCode: flightNumbers.join(' + ') || `${originCode}-${destCode}`,
+      flightNumbers,
+      carriers,
+      originStation: out.origin.name || `${originCode} Airport`,
+      destinationStation: out.destination.name || `${destCode} Airport`,
+      departureTime: depTime,
+      arrivalTime: arrTime,
+      departureAt: stamp(out.departureAt),
+      arrivalAt: stamp(out.arrivalAt),
+      inVehicleHours,
+      layoverHours,
+      layoverHub: out.layovers[0]?.airport.iataCode || undefined,
+      stopsCount: out.layovers.length,
+      basePriceUsd: priceUsd,
+      smartScore: breakdown.totalSmartScore,
+      smartScoreBreakdown: breakdown,
+      doorToDoorNotes: `${originCode} (${depTime || '--:--'}) → ${destCode} (${arrTime || '--:--'})`,
+      co2Kg: Math.round(distanceKm * 0.12),
+      segments,
+      dataSource: 'live',
+      ticketType: returnDate ? 'return' : undefined,
+      returnDate,
+      airlineLogo: offer.owner.logoUrl,
+      hops,
+      layovers: layoverInfo,
+      source: 'duffel',
+      offerId: offer.offerId,
+      expiresAt: offer.expiresAt,
+      pricing: offer.pricing,
+      checkout: { slices, ...(offer.cabinClass ? { cabinClass: offer.cabinClass } : {}) },
     });
-
-    if (!res.ok) {
-      const detail = (await res.json().catch(() => null)) as { error?: string } | null;
-      console.warn(
-        `[Transit API] SerpAPI returned status ${res.status}: ${detail?.error ?? res.statusText}`
-      );
-      if (res.status === 401 || res.status === 403) {
-        console.warn('[env] SERPAPI_KEY was rejected by SerpApi (401/403). Check the key in .env.local.');
-      }
-      return null;
-    }
-
-    const data = await res.json();
-    const flightGroups = [
-      ...(Array.isArray(data.best_flights) ? data.best_flights : []),
-      ...(Array.isArray(data.other_flights) ? data.other_flights : []),
-    ];
-
-    if (flightGroups.length === 0) {
-      const why = typeof data.error === 'string' ? ` (${data.error})` : '';
-      console.log(`[Transit API] No flights found in SerpAPI response${why}, falling back.`);
-      return null;
-    }
-
-    const fromPoint = resolveCityCoords(origin, fromStop);
-    const toPoint = resolveCityCoords(destination, toStop);
-    const distanceKm = haversineDistanceKm(fromPoint.lat, fromPoint.lng, toPoint.lat, toPoint.lng);
-    const legId = `leg-${origin.toLowerCase()}-${destination.toLowerCase()}`;
-
-    // Provider timestamps look like "2026-11-21 09:30"
-    const parseStamp = (t?: string) => {
-      const m = /^(\d{4}-\d{2}-\d{2})[ T](\d{1,2}:\d{2})/.exec(t ?? '');
-      return m ? { date: m[1], clock: m[2].padStart(5, '0') } : null;
-    };
-    const dayDiff = (from: string, to: string) =>
-      Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
-
-    // Options are built ONLY from fields the provider returned. A missing price/duration drops the
-    // option rather than substituting an invented value (a made-up fare shown as real is worse
-    // than one fewer row).
-    const rawOptions: TransitOption[] = [];
-    let skipped = 0;
-    flightGroups.slice(0, 6).forEach((item, idx) => {
-      const flights = Array.isArray(item.flights) ? item.flights : [];
-      const priceUsd = Number(item.price);
-      if (flights.length === 0 || !(priceUsd > 0)) {
-        skipped++;
-        return;
-      }
-
-      const firstFlt = flights[0];
-      const lastFlt = flights[flights.length - 1];
-      const flightNumbers: string[] = flights
-        .map((f: { flight_number?: string }) => (f.flight_number ?? '').trim())
-        .filter(Boolean);
-      const carriers: string[] = Array.from(
-        new Set<string>(
-          flights.map((f: { airline?: string }) => (f.airline ?? '').trim()).filter(Boolean)
-        )
-      );
-      // "TK 61" -> "TK"; falls back to the airline's initials only if no flight number exists
-      const carrierCode = (
-        /^([A-Z0-9]{2})\s*\d/i.exec(flightNumbers[0] ?? '')?.[1] ??
-        (carriers[0] ?? '').slice(0, 2)
-      ).toUpperCase();
-
-      const layovers = Array.isArray(item.layovers) ? item.layovers : [];
-      const layoverMinutes = layovers.reduce(
-        (sum: number, l: { duration?: number }) => sum + (Number(l.duration) || 0),
-        0
-      );
-      const hopMinutes = flights.reduce(
-        (sum: number, f: { duration?: number }) => sum + (Number(f.duration) || 0),
-        0
-      );
-      const totalMinutes = Number(item.total_duration) || hopMinutes + layoverMinutes;
-      const inVehicleMinutes = totalMinutes - layoverMinutes > 0 ? totalMinutes - layoverMinutes : hopMinutes;
-      if (!(inVehicleMinutes > 0)) {
-        skipped++;
-        return;
-      }
-      const inVehicleHours = round2(inVehicleMinutes / 60);
-      const layoverHours = round2(layoverMinutes / 60);
-
-      const dep = parseStamp(firstFlt.departure_airport?.time);
-      const arr = parseStamp(lastFlt.arrival_airport?.time);
-      const depTime = dep?.clock ?? '';
-      const offset = dep && arr ? dayDiff(dep.date, arr.date) : 0;
-      const arrTime = arr ? `${arr.clock}${offset > 0 ? ` +${offset}d` : ''}` : '';
-
-      // Every hop is anchored to its OWN airport (SerpApi reports the real departure/arrival
-      // airport, e.g. SAW vs IST), so connections render via the layover airport and a flight
-      // line never starts or ends at a city centre. Ground connectors are added afterwards.
-      // A hop whose airport no dataset knows cannot be drawn truthfully, so the fare is dropped
-      // rather than given a line to an invented point.
-      const hopAirports = flights.map(
-        (flt: { departure_airport?: { id?: string }; arrival_airport?: { id?: string } }) => ({
-          from: resolveAirportCoords(flt.departure_airport?.id || origin),
-          to: resolveAirportCoords(flt.arrival_airport?.id || destination),
-        })
-      );
-      if (hopAirports.some((h: { from: unknown; to: unknown }) => !h.from || !h.to)) {
-        skipped++;
-        return;
-      }
-
-      const segments: TransitSegment[] = flights.map((flt: {
-        flight_number?: string;
-        departure_airport?: { name?: string; id?: string };
-        arrival_airport?: { name?: string; id?: string };
-        duration?: number;
-      }, segIdx: number) => {
-        const segFrom = hopAirports[segIdx].from!;
-        const segTo = hopAirports[segIdx].to!;
-        return {
-          id: `${legId}-serp-${idx + 1}-s${segIdx + 1}`,
-          mode: 'flight' as TransitMode,
-          label: flt.flight_number || `Flight ${segIdx + 1}`,
-          fromName: flt.departure_airport?.name || segFrom.code,
-          fromCode: segFrom.code,
-          fromLat: segFrom.lat,
-          fromLng: segFrom.lng,
-          toName: flt.arrival_airport?.name || segTo.code,
-          toCode: segTo.code,
-          toLat: segTo.lat,
-          toLng: segTo.lng,
-          durationMinutes: Number(flt.duration) || Math.round(inVehicleMinutes / flights.length),
-        };
-      });
-
-      const hops: FlightHop[] = flights.map(
-        (
-          f: {
-            flight_number?: string;
-            airline?: string;
-            airline_logo?: string;
-            airplane?: string;
-            travel_class?: string;
-            duration?: number;
-            departure_airport?: { name?: string; id?: string; time?: string };
-            arrival_airport?: { name?: string; id?: string; time?: string };
-          },
-          hopIdx: number
-        ) => ({
-          flightNumber: (f.flight_number ?? '').trim(),
-          airline: (f.airline ?? '').trim(),
-          airlineLogo: f.airline_logo,
-          airplane: f.airplane,
-          travelClass: f.travel_class,
-          fromCode: segments[hopIdx].fromCode,
-          fromName: f.departure_airport?.name ?? segments[hopIdx].fromName,
-          departureAt: f.departure_airport?.time ?? '',
-          toCode: segments[hopIdx].toCode,
-          toName: f.arrival_airport?.name ?? segments[hopIdx].toName,
-          arrivalAt: f.arrival_airport?.time ?? '',
-          durationMinutes: Number(f.duration) || 0,
-        })
-      );
-      const layoverInfo: Layover[] = layovers.map(
-        (l: { id?: string; name?: string; duration?: number; overnight?: boolean }) => ({
-          code: l.id ?? '',
-          name: l.name ?? l.id ?? '',
-          minutes: Number(l.duration) || 0,
-          overnight: Boolean(l.overnight),
-        })
-      );
-
-      const scorable = {
-        ticketType: returnDate ? ('return' as const) : undefined,
-        departureTime: depTime,
-        arrivalTime: arrTime,
-        stopsCount: layovers.length,
-        segments,
-        basePriceUsd: priceUsd,
-        inVehicleHours,
-        layoverHours,
-        isOvernightSleeper: false,
-        mode: 'flight' as TransitMode,
-        carrierCode,
-      };
-      const breakdown = computeSmartScore(scorable, hourlyRateUsd, profile);
-
-      const co2FromApi = Number(item.carbon_emissions?.this_flight) / 1000;
-      const originCode = segments[0].fromCode;
-      const destCode = segments[segments.length - 1].toCode;
-
-      rawOptions.push({
-        id: `${legId}-serp${returnDate ? '-rt' : ''}-${idx + 1}`,
-        legId,
-        mode: 'flight',
-        isOvernightSleeper: false,
-        // Displayed verbatim from the provider
-        carrier: carriers.join(' + ') || carrierCode,
-        carrierCode,
-        routeCode: flightNumbers.join(' + ') || `${originCode}-${destCode}`,
-        flightNumbers,
-        carriers,
-        originStation: firstFlt.departure_airport?.name || `${originCode} Airport`,
-        destinationStation: lastFlt.arrival_airport?.name || `${destCode} Airport`,
-        departureTime: depTime,
-        arrivalTime: arrTime,
-        departureAt: firstFlt.departure_airport?.time,
-        arrivalAt: lastFlt.arrival_airport?.time,
-        inVehicleHours,
-        layoverHours,
-        layoverHub: layovers[0]?.id || undefined,
-        stopsCount: layovers.length,
-        basePriceUsd: priceUsd,
-        smartScore: breakdown.totalSmartScore,
-        smartScoreBreakdown: breakdown,
-        doorToDoorNotes: `${originCode} (${depTime || '--:--'}) → ${destCode} (${arrTime || '--:--'})`,
-        // CO₂ is the one non-ticket field estimated when the provider omits it
-        co2Kg: co2FromApi > 0 ? Math.round(co2FromApi) : Math.round(distanceKm * 0.12),
-        segments,
-        dataSource: 'live',
-        ticketType: returnDate ? 'return' : undefined,
-        returnDate,
-        airlineLogo: item.airline_logo ?? firstFlt.airline_logo,
-        // Only what the fare data states; otherwise `completeTicketDetails` adds the carrier's typical policy
-        baggage:
-          parseBaggage([
-            ...(Array.isArray(item.extensions) ? item.extensions : []),
-            ...flights.flatMap((f: { extensions?: string[] }) => f.extensions ?? []),
-          ]) ?? undefined,
-        hops,
-        layovers: layoverInfo,
-      });
-    });
-    if (skipped > 0) {
-      console.warn(
-        `[Transit API] Skipped ${skipped} SerpApi itinerary(ies) missing price/duration/flights or with an unknown airport.`
-      );
-    }
-    if (rawOptions.length === 0) return null;
-
-    console.log(`[Transit API] Successfully parsed ${rawOptions.length} live flights from SerpAPI.`);
-    return recalculateOptions(rawOptions, hourlyRateUsd, profile);
-  } catch (err) {
-    console.warn('[Transit API] SerpAPI fetch failed or timed out:', err);
-    return null;
+  });
+  if (skipped > 0) {
+    console.warn(`[Transit API] Skipped ${skipped} Duffel offer(s) with no usable price or an unknown airport.`);
   }
+  if (rawOptions.length === 0) return { options: [], cached: found.cached };
+  console.log(`[Transit API] ${rawOptions.length} live Duffel flights${found.cached ? ' (cached)' : ''}.`);
+  return { options: recalculateOptions(rawOptions, hourlyRateUsd, profile), cached: found.cached };
 }
 
 /**
@@ -615,8 +443,8 @@ function buildFallbackCorridorOptions(
 
 /**
  * Transit query pipeline for one corridor, one-way or return:
- *   1. FLIGHTS: live SerpApi fares (cached 12 h in Redis + memory; only live results are cached).
- *      No key / no results → curated or estimated flights, labelled as such.
+ *   1. FLIGHTS: live Duffel offers (cached 10 min, offers near expiry never served) plus ULCC fares
+ *      from the Aviasales data. No token / no results → curated or estimated flights, labelled as such.
  *   2. GROUND (train, coach, ferry): there is no live availability API for these, so they are the
  *      curated/estimated options, labelled Sample/Estimate, with a direct merchant link per option.
  *      They are rebuilt every time and never cached.
@@ -695,29 +523,35 @@ export async function queryTransitWithCache(
   const fallbackFlights = fallback.filter((o) => o.mode === 'flight');
   const fallbackGround = fallback.filter((o) => o.mode !== 'flight');
 
-  // 1. Live flights: cache first, then the provider. Skipped entirely in sample-data mode
-  //    (USE_REAL_DATA off): no SerpApi request and no Redis read, so no credits are spent.
+  // 1. Live flights from Duffel (each search is cached 10 minutes, and offers near expiry are not
+  //    served), plus ULCC fares Duffel does not sell. Skipped entirely in sample-data mode
+  //    (USE_REAL_DATA off): no Duffel request, so nothing is searched or spent.
   let live: TransitOption[] | null = null;
-  let cacheLayer: 'memory' | 'redis' | null = null;
+  let cacheLayer = null as 'memory' | 'redis' | null;
   if (useRealData() && (mode === 'all' || mode === 'flight')) {
-    const cachedHit = await getCachedTransit(cacheKey);
-    if (cachedHit && cachedHit.options.length > 0) {
-      live = cachedHit.options;
-      cacheLayer = cachedHit.layer;
-    } else {
-      live = await fetchSerpApiFlights(
-        origin,
-        destination,
-        date,
-        hourlyRateUsd,
-          travelerProfile,
-        fromStop,
-        toStop,
-        returnDate
-      );
-      // Cache LIVE results only (12-hour TTL). Estimates depend on the caller's stops and are cheap
-      // to rebuild; caching them let stale sample data masquerade as a cache hit and shadow real fares.
-      if (live && live.length > 0) await setCachedTransit(cacheKey, live);
+    const duffelResult = await fetchDuffelFlights(
+      origin,
+      destination,
+      date,
+      hourlyRateUsd,
+      travelerProfile,
+      fromStop,
+      toStop,
+      returnDate
+    );
+    const ulcc = await fetchUlccFallback({
+      origin,
+      destination,
+      date,
+      returnDate,
+      legId: `leg-${origin.toLowerCase()}-${destination.toLowerCase()}`,
+      hourlyRateUsd,
+      profile: travelerProfile,
+    });
+    const combined = [...(duffelResult?.options ?? []), ...ulcc];
+    if (combined.length > 0) {
+      live = combined;
+      cacheLayer = duffelResult?.cached && ulcc.length === 0 ? 'redis' : null;
     }
   }
 

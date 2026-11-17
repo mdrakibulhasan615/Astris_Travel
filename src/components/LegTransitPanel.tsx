@@ -98,7 +98,27 @@ const WARNING_FLAGS: ReadonlySet<ScoreFlag> = new Set([
  * Tells the user whether the ticket details are a real provider fare or sample/estimated data.
  * Sample data (curated or synthesized) must never look like a live fare.
  */
-function SourceChip({ source }: { source: TransitOption['dataSource'] }) {
+function SourceChip({ source, kind }: { source: TransitOption['dataSource']; kind?: TransitOption['source'] }) {
+  if (kind === 'duffel') {
+    return (
+      <span
+        title="A live fare from the airline, bookable here. The price includes our service fee."
+        className="rounded-md bg-[#F0FDF4] px-1.5 py-0.5 text-[10px] font-medium text-[#15803D]"
+      >
+        Bookable
+      </span>
+    );
+  }
+  if (kind === 'external_ulcc') {
+    return (
+      <span
+        title="This airline sells only on its own channels. The fare is a recent one; the airline's site shows the current price."
+        className="rounded-md bg-[#EFF6FF] px-1.5 py-0.5 text-[10px] font-medium text-[#1D4ED8]"
+      >
+        Partner fare
+      </span>
+    );
+  }
   if (source === 'live') {
     return (
       <span
@@ -621,11 +641,12 @@ export function LegTransitPanel({
                       }}
                       extras={
                         <>
-                          <SourceChip source={option.dataSource} />
+                          <SourceChip source={option.dataSource} kind={option.source} />
                           <FlagChips flags={b.flags} />
                         </>
                       }
                       showBooking={!coveredByLeg}
+                      passengers={travellers}
                     />
                   );
                 }

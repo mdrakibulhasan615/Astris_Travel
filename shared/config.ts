@@ -1,19 +1,21 @@
 /**
- * Ticket data source. ONE flag to flip between the built-in sample data and live SerpApi fares.
+ * Ticket data source. ONE flag to flip between the built-in sample data and live Duffel fares.
  *
- *   false (default)  sample/curated tickets only. No SerpApi request is made (not on page load, not
- *                    on reload, not on any edit) and the Redis fare cache is not touched, so
- *                    developing the UI never spends SerpApi credits.
- *   true             live Google Flights fares via SerpApi (needs SERPAPI_KEY), cached in Redis for
- *                    12 hours. Ground transport stays curated/estimated either way: there is no live
- *                    availability API for trains and coaches.
+ *   false            sample/curated tickets only (plus recent real fares from the free Aviasales Data
+ *                    API when TRAVELPAYOUTS_TOKEN is set). No Duffel request is made, so developing
+ *                    the UI never searches or books anything.
+ *   true (default)   live, bookable Duffel offers (needs DUFFEL_ACCESS_TOKEN) with a service fee
+ *                    added, cached 10 minutes, checked out through Duffel Links. Airlines Duffel does
+ *                    not sell (AirAsia, Ryanair…) appear as "Book direct" partner links. Ground
+ *                    transport stays curated/estimated either way: there is no live availability API
+ *                    for trains and coaches.
  *
  * Change it here, or override per environment without touching code: set `USE_REAL_DATA=true` (or
  * `false`) in `.env.local` locally, or in the Vercel project's environment variables. The
  * environment variable wins when it is set; see `useRealData()` in `server/env.ts`.
  *
  * Vercel note: deployments are NOT live by default. Set `USE_REAL_DATA=true` for the environment
- * (Production, and Preview if you want it) that should spend credits.
+ * (Production, and Preview if you want it) that should search Duffel.
  */
 export const USE_REAL_TICKET_DATA = true;
 
