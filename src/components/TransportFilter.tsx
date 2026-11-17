@@ -5,8 +5,8 @@ import type { ModeFilter, TripLeg } from '../../shared/types.ts';
 const ITEMS = [
   { id: 'all', label: 'All', icon: Sparkles, dot: '#111827' },
   { id: 'flight', label: 'Flights', icon: Plane, dot: '#FF812E' },
-  { id: 'train', label: 'Trains', icon: TrainFront, dot: '#0D9488' },
-  { id: 'bus', label: 'Buses', icon: Bus, dot: '#7C3AED' },
+  { id: 'train', label: 'Trains', icon: TrainFront, dot: '#7C3AED' },
+  { id: 'bus', label: 'Buses', icon: Bus, dot: '#0D9488' },
 ] as const;
 
 /**
