@@ -14,6 +14,8 @@ import {
 import { formatDuration } from '../../shared/smartScore.ts';
 import { useCurrency } from '../currency.tsx';
 import { BrandLogo } from './BrandLogo.tsx';
+import { safeHttpsUrl } from '../../shared/safeUrl.ts';
+import { useAuthPrompt } from '../context/AuthPromptContext.tsx';
 
 /**
  * "Book Exact Ticket": the sellers of one specific fare (the airline itself and travel agencies),
@@ -30,6 +32,9 @@ import { BrandLogo } from './BrandLogo.tsx';
  * them again on submit and the body that reaches the seller is the original one.
  */
 export function SellerAction({ request, bookWith, primary }: { request: BookingRequest; bookWith: string; primary?: boolean }) {
+  const { notifyCheckoutHandoff } = useAuthPrompt();
+  // Checked again here (the server already did): only an https URL may become an href or a form action
+  const url = safeHttpsUrl(request.url);
   const className = `inline-flex shrink-0 cursor-pointer items-center justify-center gap-1 rounded-lg px-3 py-1.5 text-xs font-bold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-1 ${
     primary ? 'bg-orange-500 text-white hover:bg-orange-600' : 'bg-slate-100 text-slate-800 hover:bg-slate-200'
   }`;
@@ -40,9 +45,20 @@ export function SellerAction({ request, bookWith, primary }: { request: BookingR
     </>
   );
 
+  if (!url) {
+    return (
+      <span className="inline-flex shrink-0 items-center rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-500" title="This seller's link was not a secure https address">
+        Link unavailable
+      </span>
+    );
+  }
+
+  // The seller opens in a new tab; a guest finds the "save your trip" prompt waiting on this one
+  const onHandoff = () => notifyCheckoutHandoff(bookWith);
+
   if (request.postData) {
     return (
-      <form method="POST" action={request.url} target="_blank" rel="noopener noreferrer" className="shrink-0">
+      <form method="POST" action={url} target="_blank" rel="noopener noreferrer" className="shrink-0" onSubmit={onHandoff}>
         {postDataFields(request.postData).map(([name, value], i) => (
           <input key={`${name}-${i}`} type="hidden" name={name} value={value} />
         ))}
@@ -53,7 +69,7 @@ export function SellerAction({ request, bookWith, primary }: { request: BookingR
     );
   }
   return (
-    <a href={request.url} target="_blank" rel="noopener noreferrer" className={className}>
+    <a href={url} target="_blank" rel="noopener noreferrer" className={className} onClick={onHandoff}>
       {label}
     </a>
   );

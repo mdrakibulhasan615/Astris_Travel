@@ -1,3 +1,4 @@
+import { safeHttpsUrl } from './safeUrl.ts';
 import { buildTripFlightUrl } from './affiliate.ts';
 import { parseBaggage } from './ticketDetails.ts';
 import type { BaggageInfo, TransitOption } from './types.ts';
@@ -379,7 +380,7 @@ interface RawBookingOption {
 /**
  * Sellers of one exact ticket. Handles a single ticket sold `together`, and a ticket sold as two
  * `departing` + `returning` tickets (each part becomes its own row, tied together by `groupId`, with
- * the group's total price). Entries with no price or no booking url are dropped. The `post_data`
+ * the group's total price). Entries with no price or no https booking url are dropped. The `post_data`
  * string is passed through untouched.
  */
 export function parseBookingOptions(
@@ -392,8 +393,9 @@ export function parseBookingOptions(
     raw: RawSeller | undefined
   ): Omit<SellerBookingOption, 'id' | 'groupId' | 'part' | 'separateTickets' | 'groupPrice'> | null => {
     const price = Number(raw?.price);
-    const url = raw?.booking_request?.url;
-    if (!raw || !(price > 0) || typeof url !== 'string' || url.length === 0) return null;
+    // Only an absolute https URL may become a link or a form action (no javascript:/data: URIs)
+    const url = safeHttpsUrl(raw?.booking_request?.url);
+    if (!raw || !(price > 0) || !url) return null;
     const postData = raw.booking_request?.post_data;
     return {
       bookWith: (raw.book_with ?? '').trim() || 'Seller',
@@ -401,7 +403,7 @@ export function parseBookingOptions(
       price,
       baggagePrices: Array.isArray(raw.baggage_prices) ? raw.baggage_prices.filter((b) => typeof b === 'string') : [],
       ...(raw.option_title ? { optionTitle: raw.option_title } : {}),
-      ...(typeof raw.airline_logos?.[0] === 'string' ? { logo: raw.airline_logos[0] } : {}),
+      ...(safeHttpsUrl(raw.airline_logos?.[0]) ? { logo: safeHttpsUrl(raw.airline_logos?.[0])! } : {}),
       bookingRequest: { url, ...(typeof postData === 'string' && postData.length > 0 ? { postData } : {}) },
     };
   };

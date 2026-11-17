@@ -72,6 +72,10 @@ import { VttsControlPanel } from './components/VttsControlPanel.tsx';
 import { WorldMapCanvas } from './components/WorldMapCanvas.tsx';
 import type { OverlayLine } from '../shared/groundSchedule.ts';
 import { ErrorBoundary } from './components/ErrorBoundary.tsx';
+import { useRouteStorage } from './useRouteStorage.ts';
+import { useAuthPrompt } from './context/AuthPromptContext.tsx';
+import { AccountControls } from './components/auth/AccountControls.tsx';
+import type { SavedRouteData } from '../shared/savedRoutes.ts';
 import { logFlightState, verifyLegsMatchResponse } from './flightDebug.ts';
 
 type WorkspacePanel = 'timeline' | 'stays';
@@ -296,6 +300,20 @@ export default function App() {
       trip.travelers,
     ]
   );
+
+  // Guest route in localStorage, account sync when signed in, compressed share link (#r=…)
+  const handleRestoreRoute = useCallback(
+    (data: SavedRouteData) => {
+      setShowHero(false);
+      setTrip((prev) => ({ ...prev, title: data.title }));
+      const stops: TripStop[] = data.stops.map((s, i) => ({ ...s, order: i + 1 }));
+      void recomputeStopsAndLegs(stops, undefined, data.travelers, data.legPrefs ?? {});
+    },
+    [recomputeStopsAndLegs]
+  );
+  const routeStore = useRouteStorage({ trip, ready: !isLoadingInitial, onRestore: handleRestoreRoute });
+  const { setRouteActive } = useAuthPrompt();
+  useEffect(() => setRouteActive(routeStore.hasRoute), [routeStore.hasRoute, setRouteActive]);
 
   // Instant client-side Smart Score recalculation for VTTS preset / slider changes
   const applyVttsRate = useCallback(
@@ -592,6 +610,7 @@ export default function App() {
 
   const handleRestoreDefaultTrip = () => {
     const fresh = createDefaultTrip();
+    routeStore.startNewRoute();
     setTrip(fresh);
     setModeFilter('all');
     if (fresh.legs[0]) setActiveLegId(fresh.legs[0].id);
@@ -652,6 +671,13 @@ export default function App() {
         onOptimizeRoute={handleOptimizeRoute}
         isOptimizing={isOptimizing}
         dataMode={dataMode}
+        accountSlot={
+          <AccountControls
+            hasRoute={routeStore.hasRoute}
+            syncStatus={routeStore.status}
+            onCopyLink={routeStore.copySyncLink}
+          />
+        }
       />
 
       {/* Mobile View Switcher (keeps sticky height well under 15%) */}
