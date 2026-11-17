@@ -4,6 +4,8 @@ import { getRates } from './ratesService.ts';
 import { getRedisClient, liveOffersToOptions } from './transitService.ts';
 import { createSerpApiProvider, ProviderError, type FlightProvider } from './flightProvider.ts';
 import { createTtlCache, getOrFetch } from './ttlCache.ts';
+import { bookingOptionsSchema, parseLiveSearch, parseWith, returnFlightsSchema } from './security/validation.ts';
+import { createLimiter, rateLimit, RATE_LIMITS, type Limiter } from './security/rateLimit.ts';
 import {
   bookingOptionsCacheKey,
   hashKey,
@@ -37,38 +39,7 @@ export const BOOKING_TTL_SECONDS = 15 * 60;
 const offersCache = createTtlCache<LiveFlightOffer[]>({ ttlSeconds: OFFERS_TTL_SECONDS, redis: getRedisClient });
 const bookingCache = createTtlCache<SellerBookingOption[]>({ ttlSeconds: BOOKING_TTL_SECONDS, redis: getRedisClient });
 
-const IATA_RE = /^[A-Za-z]{3}$/;
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-const CURRENCY_RE = /^[A-Za-z]{3}$/;
-
-type Parsed<T> = { ok: true; value: T } | { ok: false; message: string };
-
-/** Validates and normalises a search body. */
-export function parseLiveSearch(body: unknown): Parsed<LiveSearchRequest> {
-  const b = (body ?? {}) as Record<string, unknown>;
-  const origin = String(b.originIata ?? '').trim().toUpperCase();
-  const destination = String(b.destinationIata ?? '').trim().toUpperCase();
-  if (!IATA_RE.test(origin) || !IATA_RE.test(destination)) {
-    return { ok: false, message: 'originIata and destinationIata must be 3-letter IATA codes.' };
-  }
-  if (origin === destination) return { ok: false, message: 'Origin and destination must differ.' };
-  const departureDate = String(b.departureDate ?? '');
-  if (!DATE_RE.test(departureDate)) return { ok: false, message: 'departureDate must be YYYY-MM-DD.' };
-  let returnDate: string | undefined;
-  if (b.returnDate !== undefined && b.returnDate !== null && b.returnDate !== '') {
-    returnDate = String(b.returnDate);
-    if (!DATE_RE.test(returnDate) || returnDate < departureDate) {
-      return { ok: false, message: 'returnDate must be YYYY-MM-DD and not before departureDate.' };
-    }
-  }
-  const adults = b.adults === undefined ? 1 : Number(b.adults);
-  if (!Number.isInteger(adults) || adults < 1 || adults > 9) {
-    return { ok: false, message: 'adults must be a whole number from 1 to 9.' };
-  }
-  const currency = b.currency === undefined ? 'USD' : String(b.currency).trim().toUpperCase();
-  if (!CURRENCY_RE.test(currency)) return { ok: false, message: 'currency must be a 3-letter ISO code.' };
-  return { ok: true, value: { originIata: origin, destinationIata: destination, departureDate, returnDate, adults, currency } };
-}
+export { parseLiveSearch };
 
 function sendError(res: Response, status: number, body: LiveFlightErrorBody) {
   return res.status(status).json(body);
@@ -106,7 +77,26 @@ async function usdPerUnit(currency: string): Promise<number> {
   return Number.isFinite(rate) && rate > 0 ? 1 / rate : 1;
 }
 
-export function registerLiveFlightRoutes(app: Express, provider: FlightProvider = createSerpApiProvider()): void {
+export interface LiveFlightLimiters {
+  liveSearch: Limiter;
+  returnFlights: Limiter;
+  bookingOptions: Limiter;
+}
+
+/** Per-IP / per-session sliding windows (Upstash when configured, memory otherwise). */
+export function defaultLiveFlightLimiters(): LiveFlightLimiters {
+  return {
+    liveSearch: createLimiter(RATE_LIMITS.liveSearch, getRedisClient),
+    returnFlights: createLimiter(RATE_LIMITS.returnFlights, getRedisClient),
+    bookingOptions: createLimiter(RATE_LIMITS.bookingOptions, getRedisClient),
+  };
+}
+
+export function registerLiveFlightRoutes(
+  app: Express,
+  provider: FlightProvider = createSerpApiProvider(),
+  limiters: LiveFlightLimiters = defaultLiveFlightLimiters()
+): void {
   const offline = (req: LiveSearchRequest, reason: OfflineReason): LiveSearchResponse => ({
     mode: 'offline',
     offers: [],
@@ -117,7 +107,7 @@ export function registerLiveFlightRoutes(app: Express, provider: FlightProvider 
     fallbackLinks: offlineFallbackLinks(req),
   });
 
-  app.post('/api/flights/live-search', async (req, res) => {
+  app.post('/api/flights/live-search', rateLimit(RATE_LIMITS.liveSearch, limiters.liveSearch), async (req, res) => {
     const parsed = parseLiveSearch(req.body);
     if (!parsed.ok) return sendError(res, 400, { error: 'BAD_REQUEST', message: parsed.message });
     const search = parsed.value;
@@ -157,15 +147,14 @@ export function registerLiveFlightRoutes(app: Express, provider: FlightProvider 
     }
   });
 
-  app.post('/api/flights/return-flights', async (req, res) => {
+  app.post('/api/flights/return-flights', rateLimit(RATE_LIMITS.returnFlights, limiters.returnFlights), async (req, res) => {
+    const body = parseWith(returnFlightsSchema, req.body);
+    if (!body.ok) return sendError(res, 400, { error: 'BAD_REQUEST', message: body.message });
     const parsed = parseLiveSearch(req.body);
-    const departureToken = String((req.body as Record<string, unknown>)?.departureToken ?? '');
     if (!parsed.ok || !parsed.value.returnDate) {
       return sendError(res, 400, { error: 'BAD_REQUEST', message: parsed.ok ? 'returnDate is required.' : parsed.message });
     }
-    if (departureToken.length < 8 || departureToken.length > 8192) {
-      return sendError(res, 400, { error: 'BAD_REQUEST', message: 'departureToken is required.' });
-    }
+    const departureToken = body.value.departureToken;
     if (!useRealData()) return sendError(res, 503, { error: 'NO_KEY', message: 'Live fares are switched off.' });
     const search = parsed.value as ReturnFlightsRequest;
 
@@ -199,15 +188,12 @@ export function registerLiveFlightRoutes(app: Express, provider: FlightProvider 
     }
   });
 
-  app.post('/api/flights/booking-options', async (req, res) => {
-    const b = (req.body ?? {}) as Record<string, unknown>;
-    const bookingToken = String(b.bookingToken ?? '');
-    const currency = b.currency === undefined ? 'USD' : String(b.currency).trim().toUpperCase();
-    if (bookingToken.length < 8 || bookingToken.length > 8192 || !CURRENCY_RE.test(currency)) {
-      return sendError(res, 400, { error: 'BAD_REQUEST', message: 'bookingToken is required.' });
-    }
+  app.post('/api/flights/booking-options', rateLimit(RATE_LIMITS.bookingOptions, limiters.bookingOptions), async (req, res) => {
+    const body = parseWith(bookingOptionsSchema, req.body);
+    if (!body.ok) return sendError(res, 400, { error: 'BAD_REQUEST', message: body.message });
+    const { bookingToken, currency } = body.value;
     // The search the token came from (see BookingOptionsRequest)
-    const search = parseLiveSearch(b.search);
+    const search = parseLiveSearch((req.body as Record<string, unknown>).search);
     if (!search.ok) return sendError(res, 400, { error: 'BAD_REQUEST', message: `search: ${search.message}` });
     if (!useRealData()) return sendError(res, 503, { error: 'NO_KEY', message: 'Live fares are switched off.' });
 
