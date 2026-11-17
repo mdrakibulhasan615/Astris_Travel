@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { BedDouble, Compass, Plus, Sparkles } from 'lucide-react';
 import { CURRENCIES, isCurrencyCode } from '../../shared/currency.ts';
 import { useCurrency } from '../currency.tsx';
@@ -10,6 +11,8 @@ interface TopBarProps {
   isOptimizing: boolean;
   /** Where tickets come from: set in code / environment, shown here for information only. */
   dataMode?: 'live' | 'mock';
+  /** Route sync link + account controls. */
+  accountSlot?: ReactNode;
 }
 
 export function TopBar({
@@ -19,6 +22,7 @@ export function TopBar({
   onOptimizeRoute,
   isOptimizing,
   dataMode,
+  accountSlot,
 }: TopBarProps) {
   const { currency, setCurrency, rates } = useCurrency();
   return (
@@ -96,6 +100,8 @@ export function TopBar({
             {dataMode === 'live' ? 'Live fares' : 'Live fares off'}
           </span>
         )}
+
+        {accountSlot}
 
         <div className="relative">
           <label htmlFor="currency-select" className="sr-only">
