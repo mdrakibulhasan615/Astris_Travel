@@ -10,12 +10,15 @@ export function LiveFaresBar({
   entry,
   status,
   hasLiveFares,
+  hasAnyFares,
   onFetch,
 }: {
   entry?: LiveFareEntry;
   status?: LiveFareStatus;
   /** The card list is currently showing this entry's live fares. */
   hasLiveFares: boolean;
+  /** The leg lists some fare (live, or a recent fare), so "no fares" would be wrong to say. */
+  hasAnyFares: boolean;
   onFetch: () => void;
 }) {
   const loading = Boolean(status?.loading);
@@ -49,7 +52,7 @@ export function LiveFaresBar({
           </span>
         )}
         {!entry && !loading && !status?.error && (
-          <span className="text-[11px] text-[#6B7280]">Estimated schedule shown. Live prices are fetched on request.</span>
+          <span className="text-[11px] text-[#6B7280]">{hasAnyFares ? 'Recent fares shown. Live prices are fetched on request.' : 'No fares yet. Live prices are fetched on request.'}</span>
         )}
       </div>
 
@@ -68,7 +71,7 @@ export function LiveFaresBar({
       )}
 
       {entry && entry.mode === 'live' && entry.options.length === 0 && !loading && (
-        <p className="text-[11px] text-[#4B5563]">No live flights were found for this date. The estimated schedule is still shown.</p>
+        <p className="text-[11px] text-[#4B5563]">No live flights were found for this date.</p>
       )}
 
       {offline && !loading && (
@@ -79,7 +82,7 @@ export function LiveFaresBar({
               : entry?.reason === 'NO_KEY'
                 ? 'Live fares are not set up on this server.'
                 : 'Live fares are switched off.'}{' '}
-            <span className="font-normal">Showing the estimated / offline schedule. Search this exact route instead:</span>
+            <span className="font-normal">Search this exact route instead:</span>
           </p>
           {entry && entry.fallbackLinks.length > 0 && (
             <div className="mt-1.5 flex flex-wrap gap-1.5">

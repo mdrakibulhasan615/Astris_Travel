@@ -206,6 +206,8 @@ export function WorldMapCanvas({
     const flightFeatures: GeoJSON.Feature[] = [];
     const trainFeatures: GeoJSON.Feature[] = [];
     const busFeatures: GeoJSON.Feature[] = [];
+    // Legs with no fares yet: a plain dashed line between the two stops (no route or mode is implied)
+    const plainFeatures: GeoJSON.Feature[] = [];
     // Ground legs that connect a city/station to an airport node. Kept in their own source so they
     // are drawn as distinct dashed connectors and never merge into the flight line.
     const connectorFeatures: GeoJSON.Feature[] = [];
@@ -237,7 +239,15 @@ export function WorldMapCanvas({
           ? selectedOption
           : leg.transitOptions.find((o) => o.mode === modeFilter) ?? selectedOption;
 
-      if (!displayOption) return;
+      if (!displayOption) {
+        try {
+          const arc = greatCircle(point([fromStop.lng, fromStop.lat]), point([toStop.lng, toStop.lat]), { npoints: 72 });
+          plainFeatures.push({ ...arc, properties: { legId: leg.id, isHighlighted } });
+        } catch {
+          /* two identical points: nothing to draw */
+        }
+        return;
+      }
 
       // Flight fallback (no segment data): anchor to the leg's airports, not the city centres
       const fallbackFrom =
@@ -447,6 +457,7 @@ export function WorldMapCanvas({
       flightGeoJson: { type: 'FeatureCollection' as const, features: flightFeatures },
       trainGeoJson: { type: 'FeatureCollection' as const, features: trainFeatures },
       busGeoJson: { type: 'FeatureCollection' as const, features: busFeatures },
+      plainGeoJson: { type: 'FeatureCollection' as const, features: plainFeatures },
       connectorGeoJson: { type: 'FeatureCollection' as const, features: connectorFeatures },
       airportNodes: Object.values(airportNodeMap),
       stationDotsGeoJson: { type: 'FeatureCollection' as const, features: stationDotFeatures },
@@ -556,6 +567,21 @@ export function WorldMapCanvas({
         style={{ width: '100%', height: '100%' }}
       >
         <NavigationControl position="bottom-right" showCompass={false} />
+
+        {/* 0. Legs with no fares yet: a plain dashed line between the stops */}
+        <Source id="astris-plain-lines" type="geojson" data={mapLayersData.plainGeoJson}>
+          <Layer
+            id="astris-plain-line"
+            type="line"
+            paint={{
+              'line-color': ['case', ['boolean', ['get', 'isHighlighted'], false], '#4B5563', '#9CA3AF'],
+              'line-width': 2.5,
+              'line-dasharray': [2, 2],
+              'line-opacity': 0.9,
+            }}
+            layout={{ 'line-cap': 'round', 'line-join': 'round' }}
+          />
+        </Source>
 
         {/* 1. Trains: Purple (#7C3AED) multi-point rail polylines (the same purple as train tickets) */}
         <Source id="astris-train-lines" type="geojson" data={mapLayersData.trainGeoJson}>

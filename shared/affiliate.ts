@@ -249,12 +249,10 @@ function ticketAirports(option: LinkableOption, ctx: BookingContext): { from: st
 }
 
 /**
- * The single airline that operates the whole ticket, or null. Estimated options use made-up
- * services, and a codeshare/interline ticket has no single airline to filter by; filtering either
- * would land the user on an empty result page.
+ * The single airline that operates the whole ticket, or null. A codeshare/interline ticket has no
+ * single airline to filter by, and filtering it would land the user on an empty result page.
  */
 function ticketAirline(option: LinkableOption): string | null {
-  if (option.dataSource === 'synthesized') return null;
   const numbers =
     option.flightNumbers && option.flightNumbers.length > 0
       ? option.flightNumbers
@@ -482,69 +480,33 @@ const OFFER_NAMES: Record<OfferProviderId, string> = {
   'google-flights': 'Google Flights',
 };
 
-/** How much above the primary fare each other merchant is shown, as a [min, max] fraction. */
-const OFFER_MARKUP: Record<Exclude<OfferProviderId, 'aviasales'>, [number, number]> = {
-  tripcom: [0.008, 0.02],
-  kiwi: [0.012, 0.035],
-  skyscanner: [0.025, 0.05],
-  'google-flights': [0.035, 0.065],
-};
-
-/** Stable 0..1 value from a string, so an option shows the same offers on every render and reload. */
-function unitHash(seed: string): number {
-  let h = 2166136261;
-  for (let i = 0; i < seed.length; i++) h = Math.imul(h ^ seed.charCodeAt(i), 16777619);
-  return ((h >>> 0) % 10_000) / 10_000;
-}
-
 /**
  * The merchants that sell a flight, each with a deep link to its own results for this route, date
- * and passenger count. The ticket's real fare belongs to the primary merchant (`primary`, the one
- * `bookingUrl` points to); no price API exists for the others, so theirs are derived from it
- * (always a little higher, fixed per ticket) and flagged `estimated` so the UI can say so. That
- * also guarantees the cheapest offer is the fare shown on the ticket. Sorted cheapest first.
+ * and passenger count. Only a price a merchant really quoted is shown: a cached fare found on Aviasales
+ * carries its price on the Aviasales row, and every other merchant is a link that says "Check price".
+ * (No merchant offers a price API we can use, so nothing is derived for them.) Priced rows come first.
  */
 export function buildFlightOffers(
   option: LinkableOption & { id: string; basePriceUsd: number; dataSource?: string; sourceFareUrl?: string },
   ctx: BookingContext,
   primary: BookingLink
 ): AffiliateOffer[] {
-  // Where the real fare was found: Aviasales for a cached fare, otherwise the Trip.com link we sell it through
-  const fromAviasales = Boolean(option.sourceFareUrl);
   const offers: AffiliateOffer[] = [];
-  if (fromAviasales) {
+  if (option.sourceFareUrl) {
     offers.push({
       providerId: 'aviasales',
       provider: OFFER_NAMES.aviasales,
       logo: 'aviasales',
       priceUsd: roundCents(option.basePriceUsd),
-      url: option.sourceFareUrl!,
-      estimated: false,
+      url: option.sourceFareUrl,
     });
   }
-  const priceOf = (id: Exclude<OfferProviderId, 'aviasales'>) => {
-    const [lo, hi] = OFFER_MARKUP[id];
-    return roundCents(option.basePriceUsd * (1 + lo + (hi - lo) * unitHash(`${option.id}|${id}`)));
-  };
-  if (fromAviasales) {
-    offers.push({
-      providerId: 'tripcom',
-      provider: OFFER_NAMES.tripcom,
-      logo: 'tripcom',
-      priceUsd: priceOf('tripcom'),
-      url: primary.url,
-      estimated: true,
-    });
-  } else {
-    offers.push({
-      providerId: 'tripcom',
-      provider: OFFER_NAMES.tripcom,
-      logo: 'tripcom',
-      priceUsd: roundCents(option.basePriceUsd),
-      url: primary.url,
-      estimated: option.dataSource !== 'live',
-    });
-  }
+  offers.push({
+    providerId: 'tripcom',
+    provider: OFFER_NAMES.tripcom,
+    logo: 'tripcom',
+    url: primary.url,
+  });
 
   const date = parseIsoDate(option.departureAt) ?? parseIsoDate(ctx.date);
   const { from, to } = ticketAirports(option, ctx);
@@ -576,13 +538,11 @@ export function buildFlightOffers(
         providerId: id,
         provider: OFFER_NAMES[id],
         logo: id,
-        priceUsd: priceOf(id),
         url: urls[id],
-        estimated: true,
       });
     }
   }
-  return offers.sort((x, y) => x.priceUsd - y.priceUsd);
+  return offers.sort((x, y) => (x.priceUsd ?? Infinity) - (y.priceUsd ?? Infinity));
 }
 
 const roundCents = (n: number) => Math.round(n * 100) / 100;
@@ -598,7 +558,7 @@ export function attachBookingUrls(options: TransitOption[], ctx: BookingContext)
     if (option.source === 'serpapi_live') return completeTicketDetails(option, ctx.date);
     const link = buildBookingLink(option, ctx);
     return {
-      // Baggage and the flight breakdown, so sample and live options render from one shape
+      // Baggage and the flight breakdown, so recent and live options render from one shape
       ...completeTicketDetails(option, ctx.date),
       bookingUrl: link.url,
       bookingProvider: link.provider,

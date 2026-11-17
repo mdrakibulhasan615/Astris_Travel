@@ -88,8 +88,6 @@ const BRANDS_BY_CODE: Record<string, AirlineBrand> = {
   AC: { color: '#F01428', text: light }, // Air Canada
   AI: { color: '#E31837', text: light }, // Air India
   '6E': { color: '#1B0088', text: light }, // IndiGo
-  // This app's own sample airlines
-  AS: { color: '#FF812E', text: dark }, // Astris Skyways (sample data)
 };
 
 /** Common airline names (lower-case, as providers print them) → IATA code. */

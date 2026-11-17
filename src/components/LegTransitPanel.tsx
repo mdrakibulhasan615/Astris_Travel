@@ -101,10 +101,7 @@ const WARNING_FLAGS: ReadonlySet<ScoreFlag> = new Set([
   'late-arrival',
 ]);
 
-/**
- * Tells the user whether the ticket details are a real provider fare or sample/estimated data.
- * Sample data (curated or synthesized) must never look like a live fare.
- */
+/** Where a fare came from: the live search, or a recent real fare. Nothing here is a made-up price. */
 function SourceChip({ source }: { source: TransitOption['dataSource'] }) {
   if (source === 'live') {
     return (
@@ -126,18 +123,7 @@ function SourceChip({ source }: { source: TransitOption['dataSource'] }) {
       </span>
     );
   }
-  return (
-    <span
-      title={
-        source === 'curated'
-          ? 'Hand-authored sample itinerary; times, flight number and price are illustrative'
-          : 'Estimated itinerary generated from distance; not a real timetable'
-      }
-      className="rounded-md bg-neutral-100 px-1.5 py-0.5 text-[10px] font-medium text-[#4B5563]"
-    >
-      Estimated / Offline Schedule
-    </span>
-  );
+  return null;
 }
 
 function FlagChips({ flags }: { flags: ScoreFlag[] }) {
@@ -266,19 +252,13 @@ const legLabel = (l: TripLeg) => `${l.fromCode} → ${l.toCode}`;
 
 const BAG_TONE = { good: 'text-[#15803D]', warn: 'text-[#B45309]', muted: 'text-[#4B5563]' } as const;
 
-/** Carry-on and checked baggage for the ticket (from the fare data, or the carrier's typical policy). */
+/** Carry-on and checked baggage for the ticket, as the fare data states it. */
 function BaggageLine({ baggage }: { baggage: BaggageInfo }) {
   const d = describeBaggage(baggage);
   return (
     <div
       className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px]"
-      title={
-        baggage.source === 'typical'
-          ? `Typical economy allowance for this carrier; confirm it for your fare when booking.${
-              baggage.note ? ` ${baggage.note}.` : ''
-            }`
-          : 'Baggage as reported in the fare data'
-      }
+      title="Baggage as reported in the fare data"
     >
       <span className={`inline-flex items-center gap-1 ${BAG_TONE[d.cabin.tone]}`}>
         <Backpack className="h-3 w-3" aria-hidden="true" />
@@ -288,7 +268,6 @@ function BaggageLine({ baggage }: { baggage: BaggageInfo }) {
         <Luggage className="h-3 w-3" aria-hidden="true" />
         {d.checked.text}
       </span>
-      {baggage.source === 'typical' && <span className="text-[10px] text-[#4B5563]">typical</span>}
     </div>
   );
 }
@@ -309,7 +288,8 @@ function TicketControls({
   onChangeTicket: (legId: string, change: TicketChange) => void;
 }) {
   const { fmt } = useCurrency();
-  if (leg.transitOptions.length === 0 && !leg.oneWayOptions?.length) return null;
+  // The same city twice in a row has no ticket to choose
+  if (leg.fromCode === leg.toCode) return null;
 
   if (coveredByLeg) {
     return (
@@ -460,7 +440,7 @@ export function LegTransitPanel({
   travellers = 1,
   onTransitOverlay,
 }: LegTransitPanelProps) {
-  const [expanded, setExpanded] = useState(leg.id === 'leg-ist-lon' || leg.id === 'leg-lon-par');
+  const [expanded, setExpanded] = useState(false);
   const { fmt } = useCurrency();
 
   // Schedules suit legs a train or coach can plausibly cover: regional and intercity, not intercontinental
@@ -572,7 +552,9 @@ export function LegTransitPanel({
 
               {!selectedOption && leg.transitOptions.length === 0 && (
                 <div className="mt-0.5 text-[11px] text-[#4B5563]">
-                  Same city as the previous stop · no transport needed
+                  {leg.fromCode === leg.toCode
+                    ? 'Same city as the previous stop · no transport needed'
+                    : 'No fares yet · fetch live fares to see flights and prices'}
                 </div>
               )}
             </div>
@@ -595,11 +577,12 @@ export function LegTransitPanel({
           onChangeTicket={onChangeTicket}
         />
 
-        {onFetchLive && !coveredByLeg && leg.transitOptions.some((o) => o.mode === 'flight') && (
+        {onFetchLive && !coveredByLeg && leg.fromCode !== leg.toCode && (
           <LiveFaresBar
             entry={liveFare}
             status={liveStatus}
             hasLiveFares={leg.transitOptions.some((o) => o.source === 'serpapi_live')}
+            hasAnyFares={leg.transitOptions.length > 0}
             onFetch={() => onFetchLive(leg.id)}
           />
         )}
@@ -616,7 +599,9 @@ export function LegTransitPanel({
               <div className="py-3 text-center text-xs text-[#4B5563]">
                 {leg.transitOptions.length === 0
                   ? `You are already in ${leg.toCity}: these two stops are the same place.`
-                  : `No ${modeFilter} options on ${leg.fromCode} → ${leg.toCode}.`}
+                  : modeFilter === 'all'
+                    ? `No fares yet on ${leg.fromCode} → ${leg.toCode}. Press Fetch Live Fares.`
+                    : `No ${modeFilter} options on ${leg.fromCode} → ${leg.toCode}.`}
               </div>
             ) : (
               filteredOptions.map((option, idx) => {

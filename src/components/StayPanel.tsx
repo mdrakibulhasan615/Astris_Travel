@@ -1,17 +1,14 @@
 import { useState } from 'react';
-import { BedDouble, Check, ChevronDown, ChevronUp, ExternalLink } from 'lucide-react';
+import { BedDouble, ChevronDown, ChevronUp, ExternalLink } from 'lucide-react';
 import { formatShortDate } from '../../shared/dateUtils.ts';
-import type { StayLink, StayOption, StaySearch } from '../../shared/types.ts';
-import { useCurrency } from '../currency.tsx';
+import type { StayLink, StaySearch } from '../../shared/types.ts';
 import { LiveHotels } from './HotelCards.tsx';
 
 interface StayPanelProps {
   search: StaySearch;
-  selectedOptionId?: string;
   defaultExpanded?: boolean;
   /** Indent under the stop card and draw the timeline rail, like the transit panels. */
   inTimeline?: boolean;
-  onSelectOption: (stopId: string, optionId: string) => void;
 }
 
 /** Direct link to the partner's results for this city, dates and party. */
@@ -45,99 +42,13 @@ function PartnerLink({
   );
 }
 
-function StayCard({
-  option,
-  rank,
-  nights,
-  isSelected,
-  onSelect,
-}: {
-  option: StayOption;
-  rank: number;
-  nights: number;
-  isSelected: boolean;
-  onSelect: () => void;
-}) {
-  const { fmt } = useCurrency();
-  return (
-    <div data-stay-id={option.id}>
-      <button
-        type="button"
-        onClick={onSelect}
-        className={`w-full cursor-pointer rounded-xl border p-3 text-left transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF812E] ${
-          isSelected
-            ? 'border-[#FFD6BA] bg-[#FFF4ED]'
-            : 'border-neutral-200/80 bg-white hover:border-neutral-300'
-        }`}
-      >
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0 space-y-1">
-            <div className="flex flex-wrap items-center gap-x-2">
-              <BedDouble className="h-3.5 w-3.5 shrink-0 text-[#FF812E]" />
-              <span className="text-xs font-semibold text-[#111827]">{option.title}</span>
-              {rank === 0 && (
-                <span className="text-[11px] font-semibold text-[#15803D]">· Cheapest</span>
-              )}
-            </div>
-            <div className="text-[11px] text-[#4B5563]">
-              {option.description} · about {option.commuteMinutesOneWay} min to the centre
-            </div>
-            <div className="font-mono text-[11px] text-[#4B5563] tabular-nums">
-              ~{fmt(option.nightlyPriceUsd)}/night × {nights} night{nights === 1 ? '' : 's'}
-            </div>
-          </div>
-
-          <div className="shrink-0 space-y-0.5 text-right">
-            <div className="font-display text-sm font-bold text-[#111827] tabular-nums">
-              ~{fmt(option.totalPriceUsd)}
-            </div>
-            {isSelected && (
-              <div className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#E56B1A]">
-                <Check className="h-3 w-3" />
-                <span>Selected</span>
-              </div>
-            )}
-          </div>
-        </div>
-      </button>
-
-      <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2 px-1">
-        <span
-          title="Typical price for this kind of stay in this city, not a quoted rate"
-          className="rounded-md bg-neutral-100 px-1.5 py-0.5 text-[10px] font-medium text-[#4B5563]"
-        >
-          Estimate
-        </span>
-        <div className="flex flex-wrap items-center gap-1.5">
-          {option.links.map((link, idx) => (
-            <PartnerLink
-              key={link.provider}
-              link={link}
-              label={`Find on ${link.providerName}`}
-              primary={idx === 0}
-            />
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 /**
- * "Staying in [City]?" Places to stay for one stop, cheapest first (no Smart Score), linked straight
- * to Booking.com / Agoda, plus live hotels with filters when the server is in live-data mode.
+ * "Staying in [City]?" for one stop: live hotels with filters (when live data is on) and searches on
+ * Booking.com / Agoda with this city, these dates and this party already filled in. Nothing here is
+ * an estimated price.
  */
-export function StayPanel({
-  search,
-  selectedOptionId,
-  defaultExpanded = false,
-  inTimeline = false,
-  onSelectOption,
-}: StayPanelProps) {
-  const { fmt } = useCurrency();
+export function StayPanel({ search, defaultExpanded = false, inTimeline = false }: StayPanelProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
-  const selected =
-    search.options.find((o) => o.id === selectedOptionId) ?? search.options[0];
 
   return (
     <div
@@ -178,21 +89,11 @@ export function StayPanel({
                 <span>
                   {search.adults} guest{search.adults === 1 ? '' : 's'}
                 </span>
-                {selected && (
-                  <>
-                    <span aria-hidden="true">·</span>
-                    <span className="font-medium text-[#111827]">{selected.title}</span>
-                    <span className="font-mono font-semibold text-[#111827]">
-                      ~{fmt(selected.totalPriceUsd)}
-                    </span>
-                  </>
-                )}
               </div>
             </div>
           </div>
 
           <div className="flex shrink-0 items-center gap-1.5 text-xs font-medium text-[#4B5563]">
-            <span className="font-mono tabular-nums">{search.options.length}</span>
             {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
           </div>
         </button>
@@ -213,16 +114,6 @@ export function StayPanel({
         {expanded && (
           <div className="space-y-2 border-t border-neutral-100 px-3.5 pb-3.5 pt-2.5">
             <LiveHotels search={search} />
-            {search.options.map((option, idx) => (
-              <StayCard
-                key={option.id}
-                option={option}
-                rank={idx}
-                nights={search.nights}
-                isSelected={option.id === selected?.id}
-                onSelect={() => onSelectOption(search.stopId, option.id)}
-              />
-            ))}
             {search.links.length > 0 && (
               <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
                 <span className="text-[11px] text-[#4B5563]">

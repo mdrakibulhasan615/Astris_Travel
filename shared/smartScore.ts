@@ -366,35 +366,6 @@ export function recalculateOptions(
   );
 }
 
-/**
- * Return-ticket stand-ins for options that have no real return fare (ground transport, or flights
- * when the live return search was unavailable): the one-way price twice, scored on both journeys.
- * Flagged as estimates so they are never mistaken for a quoted return fare.
- */
-export function deriveReturnOptions(
-  options: TransitOption[],
-  returnDate: string,
-  hourlyRateUsd: number,
-  profile?: Partial<TravelerProfile> | null
-): TransitOption[] {
-  return recalculateOptions(
-    options.map((o) => ({
-      ...o,
-      id: `${o.id}-rt`,
-      ticketType: 'return' as const,
-      returnDate,
-      basePriceUsd: round2(o.basePriceUsd * 2),
-      dataSource:
-        o.dataSource === 'live' || o.dataSource === 'cached' ? ('synthesized' as const) : o.dataSource,
-      sourceFareUrl: undefined,
-      bookingUrl: undefined,
-      returnBookingUrl: undefined,
-    })),
-    hourlyRateUsd,
-    profile
-  );
-}
-
 export function haversineDistanceKm(
   lat1: number,
   lng1: number,
@@ -410,304 +381,6 @@ export function haversineDistanceKm(
     Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return Math.round(R * c);
-}
-
-/**
- * Generates realistic multi-modal corridor options when users reorder stops or add new destinations
- * that do not have a pre-authored static corridor entry.
- */
-export function synthesizeCorridorOptions(
-  fromStop: TripStop,
-  toStop: TripStop,
-  legId: string,
-  hourlyRateUsd: number,
-  profile?: Partial<TravelerProfile> | null
-): TransitOption[] {
-  const distanceKm = Math.max(120, haversineDistanceKm(fromStop.lat, fromStop.lng, toStop.lat, toStop.lng));
-  const options: TransitOption[] = [];
-
-  // 1. Direct or fast flight
-  const directFlightHours = round2(1.1 + distanceKm / 810);
-  const directFlightPrice = Math.round(78 + distanceKm * 0.056);
-  // Exact airport coordinates (never city centres). An airport missing from every table can only
-  // belong to a stop picked from airport search, whose own coordinates *are* the airport's, so the
-  // stop is the fallback. No invented offsets: a flight line never ends somewhere arbitrary.
-  const fromAp = resolveAirport(fromStop.iataCode);
-  const toAp = resolveAirport(toStop.iataCode);
-  const fromAirportCode = fromAp?.code ?? fromStop.iataCode;
-  const toAirportCode = toAp?.code ?? toStop.iataCode;
-  const fromAirportLat = fromAp?.lat ?? fromStop.lat;
-  const fromAirportLng = fromAp?.lng ?? fromStop.lng;
-  const toAirportLat = toAp?.lat ?? toStop.lat;
-  const toAirportLng = toAp?.lng ?? toStop.lng;
-  options.push(
-    buildRawOption(
-      {
-        id: `${legId}-flt-direct`,
-        legId,
-        mode: 'flight',
-        isOvernightSleeper: false,
-        carrier: distanceKm > 3500 ? 'Turkish Airlines' : 'Astris Skyways',
-        carrierCode: distanceKm > 3500 ? 'TK' : 'AS',
-        routeCode: `${distanceKm > 3500 ? 'TK' : 'AS'} ${110 + (distanceKm % 780)}`,
-        originStation: `${fromAp?.name ?? fromStop.iataCode} (${fromAirportCode})`,
-        destinationStation: `${toAp?.name ?? toStop.iataCode} (${toAirportCode})`,
-        departureTime: '09:40',
-        arrivalTime: formatArrivalFromHours(9.67 + directFlightHours),
-        inVehicleHours: directFlightHours,
-        layoverHours: 0,
-        stopsCount: 0,
-        basePriceUsd: directFlightPrice,
-        doorToDoorNotes: `${fromStop.city} Rail → ${fromAirportCode} → ${toAirportCode} → ${toStop.city} Metro`,
-        co2Kg: Math.round(distanceKm * 0.115),
-        segments: [
-          {
-            id: `${legId}-flt-direct-s1`,
-            mode: 'train',
-            label: `${fromStop.city} → ${fromAirportCode} transfer`,
-            fromName: fromStop.city,
-            fromCode: fromStop.iataCode,
-            fromLat: fromStop.lat,
-            fromLng: fromStop.lng,
-            toName: `${fromAirportCode} Airport`,
-            toCode: fromAirportCode,
-            toLat: fromAirportLat,
-            toLng: fromAirportLng,
-            durationMinutes: 25,
-          },
-          {
-            id: `${legId}-flt-direct-s2`,
-            mode: 'flight',
-            label: `${distanceKm > 3500 ? 'TK' : 'AS'} ${110 + (distanceKm % 780)}`,
-            fromName: `${fromAirportCode} Airport`,
-            fromCode: fromAirportCode,
-            fromLat: fromAirportLat,
-            fromLng: fromAirportLng,
-            toName: `${toAirportCode} Airport`,
-            toCode: toAirportCode,
-            toLat: toAirportLat,
-            toLng: toAirportLng,
-            durationMinutes: Math.round(directFlightHours * 60),
-          },
-          {
-            id: `${legId}-flt-direct-s3`,
-            mode: 'train',
-            label: `${toAirportCode} → ${toStop.city} transfer`,
-            fromName: `${toAirportCode} Airport`,
-            fromCode: toAirportCode,
-            fromLat: toAirportLat,
-            fromLng: toAirportLng,
-            toName: toStop.city,
-            toCode: toStop.iataCode,
-            toLat: toStop.lat,
-            toLng: toStop.lng,
-            durationMinutes: 30,
-          },
-        ],
-      }
-    )
-  );
-
-  // 2. Value 1-stop connecting flight (longer corridors)
-  if (distanceKm > 950) {
-    const layoverHrs = distanceKm > 4500 ? 6.5 : 3.2;
-    const oneStopHours = round2(directFlightHours + 1.2);
-    const oneStopPrice = Math.round(directFlightPrice * 0.76);
-    // Real connection airport minimising the detour (exact coordinates, not a midpoint)
-    const hub = pickConnectionHub(fromAp ?? fromStop, toAp ?? toStop, [fromAirportCode, toAirportCode]);
-    const hubCode = hub.code;
-    const midLat = hub.lat;
-    const midLng = hub.lng;
-    options.push(
-      buildRawOption(
-        {
-          id: `${legId}-flt-connect`,
-          legId,
-          mode: 'flight',
-          isOvernightSleeper: false,
-          carrier: 'Pegasus Connect',
-          carrierCode: 'PC',
-          routeCode: `PC ${302 + (distanceKm % 500)}`,
-          originStation: `${fromAp?.name ?? fromStop.iataCode} (${fromAirportCode})`,
-          destinationStation: `${toAp?.name ?? toStop.iataCode} (${toAirportCode})`,
-          departureTime: '13:15',
-          arrivalTime: formatArrivalFromHours(13.25 + oneStopHours + layoverHrs),
-          inVehicleHours: oneStopHours,
-          layoverHours: layoverHrs,
-          layoverHub: hubCode,
-          stopsCount: 1,
-          basePriceUsd: oneStopPrice,
-          doorToDoorNotes: `${fromAirportCode} → ${hubCode} (${layoverHrs}h) → ${toAirportCode}`,
-          co2Kg: Math.round(distanceKm * 0.132),
-          segments: [
-            {
-              id: `${legId}-flt-c-s1`,
-              mode: 'flight',
-              label: `PC Leg 1`,
-              fromName: `${fromAirportCode} Airport`,
-              fromCode: fromAirportCode,
-              fromLat: fromAirportLat,
-              fromLng: fromAirportLng,
-              toName: `${hubCode} Airport`,
-              toCode: hubCode,
-              toLat: midLat,
-              toLng: midLng,
-              durationMinutes: Math.round((oneStopHours * 60) / 2),
-            },
-            {
-              id: `${legId}-flt-c-s2`,
-              mode: 'flight',
-              label: `PC Leg 2`,
-              fromName: `${hubCode} Airport`,
-              fromCode: hubCode,
-              fromLat: midLat,
-              fromLng: midLng,
-              toName: `${toAirportCode} Airport`,
-              toCode: toAirportCode,
-              toLat: toAirportLat,
-              toLng: toAirportLng,
-              durationMinutes: Math.round((oneStopHours * 60) / 2),
-            },
-          ],
-        }
-      )
-    );
-  }
-
-  // Ground options follow the land network (shared/groundRouting.ts). `none` means the two stops
-  // are on different landmasses, so no train or coach is offered; `unknown` (outside the network)
-  // keeps the straight-line estimate and lets the map draw a neutral arc.
-  const corridor = planGroundCorridor(fromStop, toStop);
-  const hasLandRoute = corridor.status !== 'none';
-  const groundKm = corridor.status === 'routed' ? Math.max(120, corridor.distanceKm) : distanceKm;
-  const groundWaypoints = corridor.status === 'routed' ? corridor.via : undefined;
-  const viaNote =
-    corridor.status === 'routed' && corridor.stations.length > 0
-      ? ` via ${corridor.stations
-          .slice(0, 4)
-          .map((s) => s.name)
-          .join(', ')}${corridor.stations.length > 4 ? ', …' : ''}`
-      : '';
-
-  // 3. Rail option (high-speed for <=2600km)
-  if (hasLandRoute && groundKm <= 2600) {
-    const isSleeper = groundKm > 750;
-    const trainHours = round2(isSleeper ? 2.0 + groundKm / 125 : 0.8 + groundKm / 215);
-    const trainPrice = Math.round(isSleeper ? 68 + groundKm * 0.065 : 54 + groundKm * 0.11);
-    options.push(
-      buildRawOption(
-        {
-          id: `${legId}-trn-rail`,
-          legId,
-          mode: 'train',
-          isOvernightSleeper: isSleeper,
-          carrier: isSleeper ? 'Nightjet Sleeper Rail' : 'EuroExpress Rail',
-          carrierCode: isSleeper ? 'NJ' : 'EE',
-          routeCode: `${isSleeper ? 'NJ' : 'EE'} ${400 + (groundKm % 300)}`,
-          originStation: `${fromStop.city} Central Station`,
-          destinationStation: `${toStop.city} Central Station`,
-          departureTime: isSleeper ? '21:15' : '10:30',
-          arrivalTime: formatArrivalFromHours((isSleeper ? 21.25 : 10.5) + trainHours),
-          inVehicleHours: trainHours,
-          layoverHours: groundKm > 1200 ? 1.4 : 0,
-          stopsCount: groundKm > 1200 ? 1 : 0,
-          basePriceUsd: trainPrice,
-          doorToDoorNotes: `${fromStop.city} Central → ${toStop.city} Central${viaNote}`,
-          co2Kg: Math.round(groundKm * 0.024),
-          segments: [
-            {
-              id: `${legId}-trn-s1`,
-              mode: 'train',
-              label: isSleeper ? 'Nightjet' : 'EuroExpress',
-              fromName: `${fromStop.city} Central`,
-              fromCode: fromStop.iataCode,
-              fromLat: fromStop.lat,
-              fromLng: fromStop.lng,
-              toName: `${toStop.city} Central`,
-              toCode: toStop.iataCode,
-              toLat: toStop.lat,
-              toLng: toStop.lng,
-              durationMinutes: Math.round(trainHours * 60),
-              waypoints: groundWaypoints,
-            },
-          ],
-        }
-      )
-    );
-  }
-
-  // 4. Intercity bus option (for <=2200km)
-  if (hasLandRoute && groundKm <= 2200) {
-    const isSleeperBus = groundKm > 550;
-    const busHours = round2(1.0 + groundKm / 78);
-    const busPrice = Math.round(24 + groundKm * 0.036);
-    options.push(
-      buildRawOption(
-        {
-          id: `${legId}-bus-coach`,
-          legId,
-          mode: 'bus',
-          isOvernightSleeper: isSleeperBus,
-          carrier: 'FlixCoach Express',
-          carrierCode: 'FX',
-          routeCode: `FX ${800 + (groundKm % 190)}`,
-          originStation: `${fromStop.city} Coach Hub`,
-          destinationStation: `${toStop.city} South Terminal`,
-          departureTime: isSleeperBus ? '22:00' : '08:15',
-          arrivalTime: formatArrivalFromHours((isSleeperBus ? 22 : 8.25) + busHours),
-          inVehicleHours: busHours,
-          layoverHours: groundKm > 1100 ? 2.2 : 0,
-          stopsCount: groundKm > 1100 ? 1 : 0,
-          basePriceUsd: busPrice,
-          doorToDoorNotes: `${fromStop.city} Coach Hub → ${toStop.city} Terminal${viaNote}`,
-          co2Kg: Math.round(groundKm * 0.038),
-          segments: [
-            {
-              id: `${legId}-bus-s1`,
-              mode: 'bus',
-              label: 'FlixCoach',
-              fromName: `${fromStop.city} Coach Hub`,
-              fromCode: fromStop.iataCode,
-              fromLat: fromStop.lat,
-              fromLng: fromStop.lng,
-              toName: `${toStop.city} Terminal`,
-              toCode: toStop.iataCode,
-              toLat: toStop.lat,
-              toLng: toStop.lng,
-              durationMinutes: Math.round(busHours * 60),
-              waypoints: groundWaypoints,
-            },
-          ],
-        }
-      )
-    );
-  }
-
-  return recalculateOptions(options, hourlyRateUsd, profile);
-}
-
-function buildRawOption(
-  partial: Omit<TransitOption, 'smartScore' | 'smartScoreBreakdown'>
-): TransitOption {
-  const placeholderBreakdown = computeSmartScore(partial, 15);
-
-  return {
-    ...partial,
-    smartScore: placeholderBreakdown.totalSmartScore,
-    smartScoreBreakdown: placeholderBreakdown,
-    dataSource: 'synthesized',
-  };
-}
-
-// Round to whole minutes first, then split — otherwise 9.999h rounds to "09:60"/"09:00"
-// (minute overflow was dropped instead of carried into the hour).
-function formatArrivalFromHours(totalHours: number): string {
-  const totalMinutes = Math.round(totalHours * 60);
-  const days = Math.floor(totalMinutes / 1440);
-  const minuteOfDay = totalMinutes % 1440;
-  const hh = String(Math.floor(minuteOfDay / 60)).padStart(2, '0');
-  const mm = String(minuteOfDay % 60).padStart(2, '0');
-  return days > 0 ? `${hh}:${mm} +${days}d` : `${hh}:${mm}`;
 }
 
 export function formatDuration(hours: number): string {
@@ -758,15 +431,13 @@ export interface LegBuildScoring {
   legPrefs?: Record<string, LegTicketPref>;
   /**
    * Legs currently on screen. A leg whose fare search is unchanged (same date, route and
-   * travellers) keeps its live fares instead of dropping back to sample data while the server
-   * refreshes.
+   * travellers) keeps its real fares while the server refreshes them.
    */
   previousLegs?: TripLeg[];
 }
 
 export function buildLegsFromStops(
   stops: TripStop[],
-  curatedCorridors: Record<string, TransitOption[]>,
   hourlyRateUsd: number,
   previousSelectedMap?: Record<string, string>,
   scoring: LegBuildScoring = {}
@@ -777,70 +448,22 @@ export function buildLegsFromStops(
   for (let i = 0; i < stops.length - 1; i++) {
     const fromStop = stops[i];
     const toStop = stops[i + 1];
-    const corridorKey = `${fromStop.iataCode}-${toStop.iataCode}`;
     const legId = legIds[i];
     const distanceKm = haversineDistanceKm(fromStop.lat, fromStop.lng, toStop.lat, toStop.lng);
     const pref = scoring.legPrefs?.[legId];
     const returnDate = legReturnDate(stops, i, pairs, pref);
     const fareKey = legFareKey(fromStop, toStop, scoring.passengers ?? 1);
     const previous = scoring.previousLegs?.find((l) => l.id === legId && l.fareKey === fareKey);
-    const bookingContext = {
-      fromCode: fromStop.iataCode,
-      toCode: toStop.iataCode,
-      fromCity: fromStop.city,
-      toCity: toStop.city,
-      date: fromStop.departureDate,
-      passengers: scoring.passengers,
-    };
 
-    let oneWay: TransitOption[];
-    if (hasLiveFare(previous?.oneWayOptions)) {
-      oneWay = recalculateOptions(
-        previous!.oneWayOptions!,
-        hourlyRateUsd,
-        scoring.profile
-      );
-    } else {
-      const baseOptions = isSamePlace(fromStop, toStop)
-        ? []
-        : curatedCorridors[corridorKey]
-          ? curatedCorridors[corridorKey].map((opt) => ({ ...opt, legId }))
-          : synthesizeCorridorOptions(
-              fromStop,
-              toStop,
-              legId,
-              hourlyRateUsd,
-              scoring.profile
-            );
-
-      // Invariant: flights are airport-to-airport, bracketed by separate ground connectors
-      const geometryOptions = baseOptions.map((opt) =>
-        normalizeOptionGeometry(opt, fromStop, toStop)
-      );
-      oneWay = attachBookingUrls(
-        recalculateOptions(
-          geometryOptions,
-          hourlyRateUsd,
-          scoring.profile
-        ),
-        bookingContext
-      );
-    }
-
-    let returnOptions: TransitOption[] | undefined;
-    if (oneWay.length > 0 && wantsReturnFares(i, pairs, pref)) {
-      returnOptions =
-        previous?.returnDate === returnDate && hasLiveFare(previous.returnOptions)
-          ? recalculateOptions(
-              previous.returnOptions,
-              hourlyRateUsd,
-              scoring.profile
-            )
-          : attachBookingUrls(
-              deriveReturnOptions(oneWay, returnDate, hourlyRateUsd, scoring.profile),
-              { ...bookingContext, returnDate }
-            );
-    }
+    // Fares are never invented: a leg holds only real ones (live, or recent fares from the server)
+    // that an unchanged search kept, and is otherwise empty until the server or "Fetch Live Fares" fills it.
+    const oneWay: TransitOption[] = hasLiveFare(previous?.oneWayOptions)
+      ? recalculateOptions(previous!.oneWayOptions!, hourlyRateUsd, scoring.profile)
+      : [];
+    const returnOptions: TransitOption[] | undefined =
+      previous?.returnDate === returnDate && hasLiveFare(previous.returnOptions)
+        ? recalculateOptions(previous.returnOptions, hourlyRateUsd, scoring.profile)
+        : undefined;
 
     const prevSelected = previousSelectedMap?.[legId];
     const knownSelection =

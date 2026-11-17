@@ -83,7 +83,6 @@ function offersOf(option: TransitOption): AffiliateOffer[] {
       logo: id,
       priceUsd: option.basePriceUsd,
       url: option.bookingUrl,
-      estimated: option.dataSource !== 'live',
     },
   ];
 }
@@ -322,7 +321,7 @@ export function BookingButton({
   const rows = useMemo<OfferRow[]>(
     () =>
       [...offersOf(option)]
-        .sort((a, b) => a.priceUsd - b.priceUsd)
+        .sort((a, b) => (a.priceUsd ?? Infinity) - (b.priceUsd ?? Infinity))
         .map((o) => ({
           key: o.providerId,
           name: o.provider,
@@ -333,14 +332,14 @@ export function BookingButton({
         })),
     [option]
   );
-  const anyEstimated = useMemo(() => offersOf(option).some((o) => o.estimated), [option]);
-  const footnote = !anyEstimated
-    ? undefined
-    : option.dataSource === 'live'
-      ? 'Only the cheapest price is the live fare; other partners are estimates, confirmed on their site.'
-      : option.dataSource === 'cached'
-        ? 'Aviasales shows a real fare seen in the last 48 hours; it may have changed. Other partners are estimates.'
-        : 'Sample data: prices are illustrative, confirmed on the partner site.';
+  const anyUnpriced = useMemo(() => offersOf(option).some((o) => o.priceUsd === undefined), [option]);
+  const footnote = anyUnpriced
+    ? option.dataSource === 'cached'
+      ? 'The price is a real fare Aviasales saw in the last 48 hours; it may have changed. Other sites open their own search, where they show their price.'
+      : "Only priced rows are real quotes. The others open that site's search for this route, where it shows its price."
+    : option.dataSource === 'cached'
+      ? 'A real fare seen in the last 48 hours; it may have changed.'
+      : undefined;
   return (
     <OffersButton
       id={option.id}

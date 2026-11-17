@@ -1,10 +1,7 @@
 // MUST stay the first import so env is loaded before the Redis/SerpApi clients are configured
-import { getEnv, useRealData, warnMissingKey } from './env.ts';
+import { getEnv, warnMissingKey } from './env.ts';
 import { Redis } from '@upstash/redis';
-import {
-  CURATED_CORRIDOR_OPTIONS,
-  DESTINATION_HUBS,
-} from '../shared/mockDataset.ts';
+import { DESTINATION_HUBS } from '../shared/destinations.ts';
 import { AFFILIATE_DEFAULTS } from '../shared/config.ts';
 import { attachBookingUrls, configureAffiliate, isFlixCarrier } from '../shared/affiliate.ts';
 import {
@@ -17,11 +14,9 @@ import { isIsoDate } from '../shared/fares.ts';
 import { parseBaggage } from '../shared/ticketDetails.ts';
 import {
   computeSmartScore,
-  deriveReturnOptions,
   haversineDistanceKm,
   recalculateOptions,
   round2,
-  synthesizeCorridorOptions,
 } from '../shared/smartScore.ts';
 import type { LiveFlightOffer } from '../shared/liveFlights.ts';
 import type {
@@ -218,7 +213,8 @@ export interface TransitQueryParams {
 
 export interface TransitQueryResult {
   cacheKey: string;
-  source: 'redis_cache' | 'memory_cache' | 'live_api' | 'recent_fares' | 'fallback_corridor';
+  /** `recent_fares`: real recent fares from the Aviasales Data API. `none`: nothing is known for this corridor. */
+  source: 'recent_fares' | 'none';
   cached: boolean;
   ttlSeconds: number;
   options: TransitOption[];
@@ -251,7 +247,7 @@ function resolveCityCoords(
   const ap = resolveAirportCoords(code);
   if (ap) return { lat: ap.lat, lng: ap.lng, city: ap.city };
   // Only reachable from /api/transit/query with a code no dataset knows; such a query gets the
-  // synthesized corridor with degenerate geometry rather than an error.
+  // result with degenerate geometry rather than an error.
   console.warn(`[Transit API] Unknown location code "${code}"; no coordinates available.`);
   return { lat: 0, lng: 0, city: code.toUpperCase() };
 }
@@ -436,76 +432,14 @@ export function liveOffersToOptions(offers: LiveFlightOffer[], ctx: LiveOptionsC
 }
 
 /**
- * Builds fallback options from curated corridor dataset or synthetic corridor engine.
- */
-function buildFallbackCorridorOptions(
-  origin: string,
-  destination: string,
-  hourlyRateUsd: number,
-  profile: Partial<TravelerProfile> | undefined,
-  fromStop?: TripStop,
-  toStop?: TripStop
-): TransitOption[] {
-  const corridorKey = `${origin.toUpperCase()}-${destination.toUpperCase()}`;
-  const legId = `leg-${origin.toLowerCase()}-${destination.toLowerCase()}`;
-
-  let baseOptions: TransitOption[];
-  if (CURATED_CORRIDOR_OPTIONS[corridorKey]) {
-    baseOptions = CURATED_CORRIDOR_OPTIONS[corridorKey].map((opt) => ({
-      ...opt,
-      legId,
-    }));
-  } else {
-    const fromResolved = resolveCityCoords(origin);
-    const toResolved = resolveCityCoords(destination);
-    const fromCoords = fromStop || {
-      id: `stop-${origin.toLowerCase()}`,
-      order: 1,
-      city: fromResolved.city,
-      country: '',
-      iataCode: origin.toUpperCase(),
-      lat: fromResolved.lat,
-      lng: fromResolved.lng,
-      stayNights: 3,
-      arrivalDate: '2026-11-18',
-      departureDate: '2026-11-21',
-    };
-
-    const toCoords = toStop || {
-      id: `stop-${destination.toLowerCase()}`,
-      order: 2,
-      city: toResolved.city,
-      country: '',
-      iataCode: destination.toUpperCase(),
-      lat: toResolved.lat,
-      lng: toResolved.lng,
-      stayNights: 4,
-      arrivalDate: '2026-11-21',
-      departureDate: '2026-11-25',
-    };
-
-    baseOptions = synthesizeCorridorOptions(
-      fromCoords,
-      toCoords,
-      legId,
-      hourlyRateUsd,
-      profile
-    );
-  }
-
-  return recalculateOptions(baseOptions, hourlyRateUsd, profile);
-}
-
-/**
- * Transit query pipeline for one corridor, one-way or return:
- *   1. FLIGHTS: live SerpApi fares (cached 12 h in Redis + memory; only live results are cached).
- *      No key / no results → curated or estimated flights, labelled as such.
- *   2. GROUND (train, coach, ferry): there is no live availability API for these, so they are the
- *      curated/estimated options, labelled Sample/Estimate, with a direct merchant link per option.
- *      They are rebuilt every time and never cached.
- *   3. RETURN: live flights are real round-trip fares (priced for both directions). Ground (and flights
- *      when no live return fare exists) are the one-way price twice, flagged as estimates.
- * Failures at any step degrade to the next; nothing here throws for a provider error.
+ * Transit query pipeline for one corridor, one-way or return. It returns real data only:
+ *   1. FLIGHTS: recent real fares from the free Aviasales Data API when TRAVELPAYOUTS_TOKEN is set (cached
+ *      12 h). Live fares are not fetched here: a SerpApi search costs one of a small monthly allowance, so
+ *      the traveller fetches them with "Fetch Live Fares" (`server/liveFlightsApi.ts`).
+ *   2. TRAINS / COACHES / FERRIES: no live availability API exists, so none are listed. Real timetables
+ *      are in the Schedules panel (12Go, Google transit).
+ * A corridor with no real fare returns nothing; no schedule or price is invented. Booking links are
+ * rebuilt on every response.
  */
 export async function queryTransitWithCache(
   params: TransitQueryParams
@@ -563,30 +497,14 @@ export async function queryTransitWithCache(
 
   const cacheKey = buildTransitCacheKey(origin, destination, date, mode, returnDate);
 
-  // Curated / estimated options: always rebuilt (cheap), split so live flights can replace flights only
-  const fallback =
-    mode === 'all' || mode === 'flight' || mode === 'train' || mode === 'bus' || mode === 'ferry'
-      ? buildFallbackCorridorOptions(
-          origin,
-          destination,
-          hourlyRateUsd,
-              travelerProfile,
-          fromStop,
-          toStop
-        )
-      : [];
-  const fallbackFlights = fallback.filter((o) => o.mode === 'flight');
-  const fallbackGround = fallback.filter((o) => o.mode !== 'flight');
-
   // 1. Live fares are NEVER fetched here: a SerpApi search costs one of a small monthly allowance, so
   //    they are fetched only when the traveller presses "Fetch Live Fares" (server/liveFlightsApi.ts).
-  //    The list starts as curated/estimated flights, or recent real fares when TRAVELPAYOUTS_TOKEN is set.
+  //    Until then a corridor shows recent real fares (when TRAVELPAYOUTS_TOKEN is set) or nothing: there is
+  //    no made-up schedule.
   let live: TransitOption[] | null = null;
-  const cacheLayer = null as 'memory' | 'redis' | null;
 
-  // 1b. Sample mode: real recent fares from the free Aviasales Data API instead of invented ones
-  //     (no SerpApi credits involved). Cached 12 h; routes it has no data for keep the sample flights.
-  let recentFares = false;
+  // 1b. Real recent fares from the free Aviasales Data API (no SerpApi searches involved). Cached 12 h;
+  //     a route it has no data for simply has no flights until live fares are fetched.
   if ((mode === 'all' || mode === 'flight') && travelpayoutsToken()) {
     const tpKey = `${cacheKey}:tp2`;
     const hit = await getCachedTransit(tpKey);
@@ -605,23 +523,11 @@ export async function queryTransitWithCache(
     }
     if (tp && tp.length > 0) {
       live = tp;
-      recentFares = true;
     }
   }
   const hasLiveFlights = Boolean(live && live.length > 0);
 
-  // 2./3. Assemble the list for this ticket type
-  let assembled: TransitOption[];
-  if (!returnDate) {
-    assembled = [...(hasLiveFlights ? live! : fallbackFlights), ...fallbackGround];
-  } else {
-    const derive = (opts: TransitOption[]) =>
-      deriveReturnOptions(opts, returnDate, hourlyRateUsd, travelerProfile);
-    assembled = [
-      ...(hasLiveFlights ? live! : derive(fallbackFlights)),
-      ...derive(fallbackGround),
-    ];
-  }
+  const assembled: TransitOption[] = live ?? [];
 
   // Re-score in case the hourly rate changed since a cached search was made
   let finalOptions = recalculateOptions(
@@ -634,20 +540,12 @@ export async function queryTransitWithCache(
     if (filtered.length > 0) finalOptions = filtered;
   }
 
-  const source: TransitQueryResult['source'] = !hasLiveFlights
-    ? 'fallback_corridor'
-    : recentFares
-      ? 'recent_fares'
-      : cacheLayer === 'memory'
-      ? 'memory_cache'
-      : cacheLayer === 'redis'
-        ? 'redis_cache'
-        : 'live_api';
+  const source: TransitQueryResult['source'] = hasLiveFlights ? 'recent_fares' : 'none';
 
   return {
     cacheKey,
     source,
-    cached: cacheLayer !== null,
+    cached: false,
     ttlSeconds: REDIS_CACHE_TTL_SECONDS,
     options: await withBookingUrls(finalOptions),
   };

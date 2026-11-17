@@ -43,8 +43,8 @@ for (const name of ENV_FILES) {
 if (!process.env.SERPAPI_API_KEY && process.env.SERPAPI_KEY) process.env.SERPAPI_API_KEY = process.env.SERPAPI_KEY;
 
 /**
- * Whether the "Fetch Live Fares" button may spend SerpApi searches (true), or the app stays on the
- * built-in sample data (false). The default is
+ * Whether the "Fetch Live Fares" button may spend SerpApi searches (true), or only offers exact-route
+ * search links (false). The default is
  * `USE_REAL_TICKET_DATA` in `shared/config.ts`; the `USE_REAL_DATA` environment variable overrides it
  * (`true`/`1`/`yes`/`on`, or `false`/`0`/`no`/`off`). Live fares are never fetched automatically.
  */
@@ -86,9 +86,9 @@ export interface EnvKeySpec {
  * `*_TRACKING_TEMPLATE` keys and TWELVEGO_AFFILIATE_ID are read too but not reported as missing.)
  */
 export const ENV_KEYS: EnvKeySpec[] = [
-  { name: 'SERPAPI_API_KEY', purpose: 'live fares and exact-ticket sellers (SerpApi Google Flights) and live hotels', fallback: 'estimated schedules and exact-route search links' },
+  { name: 'SERPAPI_API_KEY', purpose: 'live fares and exact-ticket sellers (SerpApi Google Flights) and live hotels', fallback: 'exact-route search links instead of live fares' },
   { name: 'GOOGLE_MAPS_API_KEY', purpose: 'real transit directions and map lines (Google Routes API)', fallback: 'no transit directions (12Go timetables still work)' },
-  { name: 'TRAVELPAYOUTS_TOKEN', purpose: 'recent real fares in sample mode (Aviasales Data API)', fallback: 'fully sample flights' },
+  { name: 'TRAVELPAYOUTS_TOKEN', purpose: 'recent real fares before live fares are fetched (Aviasales Data API)', fallback: 'no fares until live fares are fetched' },
   { name: 'UPSTASH_REDIS_REST_URL', purpose: '12-hour transit cache (Upstash Redis)', fallback: 'uncached queries' },
   { name: 'UPSTASH_REDIS_REST_TOKEN', purpose: '12-hour transit cache (Upstash Redis)', fallback: 'uncached queries' },
   { name: 'BOOKING_AID', purpose: 'Booking.com attribution on stay links', fallback: 'un-attributed Booking.com links (no commission)' },
@@ -115,7 +115,7 @@ export function logEnvStatus(): void {
     console.log(
       getEnv('SERPAPI_API_KEY')
         ? '[data] live fares: ON (SerpApi), on request only. Each uncached search and each "Book Exact Ticket" lookup spends one of the monthly searches.'
-        : '[data] live fares: requested, but SERPAPI_API_KEY is missing: estimated schedules and route links are shown.'
+        : '[data] live fares: requested, but SERPAPI_API_KEY is missing: exact-route search links are shown instead.'
     );
   } else {
     console.log(

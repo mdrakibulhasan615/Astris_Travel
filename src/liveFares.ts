@@ -4,7 +4,7 @@ import type { TransitOption, TravelerProfile, TripLeg } from '../shared/types.ts
 
 /**
  * Live fares the traveller fetched for one leg. They live next to the trip, not inside it: every edit
- * rebuilds the legs from the server's estimated schedule, and a fetched fare (which cost a search)
+ * rebuilds the legs from the server's recent fares, and a fetched fare (which cost a search)
  * must survive that for as long as the search it answers is still the one on screen.
  */
 export interface LiveFareEntry {
@@ -32,7 +32,7 @@ export function legLiveKey(leg: TripLeg): string {
 /**
  * The leg with its flights swapped for the live fares, when a live answer for exactly this search is
  * on hand and found flights. Ground options stay; everything is re-scored together. An offline answer
- * or an empty one leaves the estimated schedule showing.
+ * or an empty one leaves the leg as it was.
  */
 export function mergeLiveFares(
   leg: TripLeg,

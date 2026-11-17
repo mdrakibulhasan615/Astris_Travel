@@ -1,111 +1,15 @@
 import { buildAgodaStayUrl, buildBookingStayUrl, PROVIDER_NAMES, type StayLinkContext } from './affiliate.ts';
 import { diffDaysIso } from './dateUtils.ts';
-import type {
-  StayCategory,
-  StayLink,
-  StayOption,
-  StaySearch,
-  TripStop,
-} from './types.ts';
+import type { StayLink, StaySearch, TripStop } from './types.ts';
 
 /**
- * Stays layer ("Staying in [City]?"). There is no hotel inventory API behind this, so a stop gets
- * one card per *category* of accommodation with an estimated nightly price, never a named property
- * or a quoted rate. Each card links to Booking.com / Agoda with the same city, dates, guests and
- * (on Booking.com) property filter the card describes.
- *
- * Stays are not Smart Scored: categories are listed cheapest first, by what the whole stay costs.
+ * Stays layer ("Staying in [City]?"). There is no hotel inventory behind this module, so it holds no
+ * prices at all: each stop gets the city, the dates, the party and a Booking.com / Agoda search with
+ * those filled in. Real hotels and their rates come from the live hotel search (`server/hotelService.ts`),
+ * fetched when the traveller opens the card.
  */
 
-interface CategorySpec {
-  category: StayCategory;
-  title: string;
-  description: string;
-  /** USD per night at cost index 1.0, for one room (or one bed, for `perPerson`). */
-  baseNightlyUsd: number;
-  perPerson?: boolean;
-  /** Typical door-to-centre time, one way: shown on the card as context, not scored. */
-  commuteMinutesOneWay: number;
-  starClass?: number;
-  propertyType: NonNullable<StayLinkContext['filter']>['propertyType'];
-}
-
-const CATEGORIES: CategorySpec[] = [
-  {
-    category: 'hostel',
-    title: 'Hostels',
-    description: 'Bed in a shared dorm',
-    baseNightlyUsd: 32,
-    perPerson: true,
-    commuteMinutesOneWay: 22,
-    propertyType: 'hostel',
-  },
-  {
-    category: 'budget',
-    title: 'Budget hotels · 2★',
-    description: 'Private room, outside the centre',
-    baseNightlyUsd: 75,
-    commuteMinutesOneWay: 25,
-    starClass: 2,
-    propertyType: 'hotel',
-  },
-  {
-    category: 'midrange',
-    title: 'Mid-range hotels · 3★',
-    description: 'Private room near transit',
-    baseNightlyUsd: 115,
-    commuteMinutesOneWay: 15,
-    starClass: 3,
-    propertyType: 'hotel',
-  },
-  {
-    category: 'apartment',
-    title: 'Apartments',
-    description: 'Entire place with a kitchen',
-    baseNightlyUsd: 130,
-    commuteMinutesOneWay: 18,
-    propertyType: 'apartment',
-  },
-  {
-    category: 'upscale',
-    title: 'Upscale hotels · 4★',
-    description: 'Central, full-service',
-    baseNightlyUsd: 170,
-    commuteMinutesOneWay: 8,
-    starClass: 4,
-    propertyType: 'hotel',
-  },
-  {
-    category: 'luxury',
-    title: 'Luxury hotels · 5★',
-    description: 'Landmark address in the centre',
-    baseNightlyUsd: 340,
-    commuteMinutesOneWay: 6,
-    starClass: 5,
-    propertyType: 'hotel',
-  },
-];
-
 const ADULTS_PER_ROOM = 2;
-
-/** Rough accommodation price level relative to a mid-priced city (1.0). */
-// prettier-ignore
-const CITY_COST_INDEX: Record<string, number> = {
-  london: 1.55, paris: 1.45, amsterdam: 1.4, zurich: 1.75, geneva: 1.7, copenhagen: 1.45,
-  oslo: 1.4, stockholm: 1.3, dublin: 1.45, edinburgh: 1.35, rome: 1.2, venice: 1.5, milan: 1.3,
-  florence: 1.25, barcelona: 1.25, madrid: 1.05, lisbon: 1.0, berlin: 1.0, munich: 1.3,
-  vienna: 1.1, prague: 0.85, budapest: 0.75, warsaw: 0.7, krakow: 0.65, athens: 0.9,
-  istanbul: 0.7, antalya: 0.6, dubai: 1.3, 'abu dhabi': 1.15, doha: 1.1, 'new york': 2.1,
-  'san francisco': 1.75, 'los angeles': 1.6, chicago: 1.4, toronto: 1.3, tokyo: 1.2, kyoto: 1.25,
-  osaka: 0.95, seoul: 0.95, 'hong kong': 1.4, singapore: 1.55, shanghai: 0.85, beijing: 0.8,
-  taipei: 0.8, bangkok: 0.5, phuket: 0.7, 'kuala lumpur': 0.5, penang: 0.45, hanoi: 0.4,
-  'ho chi minh city': 0.45, jakarta: 0.5, bali: 0.6, manila: 0.55, mumbai: 0.6, delhi: 0.5,
-  cairo: 0.45, sydney: 1.45, melbourne: 1.25,
-};
-
-function costIndex(city: string): number {
-  return CITY_COST_INDEX[city.trim().toLowerCase()] ?? 1;
-}
 
 function partnerLinks(ctx: StayLinkContext): StayLink[] {
   const links: StayLink[] = [];
@@ -117,50 +21,15 @@ function partnerLinks(ctx: StayLinkContext): StayLink[] {
 }
 
 /**
- * Stay search for one stop, cheapest first. Returns null when the stop has no nights (the origin,
- * or malformed dates).
+ * Stay search for one stop. Returns null when the stop has no nights (the origin, or malformed
+ * dates).
  */
-export function buildStaySearch(
-  stop: TripStop,
-  stopIndex: number,
-  travelers: number
-): StaySearch | null {
+export function buildStaySearch(stop: TripStop, stopIndex: number, travelers: number): StaySearch | null {
   const nights = diffDaysIso(stop.arrivalDate, stop.departureDate);
   if (stopIndex === 0 || !Number.isFinite(nights) || nights < 1) return null;
 
   const adults = Math.min(9, Math.max(1, Math.floor(Number(travelers)) || 1));
   const rooms = Math.ceil(adults / ADULTS_PER_ROOM);
-  const index = costIndex(stop.city);
-  const base: StayLinkContext = {
-    city: stop.city,
-    country: stop.country,
-    checkIn: stop.arrivalDate,
-    checkOut: stop.departureDate,
-    adults,
-    rooms,
-  };
-
-  const options: StayOption[] = CATEGORIES.map((spec) => {
-    const nightlyPriceUsd = Math.round(spec.baseNightlyUsd * index * (spec.perPerson ? adults : rooms));
-    const totalPriceUsd = Math.round(nightlyPriceUsd * nights * 100) / 100;
-    return {
-      id: `${stop.id}-stay-${spec.category}`,
-      stopId: stop.id,
-      category: spec.category,
-      title: spec.title,
-      description: spec.description,
-      starClass: spec.starClass,
-      nightlyPriceUsd,
-      totalPriceUsd,
-      commuteMinutesOneWay: spec.commuteMinutesOneWay,
-      dataSource: 'synthesized' as const,
-      links: partnerLinks({
-        ...base,
-        filter: { starClass: spec.starClass, propertyType: spec.propertyType },
-      }),
-    };
-  }).sort((a, b) => a.totalPriceUsd - b.totalPriceUsd);
-
   return {
     stopId: stop.id,
     stopIndex,
@@ -171,8 +40,14 @@ export function buildStaySearch(
     nights,
     adults,
     rooms,
-    links: partnerLinks(base),
-    options,
+    links: partnerLinks({
+      city: stop.city,
+      country: stop.country,
+      checkIn: stop.arrivalDate,
+      checkOut: stop.departureDate,
+      adults,
+      rooms,
+    }),
   };
 }
 
@@ -180,5 +55,5 @@ export function buildStaySearch(
 export function buildStaySearches(stops: TripStop[], travelers: number): StaySearch[] {
   return stops
     .map((stop, index) => buildStaySearch(stop, index, travelers))
-    .filter((s): s is StaySearch => s !== null);
+    .filter((x): x is StaySearch => x !== null);
 }
