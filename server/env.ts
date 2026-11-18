@@ -58,8 +58,11 @@ export function useRealData(): boolean {
   return USE_REAL_TICKET_DATA;
 }
 
-/** Values copied straight from `.env.example` look set but are not real credentials. */
-const PLACEHOLDER_RE = /^(your[-_ ]|my[-_]|changeme|replace[-_ ]?me|todo$|x{3,}$|<.+>$)/i;
+/**
+ * Values copied straight from `.env.example` or the docs look set but are not real: `your-…`, `MY_…`, and
+ * example URLs such as `https://your-app.vercel.app` or `https://your-project-ref.supabase.co`.
+ */
+const PLACEHOLDER_RE = /^(your[-_ ]|my[-_]|changeme|replace[-_ ]?me|todo$|x{3,}$|<.+>$|https?:\/\/(your|my)[-_])/i;
 
 /**
  * Reads a variable: trimmed, surrounding quotes stripped, and placeholder / empty values treated
