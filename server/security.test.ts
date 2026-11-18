@@ -243,3 +243,15 @@ describe('secret audit', () => {
     assert.ok(!/process\.env\.(?!DISABLE_HMR)/.test(viteConfig), 'vite.config.ts must not define process.env values into the bundle');
   });
 });
+
+describe('placeholder env values', () => {
+  it('treats example URLs from the docs as missing', async () => {
+    const { getEnv } = await import('./env.ts');
+    process.env.__T_APP_URL = 'https://your-app.vercel.app';
+    process.env.__T_SB = '"https://your-project-ref.supabase.co"';
+    process.env.__T_REAL = 'https://astris-travel.vercel.app';
+    assert.equal(getEnv('__T_APP_URL'), undefined);
+    assert.equal(getEnv('__T_SB'), undefined);
+    assert.equal(getEnv('__T_REAL'), 'https://astris-travel.vercel.app');
+  });
+});
