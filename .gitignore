@@ -9,5 +9,6 @@ coverage/
 
 .vercel
 
-# Local AI-assistant session logs
+# Local AI tool folders
 .antigravity/
+.aistudio/
