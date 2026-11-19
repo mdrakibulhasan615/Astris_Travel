@@ -24,9 +24,6 @@ Booking.com, Agoda) with the selected option's parameters filled in.
   results are cached**; curated/synthesized fallbacks are rebuilt each time so sample data can never be
   served as a cache hit or shadow real fares. Redis is optional.
 - **Shared code:** `shared/` is imported by both server and client (pure TypeScript, no Node APIs).
-- **Prototype persistence (not wired to the app):** `backend/` is a FastAPI + PostgreSQL schema
-  prototype. It serves mock data and the route optimizer only. **It contains no scoring logic** —
-  `shared/smartScore.ts` is the only Smart Score implementation.
 
 ### Scripts
 | Script | Command | Purpose |
@@ -45,7 +42,7 @@ cwd). `getEnv()` trims, strips quotes and treats `.env.example` placeholders (`y
 missing; missing keys log a one-time `[env] NAME is not set…` warning at startup and on first use, never
 a crash. **Client:** the browser uses no environment variables (booking links and scores come from the
 server). If one is ever needed, it must be named `VITE_*` and read via `import.meta.env.VITE_*`;
-unprefixed keys (including `GEMINI_API_KEY`) are deliberately never exposed to the bundle.
+unprefixed keys are deliberately never exposed to the bundle.
 
 | Variable | Required | Used by | Purpose |
 | :--- | :--- | :--- | :--- |
@@ -62,7 +59,6 @@ unprefixed keys (including `GEMINI_API_KEY`) are deliberately never exposed to t
 | `SUPABASE_URL`, `SUPABASE_ANON_KEY` (or `SUPABASE_PUBLISHABLE_KEY`) | no | `server/auth.ts` | Accounts + saved-route sync (§25). Server-side only. Absent → guest-only, no login prompts |
 | `APP_URL` | no | `server/auth.ts`, `server/security/headers.ts` | Public site URL: OAuth / magic-link redirects, allowed CORS origin |
 | `ALLOWED_ORIGINS` | no | `server/security/headers.ts` | Extra comma-separated CORS / CSRF origins (never `*`) |
-| `GEMINI_API_KEY` | no | — | AI Studio scaffolding; **not read by any code today** |
 
 ---
 
@@ -114,8 +110,6 @@ unprefixed keys (including `GEMINI_API_KEY`) are deliberately never exposed to t
 │       ├── MultiDestDatePickerModal.tsx
 │       ├── RouteOptimizerModal.tsx    # Two-stage optimizer results
 │       └── WorldMapCanvas.tsx         # MapLibre map: airport-to-airport flight arcs, dashed airport connectors, land-following ground lines
-└── backend/                     # FastAPI + PostgreSQL schema prototype (no scoring; see §2)
-    ├── main.py  models.py  geo.py  database.py  SCHEMA.sql  data/mock_trip.json
 ```
 Path aliases: `@/*` → repo root (`tsconfig.json` `paths` and `vite.config.ts` `resolve.alias`).
 Imports use explicit `.ts`/`.tsx` extensions (`allowImportingTsExtensions`).
@@ -162,9 +156,6 @@ score = priceWeight × netPrice
 containing every term, the weights, and `flags` (rendered as chips in `LegTransitPanel`).
 Each call is O(1) (~1.5 µs); the slider re-scores all options client-side on every tick.
 `recalculateOptions` scores every option and ranks them (§13).
-
-**Python note:** the former `backend/smart_score.py` (tiered layover multipliers) was removed. Do not
-reintroduce scoring in `backend/`; mirror the output types only (`SmartScoreBreakdown` in `models.py`).
 
 ---
 

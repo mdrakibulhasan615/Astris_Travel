@@ -85,8 +85,7 @@ export interface EnvKeySpec {
 }
 
 /**
- * Keys reported at startup. (GEMINI_API_KEY is not used yet. The optional
- * `*_TRACKING_TEMPLATE` keys and TWELVEGO_AFFILIATE_ID are read too but not reported as missing.)
+ * Keys reported at startup. (The optional `*_TRACKING_TEMPLATE` keys and TWELVEGO_AFFILIATE_ID are read too but not reported as missing.)
  */
 export const ENV_KEYS: EnvKeySpec[] = [
   { name: 'SERPAPI_API_KEY', purpose: 'live fares and exact-ticket sellers (SerpApi Google Flights) and live hotels', fallback: 'exact-route search links instead of live fares' },
