@@ -234,40 +234,38 @@ export function HomeIntro({ stops, onStart, onReveal, onDone }: HomeIntroProps) 
         const cy = bar.top + bar.height / 2;
         const ty = tgt.top + tgt.height / 2;
 
-        // Take off to the right, a wide loop, a broad sweep out and down and round, then in from the
-        // left, straight along the route bar and off the right edge. Waypoints are spread out so no
-        // turn is tighter than the loop itself.
+        // One loop only. The plane flies right, then goes round a single big clockwise loop (down,
+        // back across the screen to the left, and up), drifting up and left as it goes so that it
+        // comes out level with the route bar, just before its left end, heading right. It then flies
+        // straight along the bar and off the right edge. The loop's drift eases in and out, so it
+        // leaves and arrives dead level and the heading never kinks.
         const r = Math.max(64, Math.min(170, 0.19 * m));
-        const loopX = Math.min(W - r - 32, cx + Math.max(r * 1.1, 0.12 * W));
-        const loopY = cy - r;
-        const loopIn = { x: loopX, y: cy };
-        const loopOut = { x: loopX + r * 0.35, y: cy + r * 0.04 };
-        const swingLow = { x: 0.5 * W, y: Math.min(H - 40, Math.max(cy, ty) + 0.36 * H) };
         // When the bar starts near the left edge (phones) there is no room to line up before it, so
-        // the plane comes up the left side and finishes a wide turn just inside the bar's start
+        // the loop comes out near the screen's left edge and flies on to the bar's start
         const tight = tgt.left < 0.15 * W;
-        const lineIn = tight ? { x: tgt.left + 0.22 * W, y: ty } : { x: tgt.left - Math.max(40, 0.05 * W), y: ty };
-        const approach = tight
-          ? { x: 0.07 * W, y: ty + 0.32 * W }
-          : { x: tgt.left - Math.max(80, 0.18 * W), y: ty + Math.min(140, 0.16 * H) };
+        const loopX = Math.min(W - r - 24, cx + Math.max(r * 0.9, 0.12 * W)); // where the loop begins
+        const leftX = tight ? 0.06 * W : Math.max(0.05 * W, tgt.left - Math.max(60, 0.1 * W)); // where it ends
+        const drift = Math.max(0, loopX - leftX); // how far left the loop carries the plane
+        const rise = Math.max(0, cy - ty); // and how far up
+        const loopAt = (theta: number): Pt => {
+          const k = theta / (2 * Math.PI);
+          const ease = k * k * (3 - 2 * k); // zero slope at both ends
+          return {
+            x: loopX + r * Math.sin(theta) - drift * ease,
+            y: cy + r - r * Math.cos(theta) - rise * ease,
+          };
+        };
+        const loopPoints: Pt[] = [];
+        for (let i = 0; i <= 16; i++) loopPoints.push(loopAt((i / 16) * 2 * Math.PI));
+        const loopIn = loopPoints[0];
+        const loopBottom = loopPoints[8];
+        const loopOut = loopPoints[16];
+        const lineIn = tight ? { x: tgt.left + 0.22 * W, y: ty } : { x: Math.max(loopOut.x + 20, tgt.left - 30), y: ty };
         const points: Pt[] = [
           { x: cx - 40, y: cy },
           { x: cx, y: cy },
-          { x: (cx + loopX) / 2, y: cy + 2 },
-          loopIn,
-          { x: loopX + r * 0.71, y: loopY + r * 0.71 },
-          { x: loopX + r, y: loopY },
-          { x: loopX + r * 0.71, y: loopY - r * 0.71 },
-          { x: loopX, y: loopY - r },
-          { x: loopX - r * 0.71, y: loopY - r * 0.71 },
-          { x: loopX - r, y: loopY },
-          { x: loopX - r * 0.71, y: loopY + r * 0.71 },
-          loopOut,
-          // A rounded turn (about the loop's own radius) from heading right to heading back down-left
-          { x: Math.min(W - 40, loopX + r * 1.35), y: Math.min(H - 80, cy + r * 0.45) },
-          { x: Math.min(W - 60, loopX + r * 1.25), y: Math.min(H - 50, cy + r * 1.35) },
-          swingLow,
-          approach,
+          { x: (cx + loopX) / 2, y: cy },
+          ...loopPoints,
           lineIn,
           { x: tgt.right + 0.1 * W, y: ty },
           { x: W + len * 2 + 0.1 * W, y: ty },
@@ -275,7 +273,7 @@ export function HomeIntro({ stops, onStart, onReveal, onDone }: HomeIntroProps) 
         const path = buildPath(points);
         const sLoopIn = arcLengthNear(path, loopIn);
         const sLoopOut = Math.max(sLoopIn + 1, arcLengthNear(path, loopOut));
-        const sSwing = arcLengthNear(path, swingLow);
+        const sSwing = arcLengthNear(path, loopBottom);
         const sLineIn = Math.max(sSwing + 1, arcLengthNear(path, lineIn));
         const t0 = performance.now();
         const trail: Pt[] = [];
