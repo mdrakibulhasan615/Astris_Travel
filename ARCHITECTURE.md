@@ -100,9 +100,10 @@ unprefixed keys are deliberately never exposed to the bundle.
 │   ├── App.tsx                  # State owner: trip, optimistic recompute, API calls, layout
 │   └── components/
 │       ├── ErrorBoundary.tsx          # Render-error containment (app-level + map-level)
+│       ├── SplitHandle.tsx            # The draggable pill between the tickets and the map (tickets 400px to the map's 320px minimum; saved in localStorage)
 │       ├── LiquidDroplet.tsx          # Glass droplet on each control's selected item; glides and stretches like water when the selection moves (mounted once in App)
 │       ├── HomeIntro.tsx              # Home page: the route bar alone; typing turns it into a plane that loops and flies along the real route bar, uncovering it
-│       ├── TopBar.tsx
+│       ├── TopBar.tsx                 # Logo on the left; live-fares tag, currency, Optimize Route and the account controls (always right-most) on the right
 │       ├── SortableStopCard.tsx       # Draggable stop in the timeline (no night counter on the origin)
 │       ├── LegTransitPanel.tsx        # Ranked options per leg: score, flag chips, merchant button
 │       ├── StayPanel.tsx              # "Staying in [City]?" card: ranked stay categories + Booking.com / Agoda

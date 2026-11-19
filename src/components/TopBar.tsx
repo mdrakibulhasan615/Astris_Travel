@@ -1,38 +1,29 @@
 import type { ReactNode } from 'react';
-import { BedDouble, Compass, Plus, Sparkles } from 'lucide-react';
+import { Compass, Sparkles } from 'lucide-react';
 import { CURRENCIES, isCurrencyCode } from '../../shared/currency.ts';
 import { useCurrency } from '../currency.tsx';
 
 interface TopBarProps {
-  activePanel: 'timeline' | 'stays';
-  onSelectPanel: (panel: 'timeline' | 'stays') => void;
-  onOpenAddStop: () => void;
+  /** The logo takes you back to the itinerary. */
+  onGoHome: () => void;
   onOptimizeRoute: () => void;
   isOptimizing: boolean;
   /** Where tickets come from: set in code / environment, shown here for information only. */
   dataMode?: 'live' | 'mock';
-  /** Route sync link + account controls. */
+  /** Route sync link + log in / profile: always the right-most thing on the bar. */
   accountSlot?: ReactNode;
 }
 
-export function TopBar({
-  activePanel,
-  onSelectPanel,
-  onOpenAddStop,
-  onOptimizeRoute,
-  isOptimizing,
-  dataMode,
-  accountSlot,
-}: TopBarProps) {
+export function TopBar({ onGoHome, onOptimizeRoute, isOptimizing, dataMode, accountSlot }: TopBarProps) {
   const { currency, setCurrency, rates } = useCurrency();
   return (
     <header className="h-16 glass-chrome relative px-5 lg:px-7 flex items-center justify-between gap-8 shrink-0 z-30">
-      {/* Zone 1: Single-line Brand Wordmark */}
+      {/* Left: single-line brand wordmark */}
       <a
         href="#top"
         onClick={(e) => {
           e.preventDefault();
-          onSelectPanel('timeline');
+          onGoHome();
         }}
         className="flex items-center gap-2.5 whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF812E] rounded-lg"
       >
@@ -44,47 +35,7 @@ export function TopBar({
         </span>
       </a>
 
-      {/* Zone 2: Clean single-line text navigation links */}
-      <nav
-        aria-label="Primary workspace navigation"
-        className="hidden md:flex items-center gap-7 text-sm font-medium text-[#4B5563]"
-      >
-        <button
-          type="button"
-          onClick={() => onSelectPanel('timeline')}
-          aria-current={activePanel === 'timeline' ? 'page' : undefined}
-          className={`py-1.5 border-b-2 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
-            activePanel === 'timeline'
-              ? 'border-[#FF812E] text-[#111827] font-semibold'
-              : 'border-transparent hover:text-[#111827]'
-          }`}
-        >
-          Itinerary
-        </button>
-        <button
-          type="button"
-          onClick={() => onSelectPanel('stays')}
-          aria-current={activePanel === 'stays' ? 'page' : undefined}
-          className={`py-1.5 border-b-2 transition-colors whitespace-nowrap shrink-0 cursor-pointer inline-flex items-center gap-1.5 ${
-            activePanel === 'stays'
-              ? 'border-[#FF812E] text-[#111827] font-semibold'
-              : 'border-transparent hover:text-[#111827]'
-          }`}
-        >
-          <BedDouble className="w-3.5 h-3.5 text-[#4B5563]" />
-          <span>Stays</span>
-        </button>
-        <button
-          type="button"
-          onClick={onOpenAddStop}
-          className="py-1.5 border-b-2 border-transparent hover:text-[#111827] transition-colors whitespace-nowrap shrink-0 cursor-pointer inline-flex items-center gap-1.5"
-        >
-          <Plus className="w-3.5 h-3.5 text-[#4B5563]" />
-          <span>Add Stop</span>
-        </button>
-      </nav>
-
-      {/* Zone 3: data mode, currency, single primary action */}
+      {/* Right: data mode, currency, the primary action, then the account controls last */}
       <div className="flex items-center gap-3 shrink-0">
         {dataMode && (
           <span
@@ -102,8 +53,6 @@ export function TopBar({
             {dataMode === 'live' ? 'Live fares' : 'Live fares off'}
           </span>
         )}
-
-        {accountSlot}
 
         <div className="relative">
           <label htmlFor="currency-select" className="sr-only">
@@ -135,6 +84,8 @@ export function TopBar({
           <Sparkles className="w-4 h-4" />
           <span>{isOptimizing ? 'Optimizing...' : 'Optimize Route'}</span>
         </button>
+
+        {accountSlot}
       </div>
     </header>
   );

@@ -68,6 +68,7 @@ import { RouteOptimizerModal } from './components/RouteOptimizerModal.tsx';
 import { SortableStopCard } from './components/SortableStopCard.tsx';
 import { StayPanel } from './components/StayPanel.tsx';
 import { TopBar } from './components/TopBar.tsx';
+import { SplitHandle } from './components/SplitHandle.tsx';
 import { VttsControlPanel } from './components/VttsControlPanel.tsx';
 import { WorldMapCanvas } from './components/WorldMapCanvas.tsx';
 import type { OverlayLine } from '../shared/groundSchedule.ts';
@@ -97,6 +98,14 @@ function learnAirports(legs: TripLeg[]): void {
   }
   registerAirports(points);
 }
+
+// Tickets and map split. The tickets can be dragged down to 400px: below about 385px the page content
+// starts to overflow sideways and ticket text no longer fits. The map keeps at least 320px, and the
+// split starts at 47%.
+const SPLIT_MIN_LEFT = 400;
+const SPLIT_MIN_MAP = 320;
+const SPLIT_DEFAULT = 0.47;
+const SPLIT_KEY = 'astris_split';
 
 export default function App() {
   const { fmt } = useCurrency();
@@ -154,6 +163,53 @@ export default function App() {
   const lastApiLegsRef = useRef<{ label: string; legs: TripLeg[] } | null>(null);
   const smartScoreSectionRef = useRef<HTMLDivElement | null>(null);
   const timelineSectionRef = useRef<HTMLDivElement | null>(null);
+
+  // The split between the tickets (left) and the map (right) can be dragged. The position is kept as
+  // a share of the workspace's width, so it survives the window being resized.
+  const mainRef = useRef<HTMLElement | null>(null);
+  const [mainWidth, setMainWidth] = useState(0);
+  const [splitFrac, setSplitFrac] = useState<number>(() => {
+    try {
+      const saved = Number(window.localStorage.getItem(SPLIT_KEY));
+      return saved > 0.2 && saved < 0.9 ? saved : SPLIT_DEFAULT;
+    } catch {
+      return SPLIT_DEFAULT;
+    }
+  });
+  useEffect(() => {
+    const el = mainRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(([entry]) => setMainWidth(entry.contentRect.width));
+    observer.observe(el);
+    setMainWidth(el.clientWidth);
+    return () => observer.disconnect();
+  }, []);
+  const splitMax = Math.max(SPLIT_MIN_LEFT, mainWidth - SPLIT_MIN_MAP);
+  const splitLeft = mainWidth ? Math.min(splitMax, Math.max(SPLIT_MIN_LEFT, splitFrac * mainWidth)) : 0;
+  // The latest split, so saving right after a change (a key press) never sees the old value
+  const splitRef = useRef(splitFrac);
+  const dragSplit = (px: number) => {
+    if (!mainWidth) return;
+    const next = Math.min(splitMax, Math.max(SPLIT_MIN_LEFT, px)) / mainWidth;
+    splitRef.current = next;
+    setSplitFrac(next);
+  };
+  const saveSplit = () => {
+    try {
+      window.localStorage.setItem(SPLIT_KEY, String(splitRef.current));
+    } catch {
+      /* private window: the split just isn't remembered */
+    }
+  };
+  const resetSplit = () => {
+    splitRef.current = SPLIT_DEFAULT;
+    setSplitFrac(SPLIT_DEFAULT);
+    try {
+      window.localStorage.removeItem(SPLIT_KEY);
+    } catch {
+      /* nothing saved to clear */
+    }
+  };
 
   // Fetch initial trip and destinations from Express backend
   useEffect(() => {
@@ -669,9 +725,7 @@ export default function App() {
   return (
     <div className="min-h-screen lg:h-screen flex flex-col astris-backdrop text-[#111827] lg:overflow-hidden">
       <TopBar
-        activePanel={activePanel}
-        onSelectPanel={handleNavPanelSelect}
-        onOpenAddStop={() => setIsAddStopOpen(true)}
+        onGoHome={() => handleNavPanelSelect('timeline')}
         onOptimizeRoute={handleOptimizeRoute}
         isOptimizing={isOptimizing}
         dataMode={dataMode}
@@ -725,7 +779,11 @@ export default function App() {
       </div>
 
       {/* Split-Screen Master Workspace */}
-      <main className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[minmax(460px,47%)_1fr] items-stretch">
+      <main
+        ref={mainRef}
+        style={splitLeft ? ({ '--left-col': `${splitLeft}px` } as React.CSSProperties) : undefined}
+        className="relative flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[var(--left-col,minmax(460px,47%))_1fr] items-stretch"
+      >
         {/* Left Side: Scrollable Timeline & Multi-Modal Transit Workspace */}
         <div
           className={`${
@@ -1028,6 +1086,16 @@ export default function App() {
             seed={addStopSeed}
           />
         </div>
+        {splitLeft > 0 && (
+          <SplitHandle
+            left={splitLeft}
+            min={SPLIT_MIN_LEFT}
+            max={splitMax}
+            onDrag={dragSplit}
+            onCommit={saveSplit}
+            onReset={resetSplit}
+          />
+        )}
       </main>
 
       {/* Modals & Drawers */}
