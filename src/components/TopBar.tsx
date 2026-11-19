@@ -26,7 +26,7 @@ export function TopBar({
 }: TopBarProps) {
   const { currency, setCurrency, rates } = useCurrency();
   return (
-    <header className="h-16 bg-white border-b border-neutral-200/80 px-5 lg:px-7 flex items-center justify-between gap-8 shrink-0 z-30">
+    <header className="h-16 glass-chrome relative px-5 lg:px-7 flex items-center justify-between gap-8 shrink-0 z-30">
       {/* Zone 1: Single-line Brand Wordmark */}
       <a
         href="#top"
@@ -52,6 +52,7 @@ export function TopBar({
         <button
           type="button"
           onClick={() => onSelectPanel('timeline')}
+          aria-current={activePanel === 'timeline' ? 'page' : undefined}
           className={`py-1.5 border-b-2 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
             activePanel === 'timeline'
               ? 'border-[#FF812E] text-[#111827] font-semibold'
@@ -63,6 +64,7 @@ export function TopBar({
         <button
           type="button"
           onClick={() => onSelectPanel('stays')}
+          aria-current={activePanel === 'stays' ? 'page' : undefined}
           className={`py-1.5 border-b-2 transition-colors whitespace-nowrap shrink-0 cursor-pointer inline-flex items-center gap-1.5 ${
             activePanel === 'stays'
               ? 'border-[#FF812E] text-[#111827] font-semibold'
@@ -114,7 +116,7 @@ export function TopBar({
             title={`Prices are shown in ${currency}. Exchange rates ${
               rates.source === 'live' ? '(ECB reference)' : '(approximate)'
             } as of ${rates.asOf}.`}
-            className="h-9 cursor-pointer rounded-xl border border-neutral-200 bg-white px-2.5 text-sm font-semibold text-[#111827] hover:border-[#FFD6BA] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF812E]"
+            className="h-9 cursor-pointer rounded-xl glass-control px-2.5 text-sm font-semibold text-[#111827] hover:border-[#FFD6BA] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF812E]"
           >
             {CURRENCIES.map((c) => (
               <option key={c.code} value={c.code}>

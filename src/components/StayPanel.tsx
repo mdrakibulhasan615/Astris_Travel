@@ -59,7 +59,7 @@ export function StayPanel({ search, defaultExpanded = false, inTimeline = false 
         <div aria-hidden="true" className="absolute bottom-0 left-[15px] top-0 w-0.5 bg-neutral-200" />
       )}
 
-      <div className="rounded-2xl border border-[#FFE3CC] bg-[#FFF6EE] shadow-sm transition-all hover:shadow-md">
+      <div className="rounded-2xl glass border-[#FFE3CC] bg-[#FFF6EE]/55 transition-all">
         <button
           type="button"
           aria-expanded={expanded}

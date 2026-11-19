@@ -23,7 +23,7 @@
 export const USE_REAL_TICKET_DATA = true;
 
 /**
- * Whether the home page (a single destination bar that flies onto the planner once you start typing)
+ * Whether the home page (the route bar alone; typing turns it into a plane that flies onto the planner)
  * covers the planner on load. `false` opens straight on the map and itinerary.
  */
 export const SHOW_HOME_HERO = true;

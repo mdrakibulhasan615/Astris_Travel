@@ -4,15 +4,16 @@ import { Plus } from 'lucide-react';
 import type { TripStop } from '../../shared/types.ts';
 
 /**
- * The home page: the route bar alone on a dark backdrop. The first keystroke sets it off:
- * the bar breaks into a chain of segments that slithers around the screen like a snake, does a
- * barrel roll through a loop, and lands exactly on the planner's route bar, while the home page
- * lifts away to reveal the planner underneath. Typing carries straight on in "Add a stop…".
+ * The home page: the route bar alone on a dark backdrop. The first keystroke sets it off: the bar
+ * turns into a plane (it shrinks into a fuselage, one end sharpens into a nose, the other tapers into
+ * a tail, and wings and tail fins grow out), takes off, flies a loop, then swoops in and flies along
+ * the planner's route bar, uncovering it as it passes, while the home page lifts away. Typing carries
+ * straight on in "Add a stop…".
  *
- * The flight is one requestAnimationFrame loop writing transforms to N plain divs (no React
- * renders per frame). Each segment sits at a point along one path, measured by arc length: the
- * home bar's centreline, a Catmull-Rom curve through a few waypoints (with a loop), then the
- * target bar's centreline. Reduced motion skips the flight and simply fades the page away.
+ * The flight is one requestAnimationFrame loop writing SVG attributes (no React renders per frame).
+ * The plane follows one path, measured by arc length: a Catmull-Rom curve through a few waypoints
+ * (with the loop), ending in a straight line along the route bar. Reduced motion skips the flight and
+ * simply fades the page away.
  */
 
 interface HomeIntroProps {
@@ -20,16 +21,16 @@ interface HomeIntroProps {
   stops: TripStop[];
   /** The first character was typed: show the map (on phones) so the route bar can be measured. */
   onStart: () => void;
-  /** The snake is about to land: fade the real route bar in under it. */
+  /** The plane is about to pass over the route bar: make it visible (it is uncovered by a clip). */
   onReveal: () => void;
   /** Finished: unmount the home page and hand over what was typed. */
   onDone: (text: string) => void;
 }
 
-const SEGMENTS = 44;
-const DURATION_MS = 2800;
-const LIFT_DELAY_S = 0.35;
-const ORANGE = '#FF812E';
+const MORPH_MS = 950;
+const FLY_MS = 3000;
+const LIFT_DELAY_S = 0.6;
+const TRAIL_POINTS = 36;
 
 type Pt = { x: number; y: number };
 
@@ -38,25 +39,36 @@ interface Path {
   at: (s: number) => { x: number; y: number; angle: number };
 }
 
-/** Samples straight start line + Catmull-Rom through the waypoints + straight end line. */
+/**
+ * One point of a centripetal Catmull-Rom segment between p1 and p2. Centripetal spacing never makes
+ * cusps or little loops where waypoints are uneven, so the curve stays smooth everywhere.
+ */
+function centripetal(p0: Pt, p1: Pt, p2: Pt, p3: Pt, t: number): Pt {
+  const knot = (a: Pt, b: Pt) => Math.max(1e-3, Math.sqrt(Math.hypot(b.x - a.x, b.y - a.y)));
+  const t0 = 0;
+  const t1 = t0 + knot(p0, p1);
+  const t2 = t1 + knot(p1, p2);
+  const t3 = t2 + knot(p2, p3);
+  const u = t1 + (t2 - t1) * t;
+  const mix = (a: Pt, b: Pt, ta: number, tb: number): Pt => {
+    const k = (u - ta) / (tb - ta);
+    return { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k };
+  };
+  const a1 = mix(p0, p1, t0, t1);
+  const a2 = mix(p1, p2, t1, t2);
+  const a3 = mix(p2, p3, t2, t3);
+  const b1 = mix(a1, a2, t0, t2);
+  const b2 = mix(a2, a3, t1, t3);
+  return mix(b1, b2, t1, t2);
+}
+
+/** Samples a straight first segment + a smooth curve through the waypoints + a straight last segment. */
 function buildPath(points: Pt[]): Path {
-  const samples: Pt[] = [points[0]];
-  // points[0]→points[1] and the last pair are straight lines; the rest is a smooth curve
-  samples.push(points[1]);
+  const samples: Pt[] = [points[0], points[1]];
   for (let i = 1; i < points.length - 2; i++) {
-    const p0 = points[i - 1];
-    const p1 = points[i];
-    const p2 = points[i + 1];
-    const p3 = points[i + 2];
-    const steps = 32;
+    const steps = 64;
     for (let k = 1; k <= steps; k++) {
-      const t = k / steps;
-      const t2 = t * t;
-      const t3 = t2 * t;
-      samples.push({
-        x: 0.5 * (2 * p1.x + (-p0.x + p2.x) * t + (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * t2 + (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * t3),
-        y: 0.5 * (2 * p1.y + (-p0.y + p2.y) * t + (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t2 + (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t3),
-      });
+      samples.push(centripetal(points[i - 1], points[i], points[i + 1], points[i + 2], k / steps));
     }
   }
   samples.push(points[points.length - 1]);
@@ -85,7 +97,7 @@ function buildPath(points: Pt[]): Path {
   return { length, at };
 }
 
-/** Arc length of the sample nearest to `p` (used to find where the loop starts and ends). */
+/** Arc length of the sample nearest to `p`. */
 function arcLengthNear(path: Path, p: Pt): number {
   let best = 0;
   let bestD = Infinity;
@@ -101,15 +113,70 @@ function arcLengthNear(path: Path, p: Pt): number {
 }
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
-/** Gets going quickly, glides, then settles gently onto the route bar. */
-const easeInOut = (t: number) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
 const clamp01 = (t: number) => Math.max(0, Math.min(1, t));
+const easeInOut = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+const smooth = (t: number) => t * t * (3 - 2 * t);
+/** Shortest signed difference between two angles. */
+const angleDiff = (a: number, b: number) => {
+  let d = a - b;
+  while (d > Math.PI) d -= 2 * Math.PI;
+  while (d < -Math.PI) d += 2 * Math.PI;
+  return d;
+};
+/** Take-off throttle: 0 → 1 over RAMP_MS on a cosine curve, so speed builds with no jolt. */
+const RAMP_MS = 650;
+const ramp = (ms: number) => (1 - Math.cos(Math.PI * clamp01(ms / RAMP_MS))) / 2;
+/** Overshoots a little, so the wings "pop" out. */
+const easeOutBack = (t: number) => {
+  const c = 1.6;
+  return 1 + (c + 1) * Math.pow(t - 1, 3) + c * Math.pow(t - 1, 2);
+};
+
+/**
+ * The plane seen from above, nose towards +x, centred on the origin. `morph` 0 is the bar itself
+ * (a rounded bar `barW` × `barH`), 1 is the finished plane of length `len`.
+ */
+function planeShape(morph: number, barW: number, barH: number, len: number) {
+  const body = easeInOut(clamp01(morph / 0.75));
+  const ends = smooth(clamp01((morph - 0.2) / 0.6));
+  const wing = Math.max(0, easeOutBack(clamp01((morph - 0.35) / 0.65)));
+  const fins = Math.max(0, easeOutBack(clamp01((morph - 0.5) / 0.5)));
+
+  const a = lerp(barW / 2, len * 0.42, body); // half-length to where the nose curve starts (+ b)
+  const b = lerp(barH / 2, len * 0.06, body); // half-width of the fuselage
+  const reach = 1.33 * b * lerp(1, 2.1, ends); // how far the nose bulges past the straight part
+  const pinch = lerp(1, 0.2, ends); // a narrower, pointier nose
+  const tail = lerp(1, 0.28, ends); // the tail end tapers to this fraction of the width
+  const tailX = -a - len * 0.1 * ends; // and stretches back a little
+  const f = (n: number) => n.toFixed(1);
+
+  const noseStart = a - b;
+  const fuselage =
+    `M ${f(tailX)} ${f(-b * tail)} L ${f(noseStart)} ${f(-b)} ` +
+    `C ${f(noseStart + reach)} ${f(-b * pinch)} ${f(noseStart + reach)} ${f(b * pinch)} ${f(noseStart)} ${f(b)} ` +
+    `L ${f(tailX)} ${f(b * tail)} ` +
+    `C ${f(tailX - 1.33 * b * tail)} ${f(b * tail)} ${f(tailX - 1.33 * b * tail)} ${f(-b * tail)} ${f(tailX)} ${f(-b * tail)} Z`;
+
+  // Swept wings and tail fins, mirrored either side of the fuselage
+  const sweptPair = (rootX: number, chord: number, span: number, sweep: number, tipChord: number, grow: number) => {
+    const root = b * 0.7;
+    const tipY = root + span * grow;
+    const lead = rootX + chord / 2;
+    const tipLead = lead - sweep * grow;
+    const side = (sgn: number) =>
+      `M ${f(lead)} ${f(sgn * root)} L ${f(tipLead)} ${f(sgn * tipY)} L ${f(tipLead - tipChord)} ${f(sgn * tipY)} L ${f(rootX - chord / 2)} ${f(sgn * root)} Z`;
+    return `${side(1)} ${side(-1)}`;
+  };
+  const wings = sweptPair(len * 0.04, len * 0.24, len * 0.5, len * 0.2, len * 0.09, wing);
+  const tailFins = sweptPair(tailX + len * 0.09, len * 0.12, len * 0.17, len * 0.07, len * 0.05, fins);
+  return { fuselage, wings, tailFins };
+}
 
 function targetRect(): DOMRect {
   const el = document.querySelector<HTMLElement>('[data-route-bar="map"]');
   const r = el?.getBoundingClientRect();
   if (r && r.width > 0 && r.height > 0) return r;
-  // No map on screen: land at the top of the page instead
+  // No map on screen: fly across the top of the page instead
   const w = Math.min(window.innerWidth - 32, 720);
   return new DOMRect((window.innerWidth - w) / 2, 72, w, 44);
 }
@@ -121,9 +188,12 @@ export function HomeIntro({ stops, onStart, onReveal, onDone }: HomeIntroProps) 
   const valueRef = useRef('');
   const barRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const segRefs = useRef<(SVGLineElement | null)[]>([]);
-  const stripeRef = useRef<SVGPolylineElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
+  const planeRef = useRef<SVGGElement>(null);
+  const fuselageRef = useRef<SVGPathElement>(null);
+  const wingsRef = useRef<SVGPathElement>(null);
+  const finsRef = useRef<SVGPathElement>(null);
+  const trailRef = useRef<SVGPolylineElement>(null);
   const callbacks = useRef({ onStart, onReveal, onDone });
   callbacks.current = { onStart, onReveal, onDone };
 
@@ -136,13 +206,19 @@ export function HomeIntro({ stops, onStart, onReveal, onDone }: HomeIntroProps) 
     if (stage !== 'flying') return;
     callbacks.current.onStart();
     let raf = 0;
-    let revealed = false;
 
     if (reduce) {
       callbacks.current.onReveal();
       const t = window.setTimeout(() => callbacks.current.onDone(valueRef.current), 450);
       return () => window.clearTimeout(t);
     }
+
+    // The route bar is uncovered with a clip-path that follows the plane
+    let clipped: HTMLElement | null = null;
+    const clearClip = () => {
+      if (clipped) clipped.style.clipPath = '';
+      clipped = null;
+    };
 
     // Wait two frames so the map (shown by onStart on phones) has laid out before measuring
     raf = requestAnimationFrame(() => {
@@ -153,121 +229,163 @@ export function HomeIntro({ stops, onStart, onReveal, onDone }: HomeIntroProps) 
         const W = window.innerWidth;
         const H = window.innerHeight;
         const m = Math.min(W, H);
+        const len = Math.max(58, Math.min(104, 0.075 * W)); // the finished plane's length
+        const cx = bar.left + bar.width / 2;
         const cy = bar.top + bar.height / 2;
         const ty = tgt.top + tgt.height / 2;
 
-        // The tour: out to the right and down, a wave across the bottom, up into a loop (the barrel
-        // roll), then in from the left onto the route bar
-        const loopC = { x: 0.5 * W, y: 0.5 * H };
-        const r = 0.14 * m;
-        const loopIn = { x: loopC.x - r, y: loopC.y };
-        const loopOut = { x: loopC.x - r * 0.15, y: loopC.y + r };
+        // Take off to the right, a wide loop, a broad sweep out and down and round, then in from the
+        // left, straight along the route bar and off the right edge. Waypoints are spread out so no
+        // turn is tighter than the loop itself.
+        const r = Math.max(64, Math.min(170, 0.19 * m));
+        const loopX = Math.min(W - r - 32, cx + Math.max(r * 1.1, 0.12 * W));
+        const loopY = cy - r;
+        const loopIn = { x: loopX, y: cy };
+        const loopOut = { x: loopX + r * 0.35, y: cy + r * 0.04 };
+        const swingLow = { x: 0.5 * W, y: Math.min(H - 40, Math.max(cy, ty) + 0.36 * H) };
+        // When the bar starts near the left edge (phones) there is no room to line up before it, so
+        // the plane comes up the left side and finishes a wide turn just inside the bar's start
+        const tight = tgt.left < 0.15 * W;
+        const lineIn = tight ? { x: tgt.left + 0.22 * W, y: ty } : { x: tgt.left - Math.max(40, 0.05 * W), y: ty };
+        const approach = tight
+          ? { x: 0.07 * W, y: ty + 0.32 * W }
+          : { x: tgt.left - Math.max(80, 0.18 * W), y: ty + Math.min(140, 0.16 * H) };
         const points: Pt[] = [
-          // Round line caps add half the thickness at each end, so the lines are inset by that much
-          { x: bar.left + bar.height / 2, y: cy },
-          { x: bar.right - bar.height / 2, y: cy },
-          { x: Math.min(W - 70, bar.right + 0.1 * W), y: Math.min(H - 60, cy + 0.2 * H) },
-          { x: 0.68 * W, y: 0.86 * H },
-          { x: 0.42 * W, y: 0.72 * H },
-          { x: 0.2 * W, y: 0.82 * H },
-          { x: 0.14 * W, y: 0.6 * H },
+          { x: cx - 40, y: cy },
+          { x: cx, y: cy },
+          { x: (cx + loopX) / 2, y: cy + 2 },
           loopIn,
-          { x: loopC.x, y: loopC.y - r },
-          { x: loopC.x + r, y: loopC.y },
+          { x: loopX + r * 0.71, y: loopY + r * 0.71 },
+          { x: loopX + r, y: loopY },
+          { x: loopX + r * 0.71, y: loopY - r * 0.71 },
+          { x: loopX, y: loopY - r },
+          { x: loopX - r * 0.71, y: loopY - r * 0.71 },
+          { x: loopX - r, y: loopY },
+          { x: loopX - r * 0.71, y: loopY + r * 0.71 },
           loopOut,
-          { x: loopC.x - r * 1.1, y: loopC.y + r * 0.2 },
-          // Not clamped on-screen: when the bar starts near the left edge (phones) the snake swings
-          // in from just off-screen rather than doubling back on itself
-          { x: tgt.left - Math.max(60, 0.12 * W), y: ty + Math.min(80, 0.08 * H) },
-          { x: tgt.left - 30, y: ty },
-          { x: tgt.left + tgt.height / 2, y: ty },
-          { x: tgt.right - tgt.height / 2, y: ty },
+          // A rounded turn (about the loop's own radius) from heading right to heading back down-left
+          { x: Math.min(W - 40, loopX + r * 1.35), y: Math.min(H - 80, cy + r * 0.45) },
+          { x: Math.min(W - 60, loopX + r * 1.25), y: Math.min(H - 50, cy + r * 1.35) },
+          swingLow,
+          approach,
+          lineIn,
+          { x: tgt.right + 0.1 * W, y: ty },
+          { x: W + len * 2 + 0.1 * W, y: ty },
         ];
         const path = buildPath(points);
-        const rollStart = arcLengthNear(path, loopIn);
-        const rollEnd = Math.max(rollStart + 1, arcLengthNear(path, loopOut));
-        const startLen = bar.width - bar.height;
-        const endLen = tgt.width - tgt.height;
-        const startHead = startLen;
+        const sLoopIn = arcLengthNear(path, loopIn);
+        const sLoopOut = Math.max(sLoopIn + 1, arcLengthNear(path, loopOut));
+        const sSwing = arcLengthNear(path, swingLow);
+        const sLineIn = Math.max(sSwing + 1, arcLengthNear(path, lineIn));
         const t0 = performance.now();
+        const trail: Pt[] = [];
+        let heading = 0;
+        let prevTime = t0;
+        let bank = 0;
+        let revealed = false;
+        let shapeDone = false;
+        // Distance flown (the path starts 40px behind the bar's centre, a lead-in that keeps the
+        // take-off straight) and the current speed factor
+        let s = 40;
+        let pace = 1;
+        // Cruise speed in px/ms: the whole tour takes about FLY_MS, but never faster than 1.25 px/ms
+        const cruiseSpeed = Math.min(1.25, (path.length - 40) / FLY_MS);
+        const takeOff = MORPH_MS * 0.8; // takes off just before the morph ends
 
         const frame = (now: number) => {
-          const p = clamp01((now - t0) / DURATION_MS);
-          const e = easeInOut(p);
-          const mid = Math.sin(Math.PI * e); // 0 at both ends, 1 mid-flight
-          const head = lerp(startHead, path.length, e);
-          // The bar's length becomes the body length; it shortens mid-flight into a proper snake
-          const bodyLen = (k: number) => lerp(startLen, endLen, k) * (1 - 0.45 * Math.sin(Math.PI * k));
-          const thick = lerp(bar.height, tgt.height, e) * (1 - 0.5 * mid);
-          const fade = 1 - clamp01((p - 0.9) / 0.1);
-          // The planner can still be settling (fonts, data, the phone layout switch), so follow the
-          // route bar's live position: blend the whole path onto it over the second half of the flight
-          const live = targetRect();
-          const follow = clamp01((e - 0.5) / 0.5);
-          const settle = follow * follow * (3 - 2 * follow);
-          const dx = (live.left - tgt.left) * settle;
-          const dy = (live.top + live.height / 2 - ty) * settle;
-          const dw = (live.width - tgt.width) * settle;
-          const lineStart = path.length - endLen;
-
-          // Points along the body, head first. Each one also wiggles side to side (the slither),
-          // strongest mid-flight and gone at both ends so the bar starts and lands straight.
-          const body: { x: number; y: number; h: number; tint: number }[] = [];
-          const stripe: string[] = [];
           const t = now - t0;
-          for (let i = 0; i <= SEGMENTS; i++) {
-            const k = i / SEGMENTS;
-            const sAt = head - k * bodyLen(e);
-            const pt = path.at(sAt);
-            const wiggle = Math.sin(sAt / 70 - t / 140) * 22 * mid * (0.4 + 0.6 * k);
-            const nx = -Math.sin(pt.angle);
-            const ny = Math.cos(pt.angle);
-            // On the final straight, stretch to the bar's live width as well
-            const stretch = sAt > lineStart ? ((sAt - lineStart) / Math.max(1, endLen)) * dw : 0;
-            const x = pt.x + nx * wiggle + dx + stretch;
-            const y = pt.y + ny * wiggle + dy;
-            const h = thick * (1 - 0.55 * k * mid);
-            body.push({ x, y, h, tint: Math.round(100 * mid * (1 - 0.75 * k)) });
-            // Barrel roll: the stripe along the back turns round the body as it passes the loop
-            const roll = sAt <= rollStart ? 0 : sAt >= rollEnd ? 1 : (sAt - rollStart) / (rollEnd - rollStart);
-            const off = -Math.cos(roll * Math.PI * 2) * h * 0.28;
-            stripe.push(`${(x + nx * off).toFixed(1)},${(y + ny * off).toFixed(1)}`);
-          }
-          for (let i = 0; i < SEGMENTS; i++) {
-            const el = segRefs.current[i];
-            if (!el) continue;
-            const p1 = body[i];
-            const p2 = body[i + 1];
-            el.setAttribute('x1', p1.x.toFixed(1));
-            el.setAttribute('y1', p1.y.toFixed(1));
-            el.setAttribute('x2', p2.x.toFixed(1));
-            el.setAttribute('y2', p2.y.toFixed(1));
-            el.setAttribute('stroke-width', ((p1.h + p2.h) / 2).toFixed(1));
-            el.style.stroke = `color-mix(in srgb, ${ORANGE} ${p1.tint}%, white)`;
-          }
-          stripeRef.current?.setAttribute('points', stripe.join(' '));
-          stripeRef.current?.setAttribute('stroke-width', Math.max(1.5, thick * 0.14).toFixed(1));
-          stripeRef.current?.setAttribute('opacity', String(0.9 * mid));
-          if (svgRef.current) svgRef.current.style.opacity = String(fade);
+          const morph = clamp01(t / MORPH_MS);
+          const dt = Math.min(48, now - prevTime);
+          prevTime = now;
+          const airborne = t > takeOff;
 
-          if (!revealed && p >= 0.86) {
-            revealed = true;
-            callbacks.current.onReveal();
+          // Shape: from the bar to the plane, then fixed
+          if (!shapeDone) {
+            const shape = planeShape(morph, bar.width, bar.height, len);
+            fuselageRef.current?.setAttribute('d', shape.fuselage);
+            wingsRef.current?.setAttribute('d', shape.wings);
+            finsRef.current?.setAttribute('d', shape.tailFins);
+            if (svgRef.current) svgRef.current.style.opacity = String(clamp01(t / 120));
+            shapeDone = morph >= 1;
           }
-          if (p < 1) raf = requestAnimationFrame(frame);
-          else callbacks.current.onDone(valueRef.current);
+
+          // Speed: builds on a gentle curve after take-off, then eases off in tight turns and picks up
+          // again on the straights. The pace itself changes gradually, so the motion never jerks.
+          const span = Math.max(40, len * 0.6);
+          const fore = path.at(s + span);
+          const aft = path.at(s - span);
+          const here = path.at(s);
+          const bend = Math.abs(
+            angleDiff(Math.atan2(fore.y - here.y, fore.x - here.x), Math.atan2(here.y - aft.y, here.x - aft.x))
+          ) / span; // radians per px
+          pace += (1 / (1 + 55 * bend) - pace) * (1 - Math.exp(-dt / 180));
+          if (airborne) s += cruiseSpeed * ramp(t - takeOff) * pace * dt;
+          const pt = path.at(s);
+          // Follow the route bar's live position on the way in (the planner may still be settling)
+          const live = targetRect();
+          const settle = smooth(clamp01((s - sSwing) / (sLineIn - sSwing)));
+          const x = pt.x + (live.left - tgt.left) * settle;
+          const y = pt.y + (live.top + live.height / 2 - ty) * settle;
+
+          // Heading: the direction across a short stretch of path around the plane (not the local
+          // sample segment, which steps at every sample), eased so the nose turns without any snap
+          const targetAngle = Math.atan2(fore.y - aft.y, fore.x - aft.x);
+          heading = airborne ? heading + angleDiff(targetAngle, heading) * (1 - Math.exp(-dt / 70)) : 0;
+          // Bank by how sharply the path curves here (the wings look shorter), eased more slowly
+          bank += (Math.min(1, bend * 70) - bank) * (1 - Math.exp(-dt / 160));
+          // Swell through the loop as if it comes closer
+          const inLoop = s > sLoopIn && s < sLoopOut ? Math.sin((Math.PI * (s - sLoopIn)) / (sLoopOut - sLoopIn)) : 0;
+          const scale = 1 + 0.25 * inLoop * inLoop;
+          const deg = (heading * 180) / Math.PI;
+          planeRef.current?.setAttribute(
+            'transform',
+            `translate(${x.toFixed(1)} ${y.toFixed(1)}) rotate(${deg.toFixed(2)}) scale(${scale.toFixed(3)} ${(scale * (1 - 0.4 * Math.abs(bank))).toFixed(3)})`
+          );
+
+          // Contrail once airborne
+          if (airborne) {
+            trail.push({ x, y });
+            if (trail.length > TRAIL_POINTS) trail.shift();
+            trailRef.current?.setAttribute('points', trail.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' '));
+          }
+
+          // Uncover the route bar behind the plane as it flies along it
+          const el = document.querySelector<HTMLElement>('[data-route-bar="map"]');
+          if (el) {
+            if (!revealed && s >= sLineIn - len) {
+              revealed = true;
+              clipped = el;
+              el.style.clipPath = 'inset(-40px 100% -40px -40px)';
+              callbacks.current.onReveal();
+            }
+            if (revealed && clipped) {
+              const rb = clipped.getBoundingClientRect();
+              const edge = x - len * 0.15; // just behind the wings
+              const right = rb.right - edge;
+              clipped.style.clipPath = right <= 0 ? '' : `inset(-40px ${Math.min(rb.width + 40, right).toFixed(1)}px -40px -40px)`;
+            }
+          }
+
+          if (s < path.length) raf = requestAnimationFrame(frame);
+          else {
+            clearClip();
+            callbacks.current.onDone(valueRef.current);
+          }
         };
         raf = requestAnimationFrame(frame);
       });
     });
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      cancelAnimationFrame(raf);
+      clearClip();
+    };
   }, [stage, reduce]);
 
   const flying = stage === 'flying';
 
   return (
     <>
-      {/* The page itself: lifts away once the bar takes off */}
+      {/* The page itself: lifts away once the plane takes off */}
       <motion.div
         role="region"
         aria-label="Astris Travel home"
@@ -277,7 +395,7 @@ export function HomeIntro({ stops, onStart, onReveal, onDone }: HomeIntroProps) 
           flying
             ? reduce
               ? { opacity: 0, transition: { duration: 0.4 } }
-              : { y: '-100%', borderBottomLeftRadius: 48, borderBottomRightRadius: 48, transition: { delay: LIFT_DELAY_S, duration: 1.1, ease: [0.7, 0, 0.2, 1] } }
+              : { y: '-100%', borderBottomLeftRadius: 48, borderBottomRightRadius: 48, transition: { delay: LIFT_DELAY_S, duration: 1.2, ease: [0.7, 0, 0.2, 1] } }
             : { y: 0 }
         }
         style={{ boxShadow: flying ? '0 30px 80px rgba(0,0,0,0.45)' : undefined }}
@@ -294,15 +412,15 @@ export function HomeIntro({ stops, onStart, onReveal, onDone }: HomeIntroProps) 
           ref={barRef}
           role="group"
           aria-label="Trip route"
-          className="relative flex w-[min(94vw,920px)] items-center gap-1 rounded-2xl border border-white/50 bg-white/90 p-1.5 pl-2 shadow-2xl backdrop-blur-md"
+          className="relative flex w-[min(94vw,920px)] items-center gap-1 rounded-2xl glass-strong p-1.5 pl-2"
           initial={reduce ? false : { opacity: 0, y: 16, scale: 0.96 }}
           animate={{ opacity: flying && !reduce ? 0 : 1, y: 0, scale: 1 }}
-          transition={flying ? { duration: 0.05 } : { duration: 0.8, ease: [0.22, 1, 0.36, 1] }}
+          transition={flying ? { duration: 0.12 } : { duration: 0.8, ease: [0.22, 1, 0.36, 1] }}
         >
-          {/* Same look as the planner's route bar (RouteBar.tsx), so the landing is seamless */}
+          {/* Same look as the planner's route bar (RouteBar.tsx) */}
           <ol aria-label="Stops in order" className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1 gap-y-1.5 py-0.5">
             {stops.map((stop, i) => (
-              <li key={stop.id} className="flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-neutral-200 bg-white pl-1.5 pr-2 text-xs shadow-sm">
+              <li key={stop.id} className="flex h-8 shrink-0 items-center gap-1.5 rounded-full glass-control bg-white/90 pl-1.5 pr-2 text-xs">
                 <span
                   aria-hidden="true"
                   className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#FF812E] font-mono text-[10px] font-bold text-white"
@@ -342,26 +460,28 @@ export function HomeIntro({ stops, onStart, onReveal, onDone }: HomeIntroProps) 
         </motion.div>
       </motion.div>
 
-      {/* The snake: above everything, outside the lifting page */}
+      {/* The plane: above everything, outside the lifting page */}
       {flying && !reduce && (
         <svg
           ref={svgRef}
           aria-hidden="true"
           className="pointer-events-none fixed inset-0 z-[95] h-full w-full"
-          style={{ filter: 'drop-shadow(0 8px 16px rgba(0,0,0,0.3))', opacity: 0 }}
+          style={{ opacity: 0 }}
         >
-          {/* Tail first, so the head is drawn on top */}
-          {Array.from({ length: SEGMENTS }, (_, i) => SEGMENTS - 1 - i).map((i) => (
-            <line
-              key={i}
-              ref={(el) => {
-                segRefs.current[i] = el;
-              }}
-              strokeLinecap="round"
-              stroke="white"
-            />
-          ))}
-          <polyline ref={stripeRef} fill="none" stroke="#111827" strokeLinecap="round" strokeLinejoin="round" opacity={0} />
+          <polyline
+            ref={trailRef}
+            fill="none"
+            stroke="white"
+            strokeOpacity={0.35}
+            strokeWidth={2}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          <g ref={planeRef} style={{ filter: 'drop-shadow(0 10px 14px rgba(0,0,0,0.3))' }}>
+            <path ref={finsRef} fill="#F3F4F6" />
+            <path ref={wingsRef} fill="#F9FAFB" />
+            <path ref={fuselageRef} fill="white" />
+          </g>
         </svg>
       )}
     </>

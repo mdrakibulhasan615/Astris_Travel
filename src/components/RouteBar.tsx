@@ -29,7 +29,7 @@ interface RouteBarProps {
   onFocusStop: (stop: TripStop) => void;
   /** `map` floats over the map (default); `hero` sits in normal flow on the landing page. */
   variant?: 'map' | 'hero';
-  /** Invisible (and not clickable) while the home page's bar is flying in to take its place. */
+  /** Invisible (and not clickable) until the home page's plane flies over it and uncovers it. */
   hidden?: boolean;
   /** Text typed on the home page: put into "Add a stop…" and focused whenever `key` changes. */
   seed?: { text: string; key: number } | null;
@@ -98,7 +98,7 @@ function FloatingMenu({
       role="menu"
       aria-label={label}
       style={{ position: 'fixed', left: pos.left, top: pos.top, width }}
-      className="z-[70] rounded-2xl border border-neutral-200 bg-white p-1.5 shadow-xl"
+      className="z-[70] rounded-2xl glass-strong p-1.5"
     >
       {children}
     </div>,
@@ -261,7 +261,7 @@ function AddStopInput({
   useEffect(() => {
     if (!seed) return;
     setQuery(seed.text);
-    setFocused(true);
+    setFocused(seed.text.length > 0); // open suggestions only when something was typed
     const el = inputRef.current;
     if (!el) return;
     el.focus({ preventScroll: true });
@@ -405,13 +405,13 @@ export function RouteBar({
         variant === 'hero'
           ? 'w-full'
           : 'pointer-events-none absolute left-3 right-3 top-3 z-30 sm:left-4 sm:right-4'
-      } transition-opacity duration-300 ${hidden ? 'invisible opacity-0' : 'opacity-100'}`}
+      } ${hidden ? 'invisible' : ''}`}
     >
       <div
         role="group"
         aria-label="Trip route"
         data-route-bar={variant}
-        className={`pointer-events-auto flex items-start gap-2 rounded-2xl border border-white/50 ${variant === 'hero' ? 'bg-white/90 shadow-2xl' : 'bg-white/80 shadow-lg'} p-1.5 pl-2 backdrop-blur-md`}
+        className={`pointer-events-auto flex items-start gap-2 rounded-2xl glass p-1.5 pl-2`}
       >
         <ol
           aria-label="Stops in order"
@@ -449,7 +449,7 @@ export function RouteBar({
                   }}
                   onMouseEnter={() => onHoverStop(stop.id)}
                   onMouseLeave={() => onHoverStop(null)}
-                  className={`group flex h-8 cursor-grab items-center gap-1.5 rounded-full border bg-white pl-1.5 pr-2 text-xs shadow-sm transition-colors active:cursor-grabbing ${
+                  className={`group flex h-8 cursor-grab items-center gap-1.5 rounded-full glass-control pl-1.5 pr-2 text-xs shadow-sm transition-colors active:cursor-grabbing ${
                     overIndex === i && dragIndex !== i
                       ? 'border-[#FF812E] ring-2 ring-[#FF812E]/30'
                       : hoveredStopId === stop.id

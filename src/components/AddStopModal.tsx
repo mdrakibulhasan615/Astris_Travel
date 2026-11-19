@@ -126,9 +126,9 @@ export function AddStopModal({
       role="dialog"
       aria-modal="true"
       aria-label="Add destination stop"
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/35 backdrop-blur-xs"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 glass-scrim"
     >
-      <div className="w-full max-w-lg rounded-2xl bg-white border border-neutral-200 shadow-xl overflow-hidden flex flex-col max-h-[85vh]">
+      <div className="w-full max-w-lg rounded-2xl glass-strong overflow-hidden flex flex-col max-h-[85vh]">
         <div className="px-5 py-4 border-b border-neutral-100 flex items-center justify-between gap-4 shrink-0">
           <div className="flex items-center gap-2.5">
             <span className="w-8 h-8 rounded-xl bg-[#FFF4ED] border border-[#FFD6BA] text-[#FF812E] flex items-center justify-center">

@@ -344,7 +344,7 @@ export function SellerModal({
   const title = `${option.carrier} · ${option.routeCode}`;
 
   return createPortal(
-    <div className="fixed inset-0 z-[70] flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[70] flex items-end justify-center glass-scrim p-0 sm:items-center sm:p-4" onClick={onClose}>
       <div
         ref={panelRef}
         role="dialog"
@@ -352,7 +352,7 @@ export function SellerModal({
         aria-label={`Book exact ticket: ${title}`}
         tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
-        className="flex max-h-[88vh] w-full max-w-xl flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl focus:outline-none sm:rounded-2xl"
+        className="flex max-h-[88vh] w-full max-w-xl flex-col overflow-hidden rounded-t-2xl glass-strong focus:outline-none sm:rounded-2xl"
       >
         <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-4 py-3">
           <div className="min-w-0">

@@ -107,7 +107,7 @@ export function AuthModal({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[90] flex items-end justify-center bg-black/55 p-0 backdrop-blur-[2px] sm:items-center sm:p-4"
+      className="fixed inset-0 z-[90] flex items-end justify-center bg-black/40 p-0 backdrop-blur-md sm:items-center sm:p-4"
       onMouseDown={(e) => e.target === e.currentTarget && onClose()}
     >
       <div
@@ -115,7 +115,7 @@ export function AuthModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="auth-modal-title"
-        className="relative w-full max-w-md rounded-t-3xl border border-white/10 bg-[#111827] p-6 text-white shadow-2xl sm:rounded-3xl"
+        className="relative w-full max-w-md rounded-t-3xl glass-dark p-6 text-white sm:rounded-3xl"
       >
         <button
           type="button"

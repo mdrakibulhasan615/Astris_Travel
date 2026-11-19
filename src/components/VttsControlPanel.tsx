@@ -64,10 +64,10 @@ export function VttsControlPanel({
   return (
     <section
       aria-label="Trip summary and travel pacing controls"
-      className="bg-white rounded-2xl border border-neutral-200/80 shadow-sm p-4 space-y-3.5"
+      className="glass rounded-2xl p-4 space-y-3.5"
     >
       {/* Compact tabular KPI strip */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pb-3.5 border-b border-neutral-100">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pb-3.5 border-b border-white/70">
         <div>
           <div className="text-[11px] font-medium text-[#4B5563]">Total Fare</div>
           <div className="mt-0.5 flex items-baseline gap-1.5">

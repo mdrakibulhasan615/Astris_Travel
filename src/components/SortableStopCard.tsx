@@ -43,12 +43,12 @@ export function SortableStopCard({
       style={style}
       onMouseEnter={() => onHoverStop(stop.id)}
       onMouseLeave={() => onHoverStop(null)}
-      className={`rounded-2xl bg-white border px-4 py-3 transition-all ${
+      className={`rounded-2xl glass px-4 py-3 transition-all ${
         isDragging
-          ? 'opacity-80 shadow-lg border-[#FF812E] z-20'
+          ? 'opacity-80 border-[#FF812E] z-20'
           : isHovered
-            ? 'border-[#FFD6BA] bg-[#FFF4ED]/40 shadow-md'
-            : 'border-neutral-200/80 shadow-sm hover:shadow-md'
+            ? 'border-[#FFD6BA] bg-[#FFF4ED]/50'
+            : ''
       }`}
     >
       <div className="flex items-center justify-between gap-3">

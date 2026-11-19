@@ -25,9 +25,9 @@ export function RouteOptimizerModal({
       role="dialog"
       aria-modal="true"
       aria-label="Two-Stage Global Route Optimizer"
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/35 backdrop-blur-xs"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 glass-scrim"
     >
-      <div className="w-full max-w-2xl rounded-2xl bg-white border border-neutral-200 shadow-xl overflow-hidden">
+      <div className="w-full max-w-2xl rounded-2xl glass-strong overflow-hidden">
         <div className="px-6 py-4 border-b border-neutral-100 flex items-center justify-between gap-4">
           <div className="flex items-center gap-2.5">
             <span className="w-8 h-8 rounded-xl bg-[#FFF4ED] border border-[#FFD6BA] text-[#E56B1A] flex items-center justify-center">
@@ -168,7 +168,7 @@ export function RouteOptimizerModal({
           )}
         </div>
 
-        <div className="px-6 py-4 bg-[#FAFAFA] border-t border-neutral-100 flex items-center justify-end gap-3">
+        <div className="px-6 py-4 bg-white/40 border-t border-white/70 flex items-center justify-end gap-3">
           <button
             type="button"
             onClick={onClose}

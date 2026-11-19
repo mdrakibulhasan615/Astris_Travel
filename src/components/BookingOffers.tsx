@@ -195,7 +195,7 @@ function OffersPanel({
         data-offers-panel={id}
         onClick={(e) => e.stopPropagation()}
         style={placement?.style ?? { position: 'fixed', visibility: 'hidden', width: PANEL_WIDTH }}
-        className="z-[61] rounded-2xl border-2 border-orange-500 bg-white p-2 shadow-xl"
+        className="z-[61] rounded-2xl glass-strong border-2 border-orange-500 p-2"
       >
         {modal && (
           <button

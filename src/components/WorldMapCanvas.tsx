@@ -797,7 +797,7 @@ export function WorldMapCanvas({
                 e.stopPropagation();
                 onSelectLeg(callout.legId);
               }}
-              className={`inline-flex items-center gap-1.5 bg-white/95 backdrop-blur-sm shadow-md rounded-xl px-2.5 py-1 border text-[11px] font-medium whitespace-nowrap transition-transform cursor-pointer ${
+              className={`inline-flex items-center gap-1.5 glass-control rounded-xl px-2.5 py-1 border text-[11px] font-medium whitespace-nowrap transition-transform cursor-pointer ${
                 callout.isHighlighted
                   ? 'border-[#FFD6BA] ring-2 ring-[#FF812E]/20 scale-105 text-[#111827]'
                   : 'border-slate-200/80 text-[#111827] hover:scale-105'
@@ -907,7 +907,7 @@ export function WorldMapCanvas({
       {/* Bottom Floating Mode Legend + Active Corridor Telemetry + Fit Route */}
       <div className="absolute bottom-4 left-4 right-14 z-20 flex flex-wrap items-end justify-between gap-3 pointer-events-none">
         {activeLeg && activeLegSelectedOption && (
-          <div className="pointer-events-auto bg-white/95 backdrop-blur-md border border-slate-200/80 shadow-md rounded-2xl px-3.5 py-2.5 max-w-md space-y-1">
+          <div className="pointer-events-auto glass rounded-2xl px-3.5 py-2.5 max-w-md space-y-1">
             <div className="flex items-center gap-2 text-xs font-semibold text-[#111827]">
               <span>
                 {activeLeg.fromCode} → {activeLeg.toCode}
@@ -944,7 +944,7 @@ export function WorldMapCanvas({
         <button
           type="button"
           onClick={fitAllStops}
-          className="pointer-events-auto inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-white/95 backdrop-blur-md border border-slate-200/80 shadow-md text-xs font-semibold text-[#111827] hover:bg-white transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+          className="pointer-events-auto inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full glass-control text-xs font-semibold text-[#111827] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
         >
           <LocateFixed className="w-3.5 h-3.5 text-[#FF812E]" />
           <span>Fit Route</span>

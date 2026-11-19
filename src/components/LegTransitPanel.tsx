@@ -471,7 +471,7 @@ export function LegTransitPanel({
       />
 
       <div
-        className={`rounded-2xl bg-white border transition-all ${
+        className={`rounded-2xl glass transition-all ${
           isActive
             ? 'border-[#FFD6BA] shadow-md'
             : 'border-neutral-200/80 shadow-sm hover:shadow-md'

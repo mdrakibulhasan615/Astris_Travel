@@ -211,11 +211,11 @@ export function MultiDestDatePickerModal({
       aria-modal="true"
       aria-label="Multi-destination trip date picker"
       onClick={onClose}
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/25 backdrop-blur-xs"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 glass-scrim"
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-lg bg-white border border-slate-200/80 shadow-xl rounded-2xl overflow-hidden"
+        className="w-full max-w-lg glass-strong rounded-2xl overflow-hidden"
       >
         {/* Header */}
         <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-3">
@@ -491,7 +491,7 @@ export function MultiDestDatePickerModal({
         </div>
 
         {/* Horizontal Color-Dot City Legend & Done Action */}
-        <div className="px-5 py-3.5 bg-[#FAFAFA] border-t border-slate-100 flex items-center justify-between gap-3">
+        <div className="px-5 py-3.5 bg-white/40 border-t border-white/70 flex items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-1.5 min-w-0">
             {stops.map((stop) => {
               const color = stopColorMap[stop.id] ?? '#FF812E';

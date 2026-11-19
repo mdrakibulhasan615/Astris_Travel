@@ -50,8 +50,8 @@ export function TransportFilter({
             onClick={() => onChange(item.id)}
             className={`inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold whitespace-nowrap transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF812E] ${
               active
-                ? 'border-[#FF812E] bg-[#FF812E] text-white shadow-sm'
-                : 'border-neutral-200 bg-white text-[#4B5563] hover:border-neutral-300 hover:text-[#111827]'
+                ? 'border-[#FF812E] bg-[#FF812E] text-white shadow-[inset_0_1px_0_rgb(255_255_255/0.35),0_4px_12px_-4px_rgb(255_129_46/0.6)]'
+                : 'glass-control text-[#4B5563] hover:text-[#111827]'
             }`}
           >
             <Icon className="h-3.5 w-3.5" style={{ color: active ? '#FFFFFF' : item.dot }} aria-hidden="true" />

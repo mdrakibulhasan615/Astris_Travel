@@ -51,7 +51,7 @@ export function AccountControls({
         onClick={copy}
         disabled={!hasRoute}
         title={hasRoute ? 'Copy a link that opens this route on any device' : 'Add a destination first'}
-        className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-xl border border-neutral-200 bg-white px-2.5 text-sm font-semibold text-[#111827] hover:border-[#FFD6BA] disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF812E]"
+        className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-xl glass-control px-2.5 text-sm font-semibold text-[#111827] hover:border-[#FFD6BA] disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF812E]"
       >
         {copied ? <Check className="h-4 w-4 text-[#15803D]" /> : <Link2 className="h-4 w-4 text-[#EA580C]" />}
         <span className="hidden xl:inline">{copied ? 'Link copied' : 'Copy route sync link'}</span>
@@ -77,7 +77,7 @@ export function AccountControls({
             aria-haspopup="menu"
             aria-expanded={menuOpen}
             title={syncStatus === 'error' ? 'Sync failed: your route is still saved on this device' : 'Route synced to your account'}
-            className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-xl border border-neutral-200 bg-white pl-1 pr-2.5 text-sm font-semibold text-[#111827] hover:border-[#FFD6BA] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF812E]"
+            className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-xl glass-control pl-1 pr-2.5 text-sm font-semibold text-[#111827] hover:border-[#FFD6BA] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF812E]"
           >
             {user.avatarUrl ? (
               <img src={user.avatarUrl} alt="" referrerPolicy="no-referrer" className="h-7 w-7 rounded-lg object-cover" />
@@ -93,7 +93,7 @@ export function AccountControls({
             )}
           </button>
           {menuOpen && (
-            <div role="menu" className="absolute right-0 top-11 z-50 w-60 rounded-2xl border border-neutral-200 bg-white p-2 shadow-xl">
+            <div role="menu" className="absolute right-0 top-11 z-50 w-60 rounded-2xl glass-strong p-2">
               <p className="truncate px-2 py-1.5 text-xs text-[#6B7280]">{user.email ?? user.name}</p>
               <p className="px-2 pb-2 text-xs text-[#4B5563]">
                 {syncStatus === 'error' ? 'Sync failed; saved on this device.' : syncStatus === 'syncing' ? 'Syncing…' : 'Routes synced to your account.'}
@@ -105,7 +105,7 @@ export function AccountControls({
                   setMenuOpen(false);
                   await logout();
                 }}
-                className="flex w-full cursor-pointer items-center gap-2 rounded-xl px-2 py-2 text-sm font-semibold text-[#111827] hover:bg-neutral-100"
+                className="flex w-full cursor-pointer items-center gap-2 rounded-xl px-2 py-2 text-sm font-semibold text-[#111827] hover:bg-white/70"
               >
                 <LogOut className="h-4 w-4" /> Log out
               </button>

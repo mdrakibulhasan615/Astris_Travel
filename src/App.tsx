@@ -58,6 +58,7 @@ import { AddStopModal } from './components/AddStopModal.tsx';
 import { legLiveKey, mergeLiveFares, type LiveFareEntry, type LiveFareStatus } from './liveFares.ts';
 import type { LiveSearchResponse } from '../shared/liveFlights.ts';
 import { HomeIntro } from './components/HomeIntro.tsx';
+import { LiquidDroplet } from './components/LiquidDroplet.tsx';
 import { SHOW_HOME_HERO } from '../shared/config.ts';
 import { RouteBar, type SegmentChoice } from './components/RouteBar.tsx';
 import { TransportFilter } from './components/TransportFilter.tsx';
@@ -106,7 +107,7 @@ export default function App() {
   const [isLoadingInitial, setIsLoadingInitial] = useState(true);
   // The home page covers the planner until the visitor starts typing a destination
   const [showHero, setShowHero] = useState(SHOW_HOME_HERO);
-  // The route bar stays hidden while the home bar flies in to take its place
+  // The route bar stays hidden until the home page's plane flies along it and uncovers it
   const [routeBarRevealed, setRouteBarRevealed] = useState(!SHOW_HOME_HERO);
   const [addStopSeed, setAddStopSeed] = useState<{ text: string; key: number } | null>(null);
 
@@ -666,7 +667,7 @@ export default function App() {
     [staySearches]
   );
   return (
-    <div className="min-h-screen lg:h-screen flex flex-col bg-[#FAFAFA] text-[#111827] lg:overflow-hidden">
+    <div className="min-h-screen lg:h-screen flex flex-col astris-backdrop text-[#111827] lg:overflow-hidden">
       <TopBar
         activePanel={activePanel}
         onSelectPanel={handleNavPanelSelect}
@@ -684,14 +685,15 @@ export default function App() {
       />
 
       {/* Mobile View Switcher (keeps sticky height well under 15%) */}
-      <div className="lg:hidden px-4 py-2 bg-white border-b border-neutral-200/80 flex items-center justify-between gap-2">
-        <div className="inline-flex p-1 rounded-xl bg-neutral-100">
+      <div className="lg:hidden px-4 py-2 glass-chrome relative z-20 flex items-center justify-between gap-2">
+        <div className="inline-flex p-1 rounded-xl glass-segment">
           <button
             type="button"
             onClick={() => setMobileView('split-left')}
+            aria-pressed={mobileView === 'split-left'}
             className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
               mobileView === 'split-left'
-                ? 'bg-white text-[#111827] shadow-xs'
+                ? 'bg-white text-[#111827]'
                 : 'text-[#4B5563]'
             }`}
           >
@@ -700,9 +702,10 @@ export default function App() {
           <button
             type="button"
             onClick={() => setMobileView('split-right')}
+            aria-pressed={mobileView === 'split-right'}
             className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
               mobileView === 'split-right'
-                ? 'bg-white text-[#111827] shadow-xs'
+                ? 'bg-white text-[#111827]'
                 : 'text-[#4B5563]'
             }`}
           >
@@ -714,7 +717,7 @@ export default function App() {
         <button
           type="button"
           onClick={() => setIsAddStopOpen(true)}
-          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl border border-neutral-200 text-xs font-semibold text-[#111827] bg-white"
+          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-xl glass-control text-xs font-semibold text-[#111827]"
         >
           <Plus className="w-3.5 h-3.5 text-[#FF812E]" />
           <span>Add Stop</span>
@@ -746,7 +749,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => handleOpenDatePicker(trip.stops[0]?.id)}
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white border border-neutral-200/80 hover:border-[#FFD6BA] hover:bg-[#FFF4ED] text-xs font-mono font-semibold text-[#111827] shadow-xs transition-colors whitespace-nowrap shrink-0 cursor-pointer tabular-nums"
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl glass-control hover:border-[#FFD6BA] hover:bg-[#FFF4ED] text-xs font-mono font-semibold text-[#111827] transition-colors whitespace-nowrap shrink-0 cursor-pointer tabular-nums"
               >
                 <Calendar className="w-3.5 h-3.5 text-[#FF812E]" />
                 <span>{formatTripDateSpan(trip.stops)}</span>
@@ -755,7 +758,7 @@ export default function App() {
               <div
                 role="group"
                 aria-label="Travellers"
-                className="inline-flex items-center gap-0.5 px-1.5 py-1 rounded-xl bg-white border border-neutral-200/80 text-xs font-semibold text-[#111827] shadow-xs shrink-0"
+                className="inline-flex items-center gap-0.5 px-1.5 py-1 rounded-xl glass-control text-xs font-semibold text-[#111827] shrink-0"
               >
                 <Users className="w-3.5 h-3.5 text-[#FF812E] ml-1" />
                 <button
@@ -782,7 +785,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setIsAddStopOpen(true)}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white border border-neutral-200/80 hover:border-[#FFD6BA] hover:bg-[#FFF4ED] text-xs font-semibold text-[#111827] shadow-xs transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl glass-control hover:border-[#FFD6BA] hover:bg-[#FFF4ED] text-xs font-semibold text-[#111827] transition-colors whitespace-nowrap shrink-0 cursor-pointer"
               >
                 <Plus className="w-3.5 h-3.5 text-[#FF812E]" />
                 <span>Add Stop</span>
@@ -810,7 +813,7 @@ export default function App() {
               <div
                 role="tablist"
                 aria-label="Itinerary view"
-                className="inline-flex p-1 rounded-xl bg-neutral-100"
+                className="inline-flex p-1 rounded-xl glass-segment"
               >
                 {(
                   [
@@ -857,11 +860,11 @@ export default function App() {
 
             {isLoadingInitial ? (
               <div className="space-y-3">
-                <div className="h-24 rounded-2xl bg-white border border-neutral-200/80 animate-pulse" />
-                <div className="h-24 rounded-2xl bg-white border border-neutral-200/80 animate-pulse" />
+                <div className="h-24 rounded-2xl glass animate-pulse" />
+                <div className="h-24 rounded-2xl glass animate-pulse" />
               </div>
             ) : trip.stops.length === 0 ? (
-              <div className="rounded-2xl bg-white border border-neutral-200/80 p-8 text-center space-y-3">
+              <div className="rounded-2xl glass p-8 text-center space-y-3">
                 <Route className="w-8 h-8 text-[#FF812E] mx-auto" />
                 <div className="font-display text-base font-bold text-[#111827]">
                   No Stops Added
@@ -877,7 +880,7 @@ export default function App() {
                   <button
                     type="button"
                     onClick={handleRestoreDefaultTrip}
-                    className="px-4 py-2 rounded-xl border border-neutral-200 text-xs font-semibold text-[#111827] hover:bg-neutral-50 cursor-pointer"
+                    className="px-4 py-2 rounded-xl glass-control text-xs font-semibold text-[#111827] cursor-pointer"
                   >
                     Restore Default Trip
                   </button>
@@ -885,7 +888,7 @@ export default function App() {
               </div>
             ) : leftView === 'stays' ? (
               <div className="space-y-3">
-                <div className="rounded-2xl bg-white border border-neutral-200/80 shadow-sm px-4 py-3 flex flex-wrap items-center justify-between gap-2">
+                <div className="rounded-2xl glass px-4 py-3 flex flex-wrap items-center justify-between gap-2">
                   <div className="text-xs text-[#4B5563]">
                     <span className="font-semibold text-[#111827]">
                       {staySearches.length} stay{staySearches.length === 1 ? '' : 's'} ·{' '}
@@ -897,7 +900,7 @@ export default function App() {
                   </div>
                 </div>
                 {staySearches.length === 0 ? (
-                  <div className="rounded-2xl bg-white border border-neutral-200/80 p-6 text-center text-xs text-[#4B5563]">
+                  <div className="rounded-2xl glass p-6 text-center text-xs text-[#4B5563]">
                     Add a destination after your starting point to compare places to stay.
                   </div>
                 ) : (
@@ -1068,6 +1071,7 @@ export default function App() {
         />
       )}
 
+      <LiquidDroplet />
       <Analytics />
     </div>
   );
