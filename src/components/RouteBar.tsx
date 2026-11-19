@@ -29,6 +29,10 @@ interface RouteBarProps {
   onFocusStop: (stop: TripStop) => void;
   /** `map` floats over the map (default); `hero` sits in normal flow on the landing page. */
   variant?: 'map' | 'hero';
+  /** Invisible (and not clickable) while the home page's bar is flying in to take its place. */
+  hidden?: boolean;
+  /** Text typed on the home page: put into "Add a stop…" and focused whenever `key` changes. */
+  seed?: { text: string; key: number } | null;
 }
 
 // ── A menu that floats above the bar's scroll area (a plain absolute menu would be clipped) ──────
@@ -240,9 +244,11 @@ function SegmentConnector({
 function AddStopInput({
   destinations,
   onAdd,
+  seed,
 }: {
   destinations: DestinationHub[];
   onAdd: (hub: DestinationHub) => void;
+  seed?: { text: string; key: number } | null;
 }) {
   const [query, setQuery] = useState('');
   const [focused, setFocused] = useState(false);
@@ -250,6 +256,17 @@ function AddStopInput({
   const [highlight, setHighlight] = useState(0);
   const [anchor, setAnchor] = useState<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Carry on typing where the home page left off
+  useEffect(() => {
+    if (!seed) return;
+    setQuery(seed.text);
+    setFocused(true);
+    const el = inputRef.current;
+    if (!el) return;
+    el.focus({ preventScroll: true });
+    requestAnimationFrame(() => el.setSelectionRange(seed.text.length, seed.text.length));
+  }, [seed?.key]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const q = query.trim();
@@ -374,6 +391,8 @@ export function RouteBar({
   onHoverStop,
   onFocusStop,
   variant = 'map',
+  hidden = false,
+  seed = null,
 }: RouteBarProps) {
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [overIndex, setOverIndex] = useState<number | null>(null);
@@ -382,15 +401,16 @@ export function RouteBar({
 
   return (
     <div
-      className={
+      className={`${
         variant === 'hero'
           ? 'w-full'
           : 'pointer-events-none absolute left-3 right-3 top-3 z-30 sm:left-4 sm:right-4'
-      }
+      } transition-opacity duration-300 ${hidden ? 'invisible opacity-0' : 'opacity-100'}`}
     >
       <div
         role="group"
         aria-label="Trip route"
+        data-route-bar={variant}
         className={`pointer-events-auto flex items-start gap-2 rounded-2xl border border-white/50 ${variant === 'hero' ? 'bg-white/90 shadow-2xl' : 'bg-white/80 shadow-lg'} p-1.5 pl-2 backdrop-blur-md`}
       >
         <ol
@@ -496,7 +516,7 @@ export function RouteBar({
             );
           })}
           <li className="ml-1 shrink-0">
-            <AddStopInput destinations={destinations} onAdd={onAddDestination} />
+            <AddStopInput destinations={destinations} onAdd={onAddDestination} seed={seed} />
           </li>
         </ol>
 

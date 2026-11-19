@@ -55,10 +55,9 @@ import type {
   VttsTier,
 } from '../shared/types.ts';
 import { AddStopModal } from './components/AddStopModal.tsx';
-import { AnimatePresence } from 'motion/react';
 import { legLiveKey, mergeLiveFares, type LiveFareEntry, type LiveFareStatus } from './liveFares.ts';
 import type { LiveSearchResponse } from '../shared/liveFlights.ts';
-import { HeroScene } from './components/HeroScene.tsx';
+import { HomeIntro } from './components/HomeIntro.tsx';
 import { SHOW_HOME_HERO } from '../shared/config.ts';
 import { RouteBar, type SegmentChoice } from './components/RouteBar.tsx';
 import { TransportFilter } from './components/TransportFilter.tsx';
@@ -105,8 +104,11 @@ export default function App() {
   const [trip, setTrip] = useState<Trip>(() => createDefaultTrip());
   const [destinations, setDestinations] = useState<DestinationHub[]>(DESTINATION_HUBS);
   const [isLoadingInitial, setIsLoadingInitial] = useState(true);
-  // The landing hero covers the planner until the visitor adds a stop, searches or scrolls in
+  // The home page covers the planner until the visitor starts typing a destination
   const [showHero, setShowHero] = useState(SHOW_HOME_HERO);
+  // The route bar stays hidden while the home bar flies in to take its place
+  const [routeBarRevealed, setRouteBarRevealed] = useState(!SHOW_HOME_HERO);
+  const [addStopSeed, setAddStopSeed] = useState<{ text: string; key: number } | null>(null);
 
   // Sync & workspace UI states
   const [activePanel, setActivePanel] = useState<WorkspacePanel>('timeline');
@@ -305,6 +307,7 @@ export default function App() {
   const handleRestoreRoute = useCallback(
     (data: SavedRouteData) => {
       setShowHero(false);
+      setRouteBarRevealed(true);
       setTrip((prev) => ({ ...prev, title: data.title }));
       const stops: TripStop[] = data.stops.map((s, i) => ({ ...s, order: i + 1 }));
       void recomputeStopsAndLegs(stops, undefined, data.travelers, data.legPrefs ?? {});
@@ -1018,6 +1021,8 @@ export default function App() {
             onChangeSegment={handleChangeSegment}
             onHoverStop={setHoveredStopId}
             onFocusStop={(s) => setFocusTarget({ lat: s.lat, lng: s.lng, zoom: 5.2, ts: Date.now() })}
+            hidden={!routeBarRevealed}
+            seed={addStopSeed}
           />
         </div>
       </main>
@@ -1047,24 +1052,20 @@ export default function App() {
         onUpdateStopDates={handleUpdateStopDates}
       />
 
-      <AnimatePresence>
-        {showHero && (
-          <HeroScene
-            key="hero"
-            stops={trip.stops}
-            legs={displayLegs}
-            destinations={destinations}
-            onMoveStop={reorderStops}
-            onRemoveStop={handleRemoveStop}
-            onAddDestination={(hub) => {
-              handleAddDestination(hub);
-              setShowHero(false);
-            }}
-            onChangeSegment={handleChangeSegment}
-            onFocusStop={() => {}}
-          />
-        )}
-      </AnimatePresence>
+      {showHero && (
+        <HomeIntro
+          onStart={() => {
+            // On phones the map (and its route bar) is a separate view: switch to it for the landing
+            if (window.matchMedia('(max-width: 1023px)').matches) setMobileView('split-right');
+          }}
+          onReveal={() => setRouteBarRevealed(true)}
+          onDone={(text) => {
+            setRouteBarRevealed(true);
+            setShowHero(false);
+            setAddStopSeed({ text, key: Date.now() });
+          }}
+        />
+      )}
 
       <Analytics />
     </div>

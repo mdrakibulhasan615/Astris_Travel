@@ -100,6 +100,7 @@ unprefixed keys are deliberately never exposed to the bundle.
 │   ├── App.tsx                  # State owner: trip, optimistic recompute, API calls, layout
 │   └── components/
 │       ├── ErrorBoundary.tsx          # Render-error containment (app-level + map-level)
+│       ├── HomeIntro.tsx              # Home page: one destination bar; typing flies it (snake path + barrel roll) onto the route bar as the page lifts
 │       ├── TopBar.tsx
 │       ├── SortableStopCard.tsx       # Draggable stop in the timeline (no night counter on the origin)
 │       ├── LegTransitPanel.tsx        # Ranked options per leg: score, flag chips, merchant button

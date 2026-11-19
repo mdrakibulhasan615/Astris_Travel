@@ -23,10 +23,10 @@
 export const USE_REAL_TICKET_DATA = true;
 
 /**
- * Whether the animated landing hero covers the planner on load. Off for now: the app opens straight
- * on the map and itinerary. Flip to `true` to bring the hero back.
+ * Whether the home page (a single destination bar that flies onto the planner once you start typing)
+ * covers the planner on load. `false` opens straight on the map and itinerary.
  */
-export const SHOW_HOME_HERO = false;
+export const SHOW_HOME_HERO = true;
 
 /**
  * Public partner ids used when the matching environment variable is not set. They are not secrets
