@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { motion, useReducedMotion } from 'motion/react';
-import { MapPin } from 'lucide-react';
+import { Plus } from 'lucide-react';
+import type { TripStop } from '../../shared/types.ts';
 
 /**
- * The home page: a single "Where to?" bar on a dark backdrop. The first keystroke sets it off:
+ * The home page: the route bar alone on a dark backdrop. The first keystroke sets it off:
  * the bar breaks into a chain of segments that slithers around the screen like a snake, does a
  * barrel roll through a loop, and lands exactly on the planner's route bar, while the home page
  * lifts away to reveal the planner underneath. Typing carries straight on in "Add a stop…".
@@ -15,6 +16,8 @@ import { MapPin } from 'lucide-react';
  */
 
 interface HomeIntroProps {
+  /** Shown as pills before the input, exactly like the planner's route bar. */
+  stops: TripStop[];
   /** The first character was typed: show the map (on phones) so the route bar can be measured. */
   onStart: () => void;
   /** The snake is about to land: fade the real route bar in under it. */
@@ -111,7 +114,7 @@ function targetRect(): DOMRect {
   return new DOMRect((window.innerWidth - w) / 2, 72, w, 44);
 }
 
-export function HomeIntro({ onStart, onReveal, onDone }: HomeIntroProps) {
+export function HomeIntro({ stops, onStart, onReveal, onDone }: HomeIntroProps) {
   const reduce = useReducedMotion();
   const [stage, setStage] = useState<'home' | 'flying'>('home');
   const [value, setValue] = useState('');
@@ -289,33 +292,53 @@ export function HomeIntro({ onStart, onReveal, onDone }: HomeIntroProps) {
         />
         <motion.div
           ref={barRef}
-          className="relative flex h-16 w-[min(92vw,640px)] items-center gap-3 rounded-full bg-white px-6 shadow-2xl"
+          role="group"
+          aria-label="Trip route"
+          className="relative flex w-[min(94vw,920px)] items-center gap-1 rounded-2xl border border-white/50 bg-white/90 p-1.5 pl-2 shadow-2xl backdrop-blur-md"
           initial={reduce ? false : { opacity: 0, y: 16, scale: 0.96 }}
           animate={{ opacity: flying && !reduce ? 0 : 1, y: 0, scale: 1 }}
           transition={flying ? { duration: 0.05 } : { duration: 0.8, ease: [0.22, 1, 0.36, 1] }}
         >
-          <MapPin className="h-5 w-5 shrink-0" style={{ color: ORANGE }} aria-hidden="true" />
-          <label htmlFor="home-destination" className="sr-only">
-            Where do you want to go?
-          </label>
-          <input
-            id="home-destination"
-            ref={inputRef}
-            value={value}
-            autoComplete="off"
-            onChange={(e) => {
-              const v = e.target.value;
-              setValue(v);
-              valueRef.current = v;
-              if (v.trim() && stage === 'home') setStage('flying');
-            }}
-            onKeyDown={(e) => {
-              // Escape skips straight to the planner
-              if (e.key === 'Escape' && stage === 'home') setStage('flying');
-            }}
-            placeholder="Where do you want to go?"
-            className="min-w-0 flex-1 bg-transparent text-lg text-[#111827] placeholder:text-[#6B7280] focus:outline-none"
-          />
+          {/* Same look as the planner's route bar (RouteBar.tsx), so the landing is seamless */}
+          <ol aria-label="Stops in order" className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1 gap-y-1.5 py-0.5">
+            {stops.map((stop, i) => (
+              <li key={stop.id} className="flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-neutral-200 bg-white pl-1.5 pr-2 text-xs shadow-sm">
+                <span
+                  aria-hidden="true"
+                  className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#FF812E] font-mono text-[10px] font-bold text-white"
+                >
+                  {i + 1}
+                </span>
+                <span className="max-w-[9rem] truncate font-semibold text-[#111827]">{stop.city}</span>
+              </li>
+            ))}
+            <li className="ml-1 shrink-0">
+              <div className="flex h-8 items-center gap-1.5 rounded-full border border-dashed border-neutral-300 bg-white/70 pl-2.5 pr-3 focus-within:border-[#FF812E]">
+                <Plus className="h-3.5 w-3.5 text-[#6B7280]" aria-hidden="true" />
+                <label htmlFor="home-destination" className="sr-only">
+                  Add a stop
+                </label>
+                <input
+                  id="home-destination"
+                  ref={inputRef}
+                  value={value}
+                  autoComplete="off"
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setValue(v);
+                    valueRef.current = v;
+                    if (v.trim() && stage === 'home') setStage('flying');
+                  }}
+                  onKeyDown={(e) => {
+                    // Escape skips straight to the planner
+                    if (e.key === 'Escape' && stage === 'home') setStage('flying');
+                  }}
+                  placeholder="Add a stop…"
+                  className="w-36 bg-transparent text-xs text-[#111827] placeholder:text-[#6B7280] focus:outline-none"
+                />
+              </div>
+            </li>
+          </ol>
         </motion.div>
       </motion.div>
 

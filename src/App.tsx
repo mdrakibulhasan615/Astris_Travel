@@ -1054,6 +1054,7 @@ export default function App() {
 
       {showHero && (
         <HomeIntro
+          stops={trip.stops}
           onStart={() => {
             // On phones the map (and its route bar) is a separate view: switch to it for the landing
             if (window.matchMedia('(max-width: 1023px)').matches) setMobileView('split-right');
